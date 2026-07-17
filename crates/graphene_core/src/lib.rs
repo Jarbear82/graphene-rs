@@ -1,4 +1,5 @@
 pub mod math;
+pub mod fixtures;
 
 use bitflags::bitflags;
 use bitvec::vec::BitVec;
