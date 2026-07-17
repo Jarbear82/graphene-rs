@@ -1,0 +1,10 @@
+[package]
+name = "graphene_layout"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+graphene_core = { path = "../graphene_core" }
+
+[dev-dependencies]
+graphene_algo = { path = "../graphene_algo" }

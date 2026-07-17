@@ -1,0 +1,8 @@
+[package]
+name = "graphene_style"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+graphene_core = { path = "../graphene_core" }
+bitflags = "2.4"

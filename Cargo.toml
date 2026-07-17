@@ -1,0 +1,10 @@
+[workspace]
+members = [
+    "crates/graphene_core",
+    "crates/graphene_style",
+    "crates/graphene_algo",
+    "crates/graphene_layout",
+    "crates/graphene_gpui",
+    "examples",
+]
+resolver = "2"

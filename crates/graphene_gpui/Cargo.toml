@@ -1,0 +1,10 @@
+[package]
+name = "graphene_gpui"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+graphene_core = { path = "../graphene_core" }
+graphene_style = { path = "../graphene_style" }
+gpui = "0.2"
+bitflags = "2.4"
