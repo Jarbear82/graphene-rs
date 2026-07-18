@@ -1259,10 +1259,10 @@ impl DemoApp {
         let edges_count = self.state.edges.len();
 
         let mut edge_paths = Vec::new();
-        let cx_val =
-            f32::from(self.canvas_bounds.origin.x) + f32::from(self.canvas_bounds.size.width) / 2.0;
-        let cy_val = f32::from(self.canvas_bounds.origin.y)
-            + f32::from(self.canvas_bounds.size.height) / 2.0;
+        let half_w = f32::from(self.canvas_bounds.size.width) / 2.0;
+        let half_h = f32::from(self.canvas_bounds.size.height) / 2.0;
+        let cx_val = f32::from(self.canvas_bounds.origin.x) + half_w;
+        let cy_val = f32::from(self.canvas_bounds.origin.y) + half_h;
 
         for i in 0..edges_count {
             let src = *self.state.edge_sources.get(i);
@@ -1387,9 +1387,9 @@ impl DemoApp {
                     .unwrap_or_else(|| format!("N{}", idx));
 
                 let screen_x =
-                    pos.x * self.zoom + self.offset.x + cx_val - (size_val.w * self.zoom / 2.0);
+                    pos.x * self.zoom + self.offset.x + half_w - (size_val.w * self.zoom / 2.0);
                 let screen_y =
-                    pos.y * self.zoom + self.offset.y + cy_val - (size_val.h * self.zoom / 2.0);
+                    pos.y * self.zoom + self.offset.y + half_h - (size_val.h * self.zoom / 2.0);
                 let node_w = size_val.w * self.zoom;
                 let node_h = size_val.h * self.zoom;
 
