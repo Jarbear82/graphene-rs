@@ -10,3 +10,5 @@ graphene_algo = { path = "../crates/graphene_algo" }
 graphene_layout = { path = "../crates/graphene_layout" }
 graphene_gpui = { path = "../crates/graphene_gpui" }
 gpui = "0.2"
+gpui-component = "0.5.1"
+
