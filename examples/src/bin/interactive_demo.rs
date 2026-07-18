@@ -190,6 +190,10 @@ struct DemoApp {
     target_positions: Vec<Vec2>,
     animation_progress: f32,
     is_animating: bool,
+
+    // Live physics simulation fields
+    physics_enabled: bool,
+    physics_temperature: f32,
 }
 
 impl DemoApp {
@@ -270,9 +274,90 @@ impl DemoApp {
             target_positions: Vec::new(),
             animation_progress: 0.0,
             is_animating: false,
+            physics_enabled: true,
+            physics_temperature: 10.0,
         };
         app.load_preset(0, window, cx);
         app
+    }
+
+    fn run_physics_step(&mut self) {
+        let n = self.state.node_index_to_id.len();
+        if n == 0 {
+            return;
+        }
+
+        let mut forces = vec![Vec2::default(); n];
+
+        let k_rep = 2500.0;
+        let k_att = 0.06;
+        let gravity = 0.3;
+
+        for i in 0..n {
+            for j in 0..n {
+                if i == j {
+                    continue;
+                }
+                let pos_i = *self.state.positions.get(i);
+                let pos_j = *self.state.positions.get(j);
+
+                let dx = pos_i.x - pos_j.x;
+                let dy = pos_i.y - pos_j.y;
+                let dist_sq = dx * dx + dy * dy + 0.01;
+                let dist = dist_sq.sqrt();
+
+                let force = k_rep / dist_sq;
+                forces[i].x += (dx / dist) * force;
+                forces[i].y += (dy / dist) * force;
+            }
+        }
+
+        let edges_count = self.state.edges.len();
+        for i in 0..edges_count {
+            let src = *self.state.edge_sources.get(i);
+            let tgt = *self.state.edge_targets.get(i);
+            let (Some(&src_idx), Some(&tgt_idx)) =
+                (self.state.node_keys.get(src), self.state.node_keys.get(tgt))
+            else {
+                continue;
+            };
+
+            let pos_src = *self.state.positions.get(src_idx);
+            let pos_tgt = *self.state.positions.get(tgt_idx);
+
+            let dx = pos_tgt.x - pos_src.x;
+            let dy = pos_tgt.y - pos_src.y;
+            let dist = (dx * dx + dy * dy + 0.01).sqrt();
+
+            let force = k_att * dist;
+            let fx = (dx / dist) * force;
+            let fy = (dy / dist) * force;
+
+            forces[src_idx].x += fx;
+            forces[src_idx].y += fy;
+
+            forces[tgt_idx].x -= fx;
+            forces[tgt_idx].y -= fy;
+        }
+
+        let temp = self.physics_temperature;
+        for i in 0..n {
+            let id = self.state.node_index_to_id[i];
+            if self.dragging_node == Some(id) {
+                continue;
+            }
+
+            let pos = self.state.positions.get_mut(i);
+
+            forces[i].x -= pos.x * gravity;
+            forces[i].y -= pos.y * gravity;
+
+            let force_len = (forces[i].x * forces[i].x + forces[i].y * forces[i].y + 0.01).sqrt();
+            let limit = force_len.min(temp);
+
+            pos.x += (forces[i].x / force_len) * limit;
+            pos.y += (forces[i].y / force_len) * limit;
+        }
     }
 
     fn resolve_collisions(&mut self) {
@@ -386,6 +471,7 @@ impl DemoApp {
         circle.compute(&mut self.state);
         self.offset = Vec2::default();
         self.zoom = 1.0;
+        self.physics_temperature = 10.0;
         self.state.dirty_flags |=
             graphene_core::DirtyFlags::POSITION_DIRTY | graphene_core::DirtyFlags::TOPOLOGY_DIRTY;
     }
@@ -723,17 +809,24 @@ impl Render for DemoApp {
         let theme = self.get_theme();
         let weak_entity = cx.weak_entity();
 
-        if self.is_animating {
-            let progress = self.animation_progress;
+        let needs_physics = self.physics_enabled && (self.physics_temperature > 0.05 || self.dragging_node.is_some());
+        let needs_tick = self.is_animating || needs_physics;
 
-            for idx in 0..self.state.node_index_to_id.len() {
-                if idx < self.start_positions.len() && idx < self.target_positions.len() {
-                    let start = self.start_positions[idx];
-                    let target = self.target_positions[idx];
-                    let current = start * (1.0 - progress) + target * progress;
-                    self.state.positions.set(idx, current);
+        if needs_tick {
+            if self.is_animating {
+                let progress = self.animation_progress;
+                for idx in 0..self.state.node_index_to_id.len() {
+                    if idx < self.start_positions.len() && idx < self.target_positions.len() {
+                        let start = self.start_positions[idx];
+                        let target = self.target_positions[idx];
+                        let current = start * (1.0 - progress) + target * progress;
+                        self.state.positions.set(idx, current);
+                    }
                 }
+            } else if needs_physics {
+                self.run_physics_step();
             }
+
             self.resolve_collisions();
 
             cx.spawn(async move |this, cx| {
@@ -741,10 +834,19 @@ impl Render for DemoApp {
                     .timer(std::time::Duration::from_millis(16))
                     .await;
                 this.update(cx, |this, cx| {
-                    this.animation_progress += 0.05;
-                    if this.animation_progress >= 1.0 {
-                        this.animation_progress = 1.0;
-                        this.is_animating = false;
+                    if this.is_animating {
+                        this.animation_progress += 0.05;
+                        if this.animation_progress >= 1.0 {
+                            this.animation_progress = 1.0;
+                            this.is_animating = false;
+                            this.physics_temperature = 10.0;
+                        }
+                    } else if this.physics_enabled {
+                        if this.dragging_node.is_some() {
+                            this.physics_temperature = 10.0;
+                        } else {
+                            this.physics_temperature *= 0.95;
+                        }
                     }
                     cx.notify();
                 })
@@ -924,6 +1026,51 @@ impl DemoApp {
                                     .child(name)
                             })),
                     ),
+            )
+            .child(
+                gpui::div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(
+                        gpui::div()
+                            .text_color(theme.text)
+                            .font_weight(gpui::FontWeight::BOLD)
+                            .text_size(px(12.0))
+                            .child("3. LIVE PHYSICS ENGINE"),
+                    )
+                    .child(
+                        gpui::div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .p_2()
+                            .bg(theme.bg)
+                            .rounded_md()
+                            .border(px(1.0))
+                            .border_color(theme.border)
+                            .child(
+                                gpui::div()
+                                    .text_color(theme.text)
+                                    .text_size(px(11.0))
+                                    .child(if self.physics_enabled {
+                                        format!("Status: Active (Temp: {:.2})", self.physics_temperature)
+                                    } else {
+                                        "Status: Disabled".to_string()
+                                    })
+                            )
+                            .child(
+                                Button::new("toggle-physics-btn")
+                                    .label(if self.physics_enabled { "DISABLE" } else { "ENABLE" })
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.physics_enabled = !this.physics_enabled;
+                                        if this.physics_enabled {
+                                            this.physics_temperature = 10.0;
+                                        }
+                                        cx.notify();
+                                    }))
+                            )
+                    )
             )
             .child(
                 Button::new("run-layout-btn")
