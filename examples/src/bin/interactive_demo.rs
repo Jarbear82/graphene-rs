@@ -695,14 +695,10 @@ impl Render for DemoApp {
 
 impl DemoApp {
     fn render_title_bar(&self, theme: &Theme) -> impl IntoElement {
-        gpui::div()
-            .flex()
-            .justify_between()
-            .items_center()
-            .h(px(40.0))
-            .px_4()
+        use gpui_component::TitleBar;
+
+        TitleBar::new()
             .bg(theme.panel_bg)
-            .border_b(px(1.0))
             .border_color(theme.border)
             .child(
                 gpui::div()
@@ -1585,6 +1581,7 @@ fn main() {
         cx.open_window(
             WindowOptions {
                 focus: true,
+                titlebar: Some(gpui_component::TitleBar::title_bar_options()),
                 ..Default::default()
             },
             |window, cx| {
