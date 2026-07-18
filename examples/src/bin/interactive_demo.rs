@@ -3,6 +3,7 @@ use gpui::{
     Pixels, Point, SharedString, StatefulInteractiveElement, Styled, WindowOptions,
 };
 use gpui::{AppContext, Application, Context, Entity, IntoElement, ParentElement, Render, Window};
+use gpui::prelude::FluentBuilder;
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::input::{Input, InputState};
 use gpui_component::Root;
@@ -133,6 +134,20 @@ impl Theme {
             edge_color: gpui::rgb(0x2c313c),
         }
     }
+
+    fn github_light() -> Self {
+        Self {
+            bg: gpui::rgb(0xffffff),
+            panel_bg: gpui::rgb(0xf6f8fa),
+            border: gpui::rgb(0xd0d7de),
+            accent: gpui::rgb(0x0969da), // GitHub blue
+            text: gpui::rgb(0x24292f),
+            text_dim: gpui::rgb(0x57606a),
+            node_fill: gpui::rgb(0xf6f8fa),
+            node_border: gpui::rgb(0x24292f),
+            edge_color: gpui::rgb(0xd0d7de),
+        }
+    }
 }
 
 struct DemoApp {
@@ -260,10 +275,71 @@ impl DemoApp {
         app
     }
 
+    fn resolve_collisions(&mut self) {
+        let n = self.state.node_index_to_id.len();
+        if n == 0 {
+            return;
+        }
+
+        let min_distance = 65.0;
+
+        for _ in 0..3 {
+            for i in 0..n {
+                for j in (i + 1)..n {
+                    let pos_i = *self.state.positions.get(i);
+                    let pos_j = *self.state.positions.get(j);
+
+                    let dx = pos_j.x - pos_i.x;
+                    let dy = pos_j.y - pos_i.y;
+                    let dist_sq = dx * dx + dy * dy;
+                    let dist = dist_sq.sqrt();
+
+                    if dist < min_distance {
+                        let overlap = min_distance - dist;
+                        let push_x;
+                        let push_y;
+                        if dist > 0.001 {
+                            push_x = (dx / dist) * overlap * 0.5;
+                            push_y = (dy / dist) * overlap * 0.5;
+                        } else {
+                            push_x = overlap * 0.5;
+                            push_y = 0.0;
+                        }
+
+                        let id_i = self.state.node_index_to_id[i];
+                        let id_j = self.state.node_index_to_id[j];
+
+                        let is_dragging_i = self.dragging_node == Some(id_i);
+                        let is_dragging_j = self.dragging_node == Some(id_j);
+
+                        if is_dragging_i && !is_dragging_j {
+                            let p_j = self.state.positions.get_mut(j);
+                            p_j.x += push_x * 2.0;
+                            p_j.y += push_y * 2.0;
+                        } else if is_dragging_j && !is_dragging_i {
+                            let p_i = self.state.positions.get_mut(i);
+                            p_i.x -= push_x * 2.0;
+                            p_i.y -= push_y * 2.0;
+                        } else if !is_dragging_i && !is_dragging_j {
+                            let p_i = self.state.positions.get_mut(i);
+                            p_i.x -= push_x;
+                            p_i.y -= push_y;
+
+                            let p_j = self.state.positions.get_mut(j);
+                            p_j.x += push_x;
+                            p_j.y += push_y;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     fn get_theme(&self) -> Theme {
         match self.current_theme.as_str() {
             "Gruvbox Dark" => Theme::gruvbox_dark(),
             "One Dark" => Theme::one_dark(),
+            "GitHub Light" => Theme::github_light(),
             _ => Theme::catppuccin_mocha(),
         }
     }
@@ -658,6 +734,7 @@ impl Render for DemoApp {
                     self.state.positions.set(idx, current);
                 }
             }
+            self.resolve_collisions();
 
             cx.spawn(async move |this, cx| {
                 cx.background_executor()
@@ -1217,7 +1294,7 @@ impl DemoApp {
                     )
                     .child(
                         gpui::div().flex().gap_1().children(
-                            vec!["Catppuccin Mocha", "Gruvbox Dark", "One Dark"]
+                            vec!["Catppuccin Mocha", "Gruvbox Dark", "One Dark", "GitHub Light"]
                                 .into_iter()
                                 .map(|t| {
                                     let is_active = self.current_theme == t;
@@ -1402,12 +1479,14 @@ impl DemoApp {
                     theme.node_border
                 };
 
+                let mut shape = NodeShape::Ellipse;
                 if idx < self.state.computed_styles.len() {
                     if let StylingTarget::Node(node_style) =
                         self.state.computed_styles.get(idx).target
                     {
                         fill_color = color_value_to_gpui_color(node_style.fill_color);
                         border_color = color_value_to_gpui_color(node_style.border_color);
+                        shape = node_style.shape;
                     }
                 }
 
@@ -1425,7 +1504,9 @@ impl DemoApp {
                     .border(px(2.0))
                     .border_color(border_color)
                     .bg(fill_color)
-                    .rounded_full()
+                    .when(shape == NodeShape::Ellipse, |d| d.rounded_full())
+                    .when(shape == NodeShape::Rectangle, |d| d.rounded_none())
+                    .when(shape == NodeShape::Diamond, |d| d.rounded_md())
                     .flex()
                     .items_center()
                     .justify_center()
@@ -1544,6 +1625,7 @@ impl DemoApp {
                         pos.y += dy;
                     }
                     this.pan_start = ev.position;
+                    this.resolve_collisions();
                     this.state.dirty_flags |= graphene_core::DirtyFlags::POSITION_DIRTY;
                     cx.notify();
                 } else if this.is_panning {
