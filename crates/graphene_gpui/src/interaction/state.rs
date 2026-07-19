@@ -51,6 +51,7 @@ impl SpatialHashGrid {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct InteractionState {
     pub drag_start: Option<(NodeId, gpui::Point<f32>, Vec2)>, // grabbed node + mouse starting pos + node starting pos
     pub pan_origin: Option<gpui::Point<f32>>,                 // last pan start position

@@ -18,14 +18,14 @@ impl Viewport {
     }
 
     pub fn model_to_screen(&self, pos: Vec2) -> gpui::Point<f32> {
-        let x = (pos.x + self.offset.x) * self.zoom + self.bounds.origin.x;
-        let y = (pos.y + self.offset.y) * self.zoom + self.bounds.origin.y;
+        let x = (pos.x + self.offset.x) * self.zoom + self.bounds.origin.x + self.bounds.size.width / 2.0;
+        let y = (pos.y + self.offset.y) * self.zoom + self.bounds.origin.y + self.bounds.size.height / 2.0;
         gpui::point(x, y)
     }
 
     pub fn screen_to_model(&self, p: gpui::Point<f32>) -> Vec2 {
-        let x = (p.x - self.bounds.origin.x) / self.zoom - self.offset.x;
-        let y = (p.y - self.bounds.origin.y) / self.zoom - self.offset.y;
+        let x = (p.x - self.bounds.origin.x - self.bounds.size.width / 2.0) / self.zoom - self.offset.x;
+        let y = (p.y - self.bounds.origin.y - self.bounds.size.height / 2.0) / self.zoom - self.offset.y;
         Vec2::new(x, y)
     }
 
@@ -35,11 +35,49 @@ impl Viewport {
         let screen_size = gpui::size(size.w * self.zoom, size.h * self.zoom);
         
         let node_bounds = gpui::Bounds {
-            origin: screen_pos,
+            origin: gpui::point(screen_pos.x - screen_size.width / 2.0, screen_pos.y - screen_size.height / 2.0),
             size: screen_size,
         };
 
         self.bounds.intersects(&node_bounds)
+    }
+
+    pub fn fit_to_graph(&mut self, state: &GraphState<ComputedStyle>) {
+        if state.node_index_to_id.is_empty() {
+            self.offset = Vec2::default();
+            self.zoom = 1.0;
+            return;
+        }
+        let mut x_min = f32::MAX;
+        let mut x_max = f32::MIN;
+        let mut y_min = f32::MAX;
+        let mut y_max = f32::MIN;
+        for &id in &state.node_index_to_id {
+            if let Some(&idx) = state.node_keys.get(id) {
+                let pos = *state.positions.get(idx);
+                x_min = x_min.min(pos.x);
+                x_max = x_max.max(pos.x);
+                y_min = y_min.min(pos.y);
+                y_max = y_max.max(pos.y);
+            }
+        }
+        let cx_graph = (x_min + x_max) / 2.0;
+        let cy_graph = (y_min + y_max) / 2.0;
+
+        self.offset = Vec2::new(-cx_graph, -cy_graph);
+
+        let w_graph = x_max - x_min + 100.0;
+        let h_graph = y_max - y_min + 100.0;
+        let w_canvas = self.bounds.size.width;
+        let h_canvas = self.bounds.size.height;
+
+        if w_canvas > 0.0 && h_canvas > 0.0 {
+            let z_x = w_canvas / w_graph;
+            let z_y = h_canvas / h_graph;
+            self.zoom = z_x.min(z_y).clamp(0.2, 3.0);
+        } else {
+            self.zoom = 1.0;
+        }
     }
 }
 

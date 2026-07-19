@@ -1,21 +1,23 @@
 use gpui::{
-    px, Background, Bounds, EntityInputHandler, InteractiveElement, MouseDownEvent, PathBuilder,
+    px, Bounds, EntityInputHandler, InteractiveElement, MouseDownEvent,
     Pixels, Point, SharedString, StatefulInteractiveElement, Styled, WindowOptions,
 };
 use gpui::{AppContext, Application, Context, Entity, IntoElement, ParentElement, Render, Window};
-use gpui::prelude::FluentBuilder;
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::input::{Input, InputState};
 use gpui_component::Root;
 use graphene_core::fixtures::{get_all_fixtures, GraphFixture};
-use graphene_core::{EdgeData, GraphState, NodeId, Size2, Vec2};
+use graphene_core::{EdgeData, GraphState, NodeId, Size2, Vec2, UndoRedoManager};
 use graphene_layout::{
     BipartiteLayout, CircleLayout, CollisionForceDirectedLayout, CompoundLayout,
     ConcentricHubLayout, DisconnectedPacker, ForceDirectedLayout, GridSortedLayout,
     KamadaKawaiLayout, Layout, MdsLayout, RegionalPartitionLayout, ReingoldTilfordLayout,
     SugiyamaLayout, WeightedForceDirectedLayout,
 };
-use graphene_style::{ColorValue, ComputedStyle, EdgeCurveStyle, NodeShape, StylingTarget};
+use graphene_style::{ColorValue, ComputedStyle, NodeShape, StylingTarget, ThemeRegistry};
+use graphene_gpui::render::draw_pipeline::Viewport;
+use graphene_gpui::interaction::state::InteractionState;
+use graphene_gpui::render::graph_canvas::GraphCanvas;
 use std::collections::HashMap;
 
 // Layout names list
@@ -75,7 +77,6 @@ fn color_value_to_gpui_color(color_val: ColorValue) -> gpui::Rgba {
                 | ((b * 255.0) as u32) << 8
                 | (a * 255.0) as u32,
         ),
-        _ => gpui::rgba(0x89b4faff),
     }
 }
 
@@ -87,65 +88,17 @@ struct Theme {
     accent: gpui::Rgba,
     text: gpui::Rgba,
     text_dim: gpui::Rgba,
-    node_fill: gpui::Rgba,
-    node_border: gpui::Rgba,
-    edge_color: gpui::Rgba,
 }
 
 impl Theme {
-    fn catppuccin_mocha() -> Self {
+    fn from_style(theme: &graphene_style::Theme) -> Self {
         Self {
-            bg: gpui::rgb(0x1e1e2e),
-            panel_bg: gpui::rgb(0x181825),
-            border: gpui::rgb(0x313244),
-            accent: gpui::rgb(0x89b4fa), // blue
-            text: gpui::rgb(0xcdd6f4),
-            text_dim: gpui::rgb(0xa6adc8),
-            node_fill: gpui::rgb(0x313244),
-            node_border: gpui::rgb(0xcdd6f4),
-            edge_color: gpui::rgb(0x45475a),
-        }
-    }
-
-    fn gruvbox_dark() -> Self {
-        Self {
-            bg: gpui::rgb(0x282828),
-            panel_bg: gpui::rgb(0x1d2021),
-            border: gpui::rgb(0x3c3836),
-            accent: gpui::rgb(0xd65d0e), // orange
-            text: gpui::rgb(0xfbf1c7),
-            text_dim: gpui::rgb(0xa89984),
-            node_fill: gpui::rgb(0x3c3836),
-            node_border: gpui::rgb(0xfbf1c7),
-            edge_color: gpui::rgb(0x504945),
-        }
-    }
-
-    fn one_dark() -> Self {
-        Self {
-            bg: gpui::rgb(0x282c34),
-            panel_bg: gpui::rgb(0x21252b),
-            border: gpui::rgb(0x181a1f),
-            accent: gpui::rgb(0x98c379), // green
-            text: gpui::rgb(0xabb2bf),
-            text_dim: gpui::rgb(0x5c6370),
-            node_fill: gpui::rgb(0x3e4452),
-            node_border: gpui::rgb(0xabb2bf),
-            edge_color: gpui::rgb(0x2c313c),
-        }
-    }
-
-    fn github_light() -> Self {
-        Self {
-            bg: gpui::rgb(0xffffff),
-            panel_bg: gpui::rgb(0xf6f8fa),
-            border: gpui::rgb(0xd0d7de),
-            accent: gpui::rgb(0x0969da), // GitHub blue
-            text: gpui::rgb(0x24292f),
-            text_dim: gpui::rgb(0x57606a),
-            node_fill: gpui::rgb(0xf6f8fa),
-            node_border: gpui::rgb(0x24292f),
-            edge_color: gpui::rgb(0xd0d7de),
+            bg: color_value_to_gpui_color(theme.bg),
+            panel_bg: color_value_to_gpui_color(theme.panel_bg),
+            border: color_value_to_gpui_color(theme.border),
+            accent: color_value_to_gpui_color(theme.accent),
+            text: color_value_to_gpui_color(theme.text),
+            text_dim: color_value_to_gpui_color(theme.text_dim),
         }
     }
 }
@@ -156,14 +109,10 @@ struct DemoApp {
     selected_fixture_idx: usize,
     selected_layout: String,
 
-    // Viewport transforms
-    offset: Vec2,
-    zoom: f32,
+    // Viewport and Interaction states
+    viewport: Viewport,
+    interaction_state: InteractionState,
 
-    // Mouse interaction states
-    is_panning: bool,
-    pan_start: Point<Pixels>,
-    dragging_node: Option<NodeId>,
     selected_node: Option<NodeId>,
     selected_edge: Option<usize>,
 
@@ -173,6 +122,16 @@ struct DemoApp {
     input_k_att: Entity<InputState>,
     input_iterations: Entity<InputState>,
     input_circle_radius: Entity<InputState>,
+    input_theta: Entity<InputState>,
+    input_layer_spacing: Entity<InputState>,
+    input_node_spacing: Entity<InputState>,
+    input_mds_base_dist: Entity<InputState>,
+    input_bipartite_col_spacing: Entity<InputState>,
+    input_bipartite_vert_spacing: Entity<InputState>,
+    input_packer_spacing: Entity<InputState>,
+    input_compound_padding: Entity<InputState>,
+    input_regional_columns: Entity<InputState>,
+    input_regional_cell_size: Entity<InputState>,
 
     // CRUD input states
     node_name_state: Entity<InputState>,
@@ -180,20 +139,18 @@ struct DemoApp {
     edge_tgt_state: Entity<InputState>,
     edge_weight_state: Entity<InputState>,
 
-    current_theme: String,
+    themes: ThemeRegistry,
+    current_theme_idx: usize,
 
-    // Canvas bounds recorded during paint
-    canvas_bounds: Bounds<Pixels>,
 
-    // Layout animation states
-    start_positions: Vec<Vec2>,
-    target_positions: Vec<Vec2>,
-    animation_progress: f32,
-    is_animating: bool,
 
     // Live physics simulation fields
     physics_enabled: bool,
     physics_temperature: f32,
+    use_barnes_hut: bool,
+
+    // Undo/Redo
+    undo_redo: UndoRedoManager<ComputedStyle>,
 }
 
 impl DemoApp {
@@ -225,6 +182,56 @@ impl DemoApp {
             s.replace_text_in_range(None, "150.0", window, cx);
             s
         });
+        let input_theta = cx.new(|cx| {
+            let mut s = InputState::new(window, cx);
+            s.replace_text_in_range(None, "0.5", window, cx);
+            s
+        });
+        let input_layer_spacing = cx.new(|cx| {
+            let mut s = InputState::new(window, cx);
+            s.replace_text_in_range(None, "80.0", window, cx);
+            s
+        });
+        let input_node_spacing = cx.new(|cx| {
+            let mut s = InputState::new(window, cx);
+            s.replace_text_in_range(None, "60.0", window, cx);
+            s
+        });
+        let input_mds_base_dist = cx.new(|cx| {
+            let mut s = InputState::new(window, cx);
+            s.replace_text_in_range(None, "50.0", window, cx);
+            s
+        });
+        let input_bipartite_col_spacing = cx.new(|cx| {
+            let mut s = InputState::new(window, cx);
+            s.replace_text_in_range(None, "120.0", window, cx);
+            s
+        });
+        let input_bipartite_vert_spacing = cx.new(|cx| {
+            let mut s = InputState::new(window, cx);
+            s.replace_text_in_range(None, "60.0", window, cx);
+            s
+        });
+        let input_packer_spacing = cx.new(|cx| {
+            let mut s = InputState::new(window, cx);
+            s.replace_text_in_range(None, "80.0", window, cx);
+            s
+        });
+        let input_compound_padding = cx.new(|cx| {
+            let mut s = InputState::new(window, cx);
+            s.replace_text_in_range(None, "20.0", window, cx);
+            s
+        });
+        let input_regional_columns = cx.new(|cx| {
+            let mut s = InputState::new(window, cx);
+            s.replace_text_in_range(None, "2", window, cx);
+            s
+        });
+        let input_regional_cell_size = cx.new(|cx| {
+            let mut s = InputState::new(window, cx);
+            s.replace_text_in_range(None, "250.0", window, cx);
+            s
+        });
 
         let node_name_state = cx.new(|cx| {
             let mut s = InputState::new(window, cx);
@@ -252,11 +259,8 @@ impl DemoApp {
             fixtures,
             selected_fixture_idx: 0,
             selected_layout: "Circle".to_string(),
-            offset: Vec2::default(),
-            zoom: 1.0,
-            is_panning: false,
-            pan_start: Point::default(),
-            dragging_node: None,
+            viewport: Viewport::new(Bounds::default()),
+            interaction_state: InteractionState::new(64.0),
             selected_node: None,
             selected_edge: None,
             input_gravity,
@@ -264,18 +268,27 @@ impl DemoApp {
             input_k_att,
             input_iterations,
             input_circle_radius,
+            input_theta,
+            input_layer_spacing,
+            input_node_spacing,
+            input_mds_base_dist,
+            input_bipartite_col_spacing,
+            input_bipartite_vert_spacing,
+            input_packer_spacing,
+            input_compound_padding,
+            input_regional_columns,
+            input_regional_cell_size,
             node_name_state,
             edge_src_state,
             edge_tgt_state,
             edge_weight_state,
-            current_theme: "Catppuccin Mocha".to_string(),
-            canvas_bounds: Bounds::default(),
-            start_positions: Vec::new(),
-            target_positions: Vec::new(),
-            animation_progress: 0.0,
-            is_animating: false,
+            themes: ThemeRegistry::new(),
+            current_theme_idx: 3, // GitHub Light index is 3
+
             physics_enabled: true,
             physics_temperature: 10.0,
+            use_barnes_hut: false,
+            undo_redo: UndoRedoManager::new(),
         };
         app.load_preset(0, window, cx);
         app
@@ -293,22 +306,32 @@ impl DemoApp {
         let k_att = 0.06;
         let gravity = 0.3;
 
-        for i in 0..n {
-            for j in 0..n {
-                if i == j {
-                    continue;
+        // 1. Repulsive forces (classical O(N^2) or Barnes-Hut O(N log N))
+        if self.use_barnes_hut {
+            let positions_slice = &*self.state.positions;
+            let quadtree = graphene_layout::Quadtree::build(positions_slice);
+            for i in 0..n {
+                let pos_i = positions_slice[i];
+                forces[i] = quadtree.accumulate_repulsion(i, pos_i, positions_slice, k_rep, 0.5);
+            }
+        } else {
+            for i in 0..n {
+                for j in 0..n {
+                    if i == j {
+                        continue;
+                    }
+                    let pos_i = *self.state.positions.get(i);
+                    let pos_j = *self.state.positions.get(j);
+
+                    let dx = pos_i.x - pos_j.x;
+                    let dy = pos_i.y - pos_j.y;
+                    let dist_sq = dx * dx + dy * dy + 0.01;
+                    let dist = dist_sq.sqrt();
+
+                    let force = k_rep / dist_sq;
+                    forces[i].x += (dx / dist) * force;
+                    forces[i].y += (dy / dist) * force;
                 }
-                let pos_i = *self.state.positions.get(i);
-                let pos_j = *self.state.positions.get(j);
-
-                let dx = pos_i.x - pos_j.x;
-                let dy = pos_i.y - pos_j.y;
-                let dist_sq = dx * dx + dy * dy + 0.01;
-                let dist = dist_sq.sqrt();
-
-                let force = k_rep / dist_sq;
-                forces[i].x += (dx / dist) * force;
-                forces[i].y += (dy / dist) * force;
             }
         }
 
@@ -343,7 +366,11 @@ impl DemoApp {
         let temp = self.physics_temperature;
         for i in 0..n {
             let id = self.state.node_index_to_id[i];
-            if self.dragging_node == Some(id) {
+            let is_dragging = match self.interaction_state.drag_start {
+                Some((drag_id, _, _)) => drag_id == id,
+                None => false,
+            };
+            if is_dragging {
                 continue;
             }
 
@@ -394,8 +421,14 @@ impl DemoApp {
                         let id_i = self.state.node_index_to_id[i];
                         let id_j = self.state.node_index_to_id[j];
 
-                        let is_dragging_i = self.dragging_node == Some(id_i);
-                        let is_dragging_j = self.dragging_node == Some(id_j);
+                        let is_dragging_i = match self.interaction_state.drag_start {
+                            Some((drag_id, _, _)) => drag_id == id_i,
+                            None => false,
+                        };
+                        let is_dragging_j = match self.interaction_state.drag_start {
+                            Some((drag_id, _, _)) => drag_id == id_j,
+                            None => false,
+                        };
 
                         if is_dragging_i && !is_dragging_j {
                             let p_j = self.state.positions.get_mut(j);
@@ -421,15 +454,11 @@ impl DemoApp {
     }
 
     fn get_theme(&self) -> Theme {
-        match self.current_theme.as_str() {
-            "Gruvbox Dark" => Theme::gruvbox_dark(),
-            "One Dark" => Theme::one_dark(),
-            "GitHub Light" => Theme::github_light(),
-            _ => Theme::catppuccin_mocha(),
-        }
+        let style_theme = &self.themes.themes[self.current_theme_idx];
+        Theme::from_style(style_theme)
     }
 
-    fn load_preset(&mut self, idx: usize, window: &mut Window, cx: &mut Context<Self>) {
+    fn load_preset(&mut self, idx: usize, _window: &mut Window, _cx: &mut Context<Self>) {
         self.selected_fixture_idx = idx;
         let fixture = &self.fixtures[idx];
         self.state = fixture.state.clone();
@@ -469,55 +498,25 @@ impl DemoApp {
             animate: false,
         };
         circle.compute(&mut self.state);
-        self.offset = Vec2::default();
-        self.zoom = 1.0;
+        self.viewport.offset = Vec2::default();
+        self.viewport.zoom = 1.0;
         self.physics_temperature = 10.0;
         self.state.dirty_flags |=
             graphene_core::DirtyFlags::POSITION_DIRTY | graphene_core::DirtyFlags::TOPOLOGY_DIRTY;
+        self.interaction_state.rebuild_grid(&self.state);
     }
 
     fn fit_view(&mut self) {
-        if self.state.node_index_to_id.is_empty() {
-            self.offset = Vec2::default();
-            self.zoom = 1.0;
-            return;
-        }
-        let mut x_min = f32::MAX;
-        let mut x_max = f32::MIN;
-        let mut y_min = f32::MAX;
-        let mut y_max = f32::MIN;
-        for &id in &self.state.node_index_to_id {
-            if let Some(&idx) = self.state.node_keys.get(id) {
-                let pos = *self.state.positions.get(idx);
-                x_min = x_min.min(pos.x);
-                x_max = x_max.max(pos.x);
-                y_min = y_min.min(pos.y);
-                y_max = y_max.max(pos.y);
-            }
-        }
-        let cx_graph = (x_min + x_max) / 2.0;
-        let cy_graph = (y_min + y_max) / 2.0;
-
-        self.offset = Vec2::new(-cx_graph, -cy_graph);
-
-        let w_graph = x_max - x_min + 100.0;
-        let h_graph = y_max - y_min + 100.0;
-        let w_canvas = f32::from(self.canvas_bounds.size.width);
-        let h_canvas = f32::from(self.canvas_bounds.size.height);
-
-        if w_canvas > 0.0 && h_canvas > 0.0 {
-            let z_x = w_canvas / w_graph;
-            let z_y = h_canvas / h_graph;
-            self.zoom = z_x.min(z_y).clamp(0.2, 3.0);
-        } else {
-            self.zoom = 1.0;
-        }
+        self.viewport.fit_to_graph(&self.state);
+        self.interaction_state.rebuild_grid(&self.state);
     }
 
     fn trigger_layout(&mut self, cx: &mut Context<Self>) {
         if self.state.node_index_to_id.is_empty() {
             return;
         }
+
+        self.undo_redo.record_state(&self.state);
 
         let start_pos: Vec<Vec2> = self.state.positions.iter().copied().collect();
 
@@ -528,10 +527,17 @@ impl DemoApp {
             self.state.positions.set(idx, pos);
         }
 
-        self.start_positions = start_pos;
-        self.target_positions = target_pos;
-        self.animation_progress = 0.0;
-        self.is_animating = true;
+        let duration = std::time::Duration::from_millis(300);
+        for (idx, &node_id) in self.state.node_index_to_id.iter().enumerate() {
+            if idx < start_pos.len() && idx < target_pos.len() {
+                self.state.animations.tracks.insert(node_id, graphene_core::AnimationTrack::Position {
+                    from: start_pos[idx],
+                    to: target_pos[idx],
+                    duration,
+                    elapsed: std::time::Duration::ZERO,
+                });
+            }
+        }
         cx.notify();
     }
 
@@ -571,6 +577,76 @@ impl DemoApp {
             .to_string()
             .parse::<f32>()
             .unwrap_or(150.0);
+        let theta = self
+            .input_theta
+            .read(cx)
+            .text()
+            .to_string()
+            .parse::<f32>()
+            .unwrap_or(0.5);
+        let layer_spacing = self
+            .input_layer_spacing
+            .read(cx)
+            .text()
+            .to_string()
+            .parse::<f32>()
+            .unwrap_or(80.0);
+        let node_spacing = self
+            .input_node_spacing
+            .read(cx)
+            .text()
+            .to_string()
+            .parse::<f32>()
+            .unwrap_or(60.0);
+        let mds_base_dist = self
+            .input_mds_base_dist
+            .read(cx)
+            .text()
+            .to_string()
+            .parse::<f32>()
+            .unwrap_or(50.0);
+        let bipartite_col_spacing = self
+            .input_bipartite_col_spacing
+            .read(cx)
+            .text()
+            .to_string()
+            .parse::<f32>()
+            .unwrap_or(120.0);
+        let bipartite_vert_spacing = self
+            .input_bipartite_vert_spacing
+            .read(cx)
+            .text()
+            .to_string()
+            .parse::<f32>()
+            .unwrap_or(60.0);
+        let packer_spacing = self
+            .input_packer_spacing
+            .read(cx)
+            .text()
+            .to_string()
+            .parse::<f32>()
+            .unwrap_or(80.0);
+        let compound_padding = self
+            .input_compound_padding
+            .read(cx)
+            .text()
+            .to_string()
+            .parse::<f32>()
+            .unwrap_or(20.0);
+        let regional_columns = self
+            .input_regional_columns
+            .read(cx)
+            .text()
+            .to_string()
+            .parse::<usize>()
+            .unwrap_or(2);
+        let regional_cell_size = self
+            .input_regional_cell_size
+            .read(cx)
+            .text()
+            .to_string()
+            .parse::<f32>()
+            .unwrap_or(250.0);
 
         match self.selected_layout.as_str() {
             "Circle" => {
@@ -589,6 +665,8 @@ impl DemoApp {
                     k_rep,
                     k_att,
                     initial_temp: 10.0,
+                    use_barnes_hut: self.use_barnes_hut,
+                    theta,
                 };
                 force.compute(&mut self.state);
             }
@@ -601,17 +679,26 @@ impl DemoApp {
                         k_rep,
                         k_att,
                         initial_temp: 10.0,
+                        use_barnes_hut: self.use_barnes_hut,
+                        theta,
                     },
-                    padding: 20.0,
+                    padding: compound_padding,
                 };
                 cose.compute(&mut self.state);
             }
             "KamadaKawai" => {
-                let mut kk = KamadaKawaiLayout::default();
+                let mut kk = KamadaKawaiLayout {
+                    iterations,
+                    k: 1.0,
+                    l_0: 50.0,
+                };
                 kk.compute(&mut self.state);
             }
             "Sugiyama" => {
-                let mut sugi = SugiyamaLayout::default();
+                let mut sugi = SugiyamaLayout {
+                    layer_spacing,
+                    node_spacing,
+                };
                 sugi.compute(&mut self.state);
             }
             "ReingoldTilford" => {
@@ -619,7 +706,10 @@ impl DemoApp {
                 rt.compute(&mut self.state);
             }
             "MDS" => {
-                let mut mds = MdsLayout::default();
+                let mut mds = MdsLayout {
+                    iterations,
+                    base_dist: mds_base_dist,
+                };
                 mds.compute(&mut self.state);
             }
             "Grid" => {
@@ -638,8 +728,8 @@ impl DemoApp {
                         let idx = *node_keys_map.get(id).unwrap_or(&0);
                         node_partitions[idx % 4]
                     },
-                    column_spacing: 120.0,
-                    vertical_spacing: 60.0,
+                    column_spacing: bipartite_col_spacing,
+                    vertical_spacing: bipartite_vert_spacing,
                 };
                 bipartite.compute(&mut self.state);
             }
@@ -662,7 +752,11 @@ impl DemoApp {
                 weighted.compute(&mut self.state);
             }
             "CollisionForce" => {
-                let mut collision = CollisionForceDirectedLayout::default();
+                let mut collision = CollisionForceDirectedLayout {
+                    iterations,
+                    gravity,
+                    ideal_length: 50.0,
+                };
                 collision.compute(&mut self.state);
             }
             "DisconnectedPack" => {
@@ -674,8 +768,10 @@ impl DemoApp {
                         k_rep,
                         k_att,
                         initial_temp: 10.0,
+                        use_barnes_hut: self.use_barnes_hut,
+                        theta,
                     },
-                    spacing: 80.0,
+                    spacing: packer_spacing,
                 };
                 packer.compute(&mut self.state);
             }
@@ -688,8 +784,10 @@ impl DemoApp {
                         k_rep,
                         k_att,
                         initial_temp: 10.0,
+                        use_barnes_hut: self.use_barnes_hut,
+                        theta,
                     },
-                    padding: 20.0,
+                    padding: compound_padding,
                 };
                 comp.compute(&mut self.state);
             }
@@ -707,9 +805,11 @@ impl DemoApp {
                         k_rep,
                         k_att,
                         initial_temp: 10.0,
+                        use_barnes_hut: self.use_barnes_hut,
+                        theta,
                     },
-                    columns: 2,
-                    cell_size: 250.0,
+                    columns: regional_columns,
+                    cell_size: regional_cell_size,
                 };
                 regional.compute(&mut self.state);
             }
@@ -723,6 +823,7 @@ impl DemoApp {
         if label.trim().is_empty() {
             return;
         }
+        self.undo_redo.record_state(&self.state);
         let pos = Vec2::new(0.0, 0.0);
         let id = self.state.add_node(pos, Size2::new(40.0, 40.0));
 
@@ -743,6 +844,7 @@ impl DemoApp {
             .node_labels
             .insert(id, label);
         self.state.dirty_flags |= graphene_core::DirtyFlags::TOPOLOGY_DIRTY;
+        self.interaction_state.rebuild_grid(&self.state);
 
         self.node_name_state.update(cx, |input, cx| {
             input.replace_text_in_range(None, "", window, cx);
@@ -751,9 +853,11 @@ impl DemoApp {
 
     fn delete_selected_node(&mut self) {
         if let Some(id) = self.selected_node {
+            self.undo_redo.record_state(&self.state);
             self.state.remove_node(id);
             self.selected_node = None;
             self.state.dirty_flags |= graphene_core::DirtyFlags::TOPOLOGY_DIRTY;
+            self.interaction_state.rebuild_grid(&self.state);
         }
     }
 
@@ -778,6 +882,7 @@ impl DemoApp {
 
         if let (Some(src), Some(tgt)) = (src_node, tgt_node) {
             let edge_idx = self.state.edges.len();
+            self.undo_redo.record_state(&self.state);
             self.state.add_edge(src, tgt, EdgeData::default());
 
             let w = weight_str.parse::<f32>().unwrap_or(1.0);
@@ -793,6 +898,7 @@ impl DemoApp {
             }
             self.state.edge_computed_styles.set(edge_idx, style);
             self.state.dirty_flags |= graphene_core::DirtyFlags::TOPOLOGY_DIRTY;
+            self.interaction_state.rebuild_grid(&self.state);
 
             self.edge_src_state.update(cx, |input, cx| {
                 input.replace_text_in_range(None, "", window, cx);
@@ -807,21 +913,17 @@ impl DemoApp {
 impl Render for DemoApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = self.get_theme();
-        let weak_entity = cx.weak_entity();
 
-        let needs_physics = self.physics_enabled && (self.physics_temperature > 0.05 || self.dragging_node.is_some());
-        let needs_tick = self.is_animating || needs_physics;
+        let is_animating = !self.state.animations.tracks.is_empty();
+        let needs_physics = self.physics_enabled
+            && (self.physics_temperature > 0.05 || self.interaction_state.drag_start.is_some());
+        let needs_tick = is_animating || needs_physics;
 
         if needs_tick {
-            if self.is_animating {
-                let progress = self.animation_progress;
-                for idx in 0..self.state.node_index_to_id.len() {
-                    if idx < self.start_positions.len() && idx < self.target_positions.len() {
-                        let start = self.start_positions[idx];
-                        let target = self.target_positions[idx];
-                        let current = start * (1.0 - progress) + target * progress;
-                        self.state.positions.set(idx, current);
-                    }
+            if is_animating {
+                self.state.tick_animations(std::time::Duration::from_millis(16));
+                if self.state.animations.tracks.is_empty() {
+                    self.interaction_state.rebuild_grid(&self.state);
                 }
             } else if needs_physics {
                 self.run_physics_step();
@@ -834,15 +936,8 @@ impl Render for DemoApp {
                     .timer(std::time::Duration::from_millis(16))
                     .await;
                 this.update(cx, |this, cx| {
-                    if this.is_animating {
-                        this.animation_progress += 0.05;
-                        if this.animation_progress >= 1.0 {
-                            this.animation_progress = 1.0;
-                            this.is_animating = false;
-                            this.physics_temperature = 10.0;
-                        }
-                    } else if this.physics_enabled {
-                        if this.dragging_node.is_some() {
+                    if this.physics_enabled && !is_animating {
+                        if this.interaction_state.drag_start.is_some() {
                             this.physics_temperature = 10.0;
                         } else {
                             this.physics_temperature *= 0.95;
@@ -864,11 +959,13 @@ impl Render for DemoApp {
             .child(
                 gpui::div()
                     .flex()
-                    .size_full()
+                    .flex_1()
+                    .h(px(0.0))
                     .child(self.render_sidebar_left(&theme, cx))
                     .child(self.render_canvas_view(&theme, window, cx))
                     .child(self.render_sidebar_right(&theme, window, cx)),
             )
+            .child(self.render_bottom_bar(&theme))
     }
 }
 
@@ -907,7 +1004,7 @@ impl DemoApp {
                         gpui::div()
                             .text_color(theme.text_dim)
                             .text_size(px(12.0))
-                            .child(format!("Zoom: {:.0}%", self.zoom * 100.0)),
+                            .child(format!("Zoom: {:.0}%", self.viewport.zoom * 100.0)),
                     )
                     .child(
                         gpui::div()
@@ -920,7 +1017,7 @@ impl DemoApp {
 
     fn render_sidebar_left(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
         gpui::div()
-            .w(px(250.0))
+            .flex_col()
             .h_full()
             .bg(theme.panel_bg)
             .border_r(px(1.0))
@@ -1054,23 +1151,63 @@ impl DemoApp {
                                     .text_color(theme.text)
                                     .text_size(px(11.0))
                                     .child(if self.physics_enabled {
-                                        format!("Status: Active (Temp: {:.2})", self.physics_temperature)
+                                        format!(
+                                            "Status: Active (Temp: {:.2})",
+                                            self.physics_temperature
+                                        )
                                     } else {
                                         "Status: Disabled".to_string()
-                                    })
+                                    }),
                             )
                             .child(
                                 Button::new("toggle-physics-btn")
-                                    .label(if self.physics_enabled { "DISABLE" } else { "ENABLE" })
+                                    .label(if self.physics_enabled {
+                                        "DISABLE"
+                                    } else {
+                                        "ENABLE"
+                                    })
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.physics_enabled = !this.physics_enabled;
                                         if this.physics_enabled {
                                             this.physics_temperature = 10.0;
                                         }
                                         cx.notify();
-                                    }))
-                            )
+                                    })),
+                            ),
                     )
+                    .child(
+                        gpui::div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .p_2()
+                            .bg(theme.bg)
+                            .rounded_md()
+                            .border(px(1.0))
+                            .border_color(theme.border)
+                            .child(
+                                gpui::div()
+                                    .text_color(theme.text)
+                                    .text_size(px(11.0))
+                                    .child(if self.use_barnes_hut {
+                                        "Barnes-Hut: ON"
+                                    } else {
+                                        "Barnes-Hut: OFF"
+                                    }),
+                            )
+                            .child(
+                                Button::new("toggle-barnes-hut-btn")
+                                    .label(if self.use_barnes_hut {
+                                        "CLASSIC"
+                                    } else {
+                                        "BARNES-HUT"
+                                    })
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.use_barnes_hut = !this.use_barnes_hut;
+                                        cx.notify();
+                                    })),
+                            ),
+                    ),
             )
             .child(
                 Button::new("run-layout-btn")
@@ -1095,8 +1232,8 @@ impl DemoApp {
                         Button::new("reset-zoom-btn")
                             .label("RESET")
                             .on_click(cx.listener(|this, _, _, _| {
-                                this.offset = Vec2::default();
-                                this.zoom = 1.0;
+                                this.viewport.offset = Vec2::default();
+                                this.viewport.zoom = 1.0;
                             })),
                     ),
             )
@@ -1105,12 +1242,141 @@ impl DemoApp {
     fn render_sidebar_right(
         &self,
         theme: &Theme,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        let layout_params_children = {
+            let mut children = Vec::new();
+            let layout = self.selected_layout.as_str();
+
+            let has_force_directed = matches!(
+                layout,
+                "ForceDirected" | "CoSE" | "WeightedForce" | "DisconnectedPack" | "Compound" | "RegionalPartition"
+            );
+
+            if has_force_directed {
+                children.push(
+                    gpui::div()
+                        .child(gpui::div().text_color(theme.text_dim).text_size(px(10.0)).child("Gravity"))
+                        .child(Input::new(&self.input_gravity))
+                );
+                children.push(
+                    gpui::div()
+                        .child(gpui::div().text_color(theme.text_dim).text_size(px(10.0)).child("Repulsion"))
+                        .child(Input::new(&self.input_k_rep))
+                );
+                children.push(
+                    gpui::div()
+                        .child(gpui::div().text_color(theme.text_dim).text_size(px(10.0)).child("Attraction"))
+                        .child(Input::new(&self.input_k_att))
+                );
+            }
+
+            if has_force_directed || matches!(layout, "KamadaKawai" | "MDS" | "CollisionForce") {
+                children.push(
+                    gpui::div()
+                        .child(gpui::div().text_color(theme.text_dim).text_size(px(10.0)).child("Iterations"))
+                        .child(Input::new(&self.input_iterations))
+                );
+            }
+
+            if layout == "Circle" {
+                children.push(
+                    gpui::div()
+                        .child(gpui::div().text_color(theme.text_dim).text_size(px(10.0)).child("Circle Radius"))
+                        .child(Input::new(&self.input_circle_radius))
+                );
+            }
+
+            if matches!(layout, "ForceDirected" | "CoSE" | "DisconnectedPack" | "Compound" | "RegionalPartition") {
+                children.push(
+                    gpui::div()
+                        .child(gpui::div().text_color(theme.text_dim).text_size(px(10.0)).child("Barnes-Hut Theta"))
+                        .child(Input::new(&self.input_theta))
+                );
+            }
+
+            if layout == "Sugiyama" {
+                children.push(
+                    gpui::div()
+                        .child(gpui::div().text_color(theme.text_dim).text_size(px(10.0)).child("Layer Spacing"))
+                        .child(Input::new(&self.input_layer_spacing))
+                );
+                children.push(
+                    gpui::div()
+                        .child(gpui::div().text_color(theme.text_dim).text_size(px(10.0)).child("Node Spacing"))
+                        .child(Input::new(&self.input_node_spacing))
+                );
+            }
+
+            if layout == "MDS" {
+                children.push(
+                    gpui::div()
+                        .child(gpui::div().text_color(theme.text_dim).text_size(px(10.0)).child("Base Distance"))
+                        .child(Input::new(&self.input_mds_base_dist))
+                );
+            }
+
+            if layout == "Bipartite" {
+                children.push(
+                    gpui::div()
+                        .child(gpui::div().text_color(theme.text_dim).text_size(px(10.0)).child("Column Spacing"))
+                        .child(Input::new(&self.input_bipartite_col_spacing))
+                );
+                children.push(
+                    gpui::div()
+                        .child(gpui::div().text_color(theme.text_dim).text_size(px(10.0)).child("Vertical Spacing"))
+                        .child(Input::new(&self.input_bipartite_vert_spacing))
+                );
+            }
+
+            if layout == "DisconnectedPack" {
+                children.push(
+                    gpui::div()
+                        .child(gpui::div().text_color(theme.text_dim).text_size(px(10.0)).child("Packer Spacing"))
+                        .child(Input::new(&self.input_packer_spacing))
+                );
+            }
+
+            if matches!(layout, "CoSE" | "Compound") {
+                children.push(
+                    gpui::div()
+                        .child(gpui::div().text_color(theme.text_dim).text_size(px(10.0)).child("Compound Padding"))
+                        .child(Input::new(&self.input_compound_padding))
+                );
+            }
+
+            if layout == "RegionalPartition" {
+                children.push(
+                    gpui::div()
+                        .child(gpui::div().text_color(theme.text_dim).text_size(px(10.0)).child("Regional Columns"))
+                        .child(Input::new(&self.input_regional_columns))
+                );
+                children.push(
+                    gpui::div()
+                        .child(gpui::div().text_color(theme.text_dim).text_size(px(10.0)).child("Regional Cell Size"))
+                        .child(Input::new(&self.input_regional_cell_size))
+                );
+            }
+
+            if children.is_empty() {
+                children.push(
+                    gpui::div()
+                        .child(
+                            gpui::div()
+                                .text_color(theme.text_dim)
+                                .text_size(px(11.0))
+                                .child("No configurable options for this layout.")
+                        )
+                );
+            }
+
+            children
+        };
+
         gpui::div()
             .id("sidebar-right")
-            .w(px(260.0))
+            .flex_col()
             .h_full()
             .bg(theme.panel_bg)
             .border_l(px(1.0))
@@ -1165,7 +1431,7 @@ impl DemoApp {
                                             .child("Shape"),
                                     )
                                     .child(
-                                        gpui::div().flex().gap_1().children(
+                                        gpui::div().flex_auto().gap_1().children(
                                             vec![
                                                 NodeShape::Ellipse,
                                                 NodeShape::Rectangle,
@@ -1279,11 +1545,13 @@ impl DemoApp {
                                             .label("DELETE EDGE")
                                             .on_click(cx.listener(|this, _, _, _| {
                                                 if let Some(edge_idx) = this.selected_edge {
+                                                    this.undo_redo.record_state(&this.state);
                                                     let id = this.state.edge_index_to_id[edge_idx];
                                                     this.state.remove_edge(id);
                                                     this.selected_edge = None;
                                                     this.state.dirty_flags |=
                                                         graphene_core::DirtyFlags::TOPOLOGY_DIRTY;
+                                                    this.interaction_state.rebuild_grid(&this.state);
                                                 }
                                             })),
                                     ),
@@ -1315,34 +1583,7 @@ impl DemoApp {
                             .p_2()
                             .bg(theme.bg)
                             .rounded_md()
-                            .child(
-                                gpui::div()
-                                    .text_color(theme.text_dim)
-                                    .text_size(px(10.0))
-                                    .child("Gravity"),
-                            )
-                            .child(Input::new(&self.input_gravity))
-                            .child(
-                                gpui::div()
-                                    .text_color(theme.text_dim)
-                                    .text_size(px(10.0))
-                                    .child("Repulsion"),
-                            )
-                            .child(Input::new(&self.input_k_rep))
-                            .child(
-                                gpui::div()
-                                    .text_color(theme.text_dim)
-                                    .text_size(px(10.0))
-                                    .child("Attraction"),
-                            )
-                            .child(Input::new(&self.input_k_att))
-                            .child(
-                                gpui::div()
-                                    .text_color(theme.text_dim)
-                                    .text_size(px(10.0))
-                                    .child("Iterations"),
-                            )
-                            .child(Input::new(&self.input_iterations)),
+                            .children(layout_params_children),
                     ),
             )
             .child(
@@ -1440,80 +1681,145 @@ impl DemoApp {
                             .child("THEME"),
                     )
                     .child(
-                        gpui::div().flex().gap_1().children(
-                            vec!["Catppuccin Mocha", "Gruvbox Dark", "One Dark", "GitHub Light"]
-                                .into_iter()
-                                .map(|t| {
-                                    let is_active = self.current_theme == t;
-                                    gpui::div()
-                                        .id(SharedString::from(format!("theme-{}", t)))
-                                        .p_1()
-                                        .bg(if is_active { theme.accent } else { theme.bg })
-                                        .text_color(if is_active {
-                                            theme.panel_bg
-                                        } else {
-                                            theme.text
-                                        })
-                                        .text_size(px(10.0))
-                                        .rounded_md()
-                                        .cursor_pointer()
-                                        .on_click(cx.listener(move |this, _, _, _| {
-                                            this.current_theme = t.to_string();
-                                        }))
-                                        .child(t)
-                                }),
+                        gpui::div().flex_col().gap_1().children(
+                            vec![
+                                "Catppuccin Mocha",
+                                "Gruvbox Dark",
+                                "One Dark",
+                                "GitHub Light",
+                            ]
+                            .into_iter()
+                            .map(|t| {
+                                let is_active = self.themes.themes[self.current_theme_idx].name == t;
+                                gpui::div()
+                                    .id(SharedString::from(format!("theme-{}", t)))
+                                    .p_1()
+                                    .bg(if is_active { theme.accent } else { theme.bg })
+                                    .text_color(if is_active {
+                                        theme.panel_bg
+                                    } else {
+                                        theme.text
+                                    })
+                                    .text_size(px(10.0))
+                                    .rounded_md()
+                                    .cursor_pointer()
+                                    .on_click(cx.listener(move |this, _, _, _| {
+                                        if let Some(pos) = this.themes.themes.iter().position(|x| x.name == t) {
+                                            this.current_theme_idx = pos;
+                                        }
+                                    }))
+                                    .child(t)
+                            }),
                         ),
                     ),
+            )
+            .child(
+                gpui::div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(
+                        gpui::div()
+                            .text_color(theme.text)
+                            .font_weight(gpui::FontWeight::BOLD)
+                            .text_size(px(11.0))
+                            .child("HISTORY"),
+                    )
+                    .child(
+                        gpui::div()
+                            .flex()
+                            .gap_2()
+                            .child(
+                                Button::new("undo-btn")
+                                    .label("UNDO")
+                                    .on_click(cx.listener(|this, _, _, _| {
+                                        this.undo_redo.undo(&mut this.state);
+                                        this.selected_node = None;
+                                        this.selected_edge = None;
+                                        this.interaction_state.rebuild_grid(&this.state);
+                                    })),
+                            )
+                            .child(
+                                Button::new("redo-btn")
+                                    .label("REDO")
+                                    .on_click(cx.listener(|this, _, _, _| {
+                                        this.undo_redo.redo(&mut this.state);
+                                        this.selected_node = None;
+                                        this.selected_edge = None;
+                                        this.interaction_state.rebuild_grid(&this.state);
+                                    })),
+                            )
+                    )
+            )
+            .child(
+                gpui::div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(
+                        gpui::div()
+                            .text_color(theme.text)
+                            .font_weight(gpui::FontWeight::BOLD)
+                            .text_size(px(11.0))
+                            .child("WORKSPACE IO"),
+                    )
+                    .child(
+                        gpui::div()
+                            .flex()
+                            .flex_col()
+                            .gap_2()
+                            .child(
+                                Button::new("save-json-btn")
+                                    .label("SAVE JSON")
+                                    .on_click(cx.listener(|this, _, _, _| {
+                                        let json = this.state.to_json();
+                                        if let Err(e) = std::fs::write("workspace_graph.json", json) {
+                                            println!("Failed to save graph: {:?}", e);
+                                        } else {
+                                            println!("Saved graph to workspace_graph.json");
+                                        }
+                                    })),
+                            )
+                            .child(
+                                Button::new("load-json-btn")
+                                    .label("LOAD JSON")
+                                    .on_click(cx.listener(|this, _, _, _| {
+                                        if let Ok(json) = std::fs::read_to_string("workspace_graph.json") {
+                                            if let Ok(new_state) = GraphState::from_json(&json) {
+                                                this.undo_redo.record_state(&this.state);
+                                                this.state = new_state;
+                                                this.selected_node = None;
+                                                this.selected_edge = None;
+                                                this.interaction_state.rebuild_grid(&this.state);
+                                                this.viewport.fit_to_graph(&this.state);
+                                            }
+                                        }
+                                    })),
+                            )
+                            .child(
+                                Button::new("export-dot-btn")
+                                    .label("EXPORT DOT")
+                                    .on_click(cx.listener(|this, _, _, _| {
+                                        let dot = this.state.to_dot();
+                                        if let Err(e) = std::fs::write("workspace_graph.dot", dot) {
+                                            println!("Failed to export DOT: {:?}", e);
+                                        } else {
+                                            println!("Exported graph to workspace_graph.dot");
+                                        }
+                                    })),
+                            )
+                    )
             )
     }
 
     fn render_canvas_view(
         &self,
         theme: &Theme,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let weak_entity = cx.weak_entity();
         let fixture = &self.fixtures[self.selected_fixture_idx];
-        let nodes_count = self.state.node_index_to_id.len();
-        let edges_count = self.state.edges.len();
-
-        let mut edge_paths = Vec::new();
-        let half_w = f32::from(self.canvas_bounds.size.width) / 2.0;
-        let half_h = f32::from(self.canvas_bounds.size.height) / 2.0;
-        let cx_val = f32::from(self.canvas_bounds.origin.x) + half_w;
-        let cy_val = f32::from(self.canvas_bounds.origin.y) + half_h;
-
-        for i in 0..edges_count {
-            let src = *self.state.edge_sources.get(i);
-            let tgt = *self.state.edge_targets.get(i);
-            let (Some(&src_idx), Some(&tgt_idx)) =
-                (self.state.node_keys.get(src), self.state.node_keys.get(tgt))
-            else {
-                continue;
-            };
-
-            let pos_src = *self.state.positions.get(src_idx);
-            let pos_tgt = *self.state.positions.get(tgt_idx);
-
-            let src_screen = Point {
-                x: px(pos_src.x * self.zoom + self.offset.x + cx_val),
-                y: px(pos_src.y * self.zoom + self.offset.y + cy_val),
-            };
-            let tgt_screen = Point {
-                x: px(pos_tgt.x * self.zoom + self.offset.x + cx_val),
-                y: px(pos_tgt.y * self.zoom + self.offset.y + cy_val),
-            };
-
-            let curve_style = match self.state.edge_computed_styles.get(i).target {
-                StylingTarget::Edge(edge_style) => edge_style.curve_style,
-                _ => EdgeCurveStyle::Straight,
-            };
-
-            edge_paths.push((src_screen, tgt_screen, curve_style));
-        }
-
-        let edge_color = theme.edge_color;
 
         gpui::div()
             .id("canvas-container")
@@ -1526,186 +1832,41 @@ impl DemoApp {
                     move |bounds, _, cx| {
                         if let Some(entity) = weak_entity.upgrade() {
                             entity.update(cx, |this, _| {
-                                this.canvas_bounds = bounds;
+                                this.viewport.bounds = gpui::Bounds {
+                                    origin: gpui::point(f32::from(bounds.origin.x), f32::from(bounds.origin.y)),
+                                    size: gpui::size(f32::from(bounds.size.width), f32::from(bounds.size.height)),
+                                };
                             });
                         }
                     },
-                    move |_bounds, _, window, _| {
-                        let origin_x = f32::from(_bounds.origin.x);
-                        let origin_y = f32::from(_bounds.origin.y);
-                        let width = f32::from(_bounds.size.width);
-                        let height = f32::from(_bounds.size.height);
-
-                        let grid_spacing = 45.0;
-                        let mut x = 0.0;
-                        while x < width {
-                            let mut builder = PathBuilder::stroke(px(1.0));
-                            builder.move_to(gpui::point(px(origin_x + x), px(origin_y)));
-                            builder.line_to(gpui::point(px(origin_x + x), px(origin_y + height)));
-                            if let Ok(path) = builder.build() {
-                                window.paint_path(path, gpui::rgba(0x2d313c11));
-                            }
-                            x += grid_spacing;
-                        }
-                        let mut y = 0.0;
-                        while y < height {
-                            let mut builder = PathBuilder::stroke(px(1.0));
-                            builder.move_to(gpui::point(px(origin_x), px(origin_y + y)));
-                            builder.line_to(gpui::point(px(origin_x + width), px(origin_y + y)));
-                            if let Ok(path) = builder.build() {
-                                window.paint_path(path, gpui::rgba(0x2d313c11));
-                            }
-                            y += grid_spacing;
-                        }
-
-                        for (src_p, tgt_p, curve_style) in &edge_paths {
-                            let mut builder = PathBuilder::stroke(px(2.0));
-                            builder.move_to(*src_p);
-
-                            match curve_style {
-                                EdgeCurveStyle::Straight => {
-                                    builder.line_to(*tgt_p);
-                                }
-                                _ => {
-                                    let mid_x = (f32::from(src_p.x) + f32::from(tgt_p.x)) / 2.0;
-                                    let mid_y = (f32::from(src_p.y) + f32::from(tgt_p.y)) / 2.0;
-                                    let dx = f32::from(tgt_p.x) - f32::from(src_p.x);
-                                    let dy = f32::from(tgt_p.y) - f32::from(src_p.y);
-                                    let len = (dx * dx + dy * dy).sqrt();
-                                    let curvature = 35.0;
-                                    let ctrl = if len > 0.0 {
-                                        Point {
-                                            x: px(mid_x - (dy / len) * curvature),
-                                            y: px(mid_y + (dx / len) * curvature),
-                                        }
-                                    } else {
-                                        Point {
-                                            x: px(mid_x),
-                                            y: px(mid_y),
-                                        }
-                                    };
-                                    builder.curve_to(ctrl, *tgt_p);
-                                }
-                            }
-                            if let Ok(path) = builder.build() {
-                                window.paint_path(path, edge_color);
-                            }
-                        }
-                    },
+                    move |_, _, _, _| {}
                 )
                 .size_full()
                 .absolute(),
             )
-            .children((0..nodes_count).map(|idx| {
-                let id = self.state.node_index_to_id[idx];
-                let pos = *self.state.positions.get(idx);
-                let size_val = *self.state.sizes.get(idx);
-                let label = fixture
-                    .node_labels
-                    .get(&id)
-                    .cloned()
-                    .unwrap_or_else(|| format!("N{}", idx));
-
-                let screen_x =
-                    pos.x * self.zoom + self.offset.x + half_w - (size_val.w * self.zoom / 2.0);
-                let screen_y =
-                    pos.y * self.zoom + self.offset.y + half_h - (size_val.h * self.zoom / 2.0);
-                let node_w = size_val.w * self.zoom;
-                let node_h = size_val.h * self.zoom;
-
-                let is_selected = self.selected_node == Some(id);
-
-                let mut fill_color = if is_selected {
-                    theme.accent
-                } else {
-                    theme.node_fill
-                };
-                let mut border_color = if is_selected {
-                    theme.panel_bg
-                } else {
-                    theme.node_border
-                };
-
-                let mut shape = NodeShape::Ellipse;
-                if idx < self.state.computed_styles.len() {
-                    if let StylingTarget::Node(node_style) =
-                        self.state.computed_styles.get(idx).target
-                    {
-                        fill_color = color_value_to_gpui_color(node_style.fill_color);
-                        border_color = color_value_to_gpui_color(node_style.border_color);
-                        shape = node_style.shape;
-                    }
-                }
-
-                if is_selected {
-                    border_color = theme.accent;
-                }
-
-                gpui::div()
-                    .id(SharedString::from(format!("node-{}", idx)))
-                    .absolute()
-                    .left(px(screen_x))
-                    .top(px(screen_y))
-                    .w(px(node_w))
-                    .h(px(node_h))
-                    .border(px(2.0))
-                    .border_color(border_color)
-                    .bg(fill_color)
-                    .when(shape == NodeShape::Ellipse, |d| d.rounded_full())
-                    .when(shape == NodeShape::Rectangle, |d| d.rounded_none())
-                    .when(shape == NodeShape::Diamond, |d| d.rounded_md())
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .cursor_pointer()
-                    .on_click(cx.listener(move |this, _, _, _| {
-                        this.selected_node = Some(id);
-                        this.selected_edge = None;
-                    }))
-                    .child(
-                        gpui::div()
-                            .text_color(theme.text)
-                            .text_size(px(10.0))
-                            .child(label),
-                    )
-            }))
+            .child(
+                GraphCanvas::new(
+                    &self.state,
+                    &self.viewport,
+                    &self.interaction_state,
+                    &self.themes.themes[self.current_theme_idx],
+                    self.selected_node,
+                    &fixture.node_labels,
+                )
+            )
             .on_mouse_down(
                 gpui::MouseButton::Left,
                 cx.listener(|this, ev: &MouseDownEvent, window, cx| {
-                    let mut hit_node = None;
-                    for idx in (0..this.state.node_index_to_id.len()).rev() {
-                        let id = this.state.node_index_to_id[idx];
-                        let pos = *this.state.positions.get(idx);
-                        let size_val = *this.state.sizes.get(idx);
-
-                        let cx_val = f32::from(this.canvas_bounds.origin.x)
-                            + f32::from(this.canvas_bounds.size.width) / 2.0;
-                        let cy_val = f32::from(this.canvas_bounds.origin.y)
-                            + f32::from(this.canvas_bounds.size.height) / 2.0;
-
-                        let node_center_x = pos.x * this.zoom + this.offset.x + cx_val;
-                        let node_center_y = pos.y * this.zoom + this.offset.y + cy_val;
-                        let half_w = (size_val.w * this.zoom) / 2.0;
-                        let half_h = (size_val.h * this.zoom) / 2.0;
-
-                        let px_val = f32::from(ev.position.x);
-                        let py_val = f32::from(ev.position.y);
-
-                        if px_val >= node_center_x - half_w
-                            && px_val <= node_center_x + half_w
-                            && py_val >= node_center_y - half_h
-                            && py_val <= node_center_y + half_h
-                        {
-                            hit_node = Some(id);
-                            break;
-                        }
-                    }
-
+                    let hit_node = this.interaction_state.hit_test(
+                        gpui::point(f32::from(ev.position.x), f32::from(ev.position.y)),
+                        &this.viewport,
+                        &this.state,
+                        this.physics_enabled,
+                    );
                     if let Some(node_id) = hit_node {
+                        this.undo_redo.record_state(&this.state);
                         this.selected_node = Some(node_id);
                         this.selected_edge = None;
-                        this.dragging_node = Some(node_id);
-                        this.pan_start = ev.position;
 
                         let label = this.fixtures[this.selected_fixture_idx]
                             .node_labels
@@ -1728,21 +1889,14 @@ impl DemoApp {
                             let pos_src = *this.state.positions.get(src_idx);
                             let pos_tgt = *this.state.positions.get(tgt_idx);
 
-                            let cx_val = f32::from(this.canvas_bounds.origin.x)
-                                + f32::from(this.canvas_bounds.size.width) / 2.0;
-                            let cy_val = f32::from(this.canvas_bounds.origin.y)
-                                + f32::from(this.canvas_bounds.size.height) / 2.0;
+                            let src_screen = this.viewport.model_to_screen(pos_src);
+                            let tgt_screen = this.viewport.model_to_screen(pos_tgt);
 
-                            let src_screen = Point {
-                                x: px(pos_src.x * this.zoom + this.offset.x + cx_val),
-                                y: px(pos_src.y * this.zoom + this.offset.y + cy_val),
-                            };
-                            let tgt_screen = Point {
-                                x: px(pos_tgt.x * this.zoom + this.offset.x + cx_val),
-                                y: px(pos_tgt.y * this.zoom + this.offset.y + cy_val),
-                            };
-
-                            let dist = distance_to_segment(ev.position, src_screen, tgt_screen);
+                            let dist = distance_to_segment(
+                                ev.position,
+                                gpui::point(px(src_screen.x), px(src_screen.y)),
+                                gpui::point(px(tgt_screen.x), px(tgt_screen.y)),
+                            );
                             if dist < 8.0 {
                                 hit_edge = Some(edge_idx);
                                 break;
@@ -1755,41 +1909,49 @@ impl DemoApp {
                         } else {
                             this.selected_node = None;
                             this.selected_edge = None;
-                            this.is_panning = true;
-                            this.pan_start = ev.position;
                         }
                     }
+
+                    let mut is_mut = this.interaction_state.clone();
+                    is_mut.on_mouse_down(
+                        gpui::point(f32::from(ev.position.x), f32::from(ev.position.y)),
+                        hit_node,
+                        &this.state,
+                    );
+                    this.interaction_state = is_mut;
                     cx.notify();
-                }),
+                })
             )
             .on_mouse_move(cx.listener(|this, ev: &gpui::MouseMoveEvent, _, cx| {
-                if let Some(node_id) = this.dragging_node {
-                    let dx = f32::from(ev.position.x - this.pan_start.x) / this.zoom;
-                    let dy = f32::from(ev.position.y - this.pan_start.y) / this.zoom;
-                    if let Some(&idx) = this.state.node_keys.get(node_id) {
-                        let pos = this.state.positions.get_mut(idx);
-                        pos.x += dx;
-                        pos.y += dy;
-                    }
-                    this.pan_start = ev.position;
+                let mut is_mut = this.interaction_state.clone();
+                let mut vp_mut = this.viewport.clone();
+                let mut st_mut = this.state.clone();
+
+                is_mut.on_mouse_drag(
+                    gpui::point(f32::from(ev.position.x), f32::from(ev.position.y)),
+                    &mut vp_mut,
+                    &mut st_mut,
+                );
+
+                this.interaction_state = is_mut;
+                this.viewport = vp_mut;
+                this.state = st_mut;
+
+                if this.interaction_state.drag_start.is_some() {
                     this.resolve_collisions();
                     this.state.dirty_flags |= graphene_core::DirtyFlags::POSITION_DIRTY;
-                    cx.notify();
-                } else if this.is_panning {
-                    let dx = f32::from(ev.position.x - this.pan_start.x);
-                    let dy = f32::from(ev.position.y - this.pan_start.y);
-                    this.offset.x += dx;
-                    this.offset.y += dy;
-                    this.pan_start = ev.position;
-                    cx.notify();
                 }
+                cx.notify();
             }))
             .on_mouse_up(
                 gpui::MouseButton::Left,
-                cx.listener(|this, _, _, _| {
-                    this.dragging_node = None;
-                    this.is_panning = false;
-                }),
+                cx.listener(|this, _, _, cx| {
+                    let mut is_mut = this.interaction_state.clone();
+                    is_mut.on_mouse_up();
+                    this.interaction_state = is_mut;
+                    this.interaction_state.rebuild_grid(&this.state);
+                    cx.notify();
+                })
             )
             .on_scroll_wheel(cx.listener(|this, ev: &gpui::ScrollWheelEvent, _, cx| {
                 let amount = match ev.delta {
@@ -1797,10 +1959,111 @@ impl DemoApp {
                     gpui::ScrollDelta::Lines(p) => p.y * 20.0,
                 };
                 let zoom_factor = if amount > 0.0 { 1.05 } else { 0.95 };
-                this.zoom *= zoom_factor;
-                this.zoom = this.zoom.clamp(0.15, 8.0);
+                this.viewport.zoom *= zoom_factor;
+                this.viewport.zoom = this.viewport.zoom.clamp(0.15, 8.0);
                 cx.notify();
             }))
+    }
+
+    fn render_bottom_bar(&self, theme: &Theme) -> impl IntoElement {
+        let nodes_count = self.state.node_index_to_id.len();
+        let edges_count = self.state.edges.len();
+
+        let selection_status = if let Some(node_id) = self.selected_node {
+            let label = self.fixtures[self.selected_fixture_idx]
+                .node_labels
+                .get(&node_id)
+                .cloned()
+                .unwrap_or_else(|| format!("N{}", self.state.node_keys[node_id]));
+            format!("Selected: Node {}", label)
+        } else if let Some(edge_idx) = self.selected_edge {
+            format!("Selected: Edge #{}", edge_idx)
+        } else {
+            "Selected: None".to_string()
+        };
+
+        let physics_status = if self.physics_enabled {
+            format!("Physics: Active (T={:.2})", self.physics_temperature)
+        } else {
+            "Physics: Disabled".to_string()
+        };
+
+        gpui::div()
+            .flex()
+            .items_center()
+            .justify_between()
+            .h(px(26.0))
+            .px(px(12.0))
+            .bg(theme.panel_bg)
+            .border_t(px(1.0))
+            .border_color(theme.border)
+            .child(
+                gpui::div()
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .child(
+                        gpui::div()
+                            .text_color(theme.text_dim)
+                            .text_size(px(11.0))
+                            .child(format!("Nodes: {}  •  Edges: {}", nodes_count, edges_count)),
+                    )
+                    .child(
+                        gpui::div()
+                            .text_color(theme.border)
+                            .text_size(px(11.0))
+                            .child("|"),
+                    )
+                    .child(
+                        gpui::div()
+                            .text_color(theme.accent)
+                            .text_size(px(11.0))
+                            .child(selection_status),
+                    ),
+            )
+            .child(
+                gpui::div()
+                    .text_color(theme.text_dim)
+                    .text_size(px(11.0))
+                    .italic()
+                    .child("Tips: [Left-drag] nodes to move • [Drag bg] to pan • [Scroll] to zoom"),
+            )
+            .child(
+                gpui::div()
+                    .flex()
+                    .items_center()
+                    .gap_3()
+                    .child(
+                        gpui::div()
+                            .text_color(theme.text_dim)
+                            .text_size(px(11.0))
+                            .child(physics_status),
+                    )
+                    .child(
+                        gpui::div()
+                            .text_color(theme.border)
+                            .text_size(px(11.0))
+                            .child("|"),
+                    )
+                    .child(
+                        gpui::div()
+                            .text_color(theme.text_dim)
+                            .text_size(px(11.0))
+                            .child(format!("Layout: {}", self.selected_layout)),
+                    )
+                    .child(
+                        gpui::div()
+                            .text_color(theme.border)
+                            .text_size(px(11.0))
+                            .child("|"),
+                    )
+                    .child(
+                        gpui::div()
+                            .text_color(theme.text_dim)
+                            .text_size(px(11.0))
+                            .child(format!("Theme: {}", self.themes.themes[self.current_theme_idx].name)),
+                    ),
+            )
     }
 }
 

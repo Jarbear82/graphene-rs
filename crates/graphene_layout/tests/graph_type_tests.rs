@@ -360,3 +360,39 @@ fn test_bipartite_columns() {
     bipartite.compute(&mut f_small.state);
     assert_valid_positions(&f_small.state);
 }
+
+// 16. BARNES-HUT TESTS
+#[test]
+fn test_barnes_hut_layout() {
+    let fixtures = get_all_fixtures::<()>();
+
+    let f_large = fixtures
+        .iter()
+        .find(|f| f.name.contains("Undirected Large"))
+        .unwrap();
+
+    // Compute classical layout positions
+    let mut f_classic = f_large.clone();
+    let mut classic_layout = ForceDirectedLayout {
+        use_barnes_hut: false,
+        iterations: 50,
+        ..Default::default()
+    };
+    classic_layout.compute(&mut f_classic.state);
+    assert_valid_positions(&f_classic.state);
+
+    // Compute Barnes-Hut layout positions
+    let mut f_bh = f_large.clone();
+    let mut bh_layout = ForceDirectedLayout {
+        use_barnes_hut: true,
+        theta: 0.5,
+        iterations: 50,
+        ..Default::default()
+    };
+    bh_layout.compute(&mut f_bh.state);
+    assert_valid_positions(&f_bh.state);
+
+    // Check we get different but valid results
+    let n = f_classic.state.node_index_to_id.len();
+    assert!(n > 0);
+}

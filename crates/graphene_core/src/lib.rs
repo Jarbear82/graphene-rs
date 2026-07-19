@@ -527,3 +527,152 @@ impl<S: Copy + Default> Default for GraphState<S> {
         Self::new()
     }
 }
+
+impl<S: Copy + Default> GraphState<S> {
+    pub fn tick_animations(&mut self, dt: std::time::Duration) {
+        let mut completed = Vec::new();
+        for (node_id, track) in self.animations.tracks.iter_mut() {
+            let Some(&idx) = self.node_keys.get(node_id) else { continue; };
+            match track {
+                AnimationTrack::Position { from, to, duration, elapsed } => {
+                    *elapsed += dt;
+                    let progress = if duration.is_zero() {
+                        1.0
+                    } else {
+                        (elapsed.as_secs_f32() / duration.as_secs_f32()).min(1.0)
+                    };
+                    let current = *from * (1.0 - progress) + *to * progress;
+                    self.positions.set(idx, current);
+                    self.dirty_flags |= DirtyFlags::POSITION_DIRTY;
+                    if progress >= 1.0 {
+                        completed.push(node_id);
+                    }
+                }
+                _ => {}
+            }
+        }
+        for node_id in completed {
+            self.animations.tracks.remove(node_id);
+        }
+    }
+
+    pub fn to_dot(&self) -> String {
+        let mut dot = String::new();
+        dot.push_str("digraph G {\n");
+        for idx in 0..self.node_index_to_id.len() {
+            dot.push_str(&format!("  node_{} [label=\"Node {}\"];\n", idx, idx));
+        }
+        for idx in 0..self.edges.len() {
+            let src = self.edge_sources[idx];
+            let tgt = self.edge_targets[idx];
+            let src_idx = self.node_keys[src];
+            let tgt_idx = self.node_keys[tgt];
+            dot.push_str(&format!("  node_{} -> node_{};\n", src_idx, tgt_idx));
+        }
+        dot.push_str("}\n");
+        dot
+    }
+
+    pub fn to_json(&self) -> String {
+        let serialized = SerializedGraph {
+            nodes: (0..self.node_index_to_id.len()).map(|idx| {
+                let pos = self.positions[idx];
+                let size = self.sizes[idx];
+                SerializedNode { x: pos.x, y: pos.y, w: size.w, h: size.h }
+            }).collect(),
+            edges: (0..self.edges.len()).map(|idx| {
+                let src = self.edge_sources[idx];
+                let tgt = self.edge_targets[idx];
+                SerializedEdge {
+                    source_idx: self.node_keys[src],
+                    target_idx: self.node_keys[tgt],
+                }
+            }).collect(),
+        };
+        serde_json::to_string_pretty(&serialized).unwrap_or_default()
+    }
+
+    pub fn from_json(json: &str) -> Result<Self, String> {
+        let serialized: SerializedGraph = serde_json::from_str(json)
+            .map_err(|e| e.to_string())?;
+        
+        let mut state = GraphState::new();
+        let mut node_ids = Vec::new();
+        for n in serialized.nodes {
+            let id = state.add_node(Vec2::new(n.x, n.y), Size2::new(n.w, n.h));
+            node_ids.push(id);
+        }
+        for e in serialized.edges {
+            if e.source_idx < node_ids.len() && e.target_idx < node_ids.len() {
+                state.add_edge(node_ids[e.source_idx], node_ids[e.target_idx], EdgeData::default());
+            }
+        }
+        Ok(state)
+    }
+}
+
+// Snapshot-based undo/redo manager
+#[derive(Debug, Clone)]
+pub struct UndoRedoManager<S: Copy + Default> {
+    undo_stack: Vec<GraphState<S>>,
+    redo_stack: Vec<GraphState<S>>,
+}
+
+impl<S: Copy + Default> UndoRedoManager<S> {
+    pub fn new() -> Self {
+        Self {
+            undo_stack: Vec::new(),
+            redo_stack: Vec::new(),
+        }
+    }
+
+    pub fn record_state(&mut self, state: &GraphState<S>) {
+        self.undo_stack.push(state.clone());
+        if self.undo_stack.len() > 100 {
+            self.undo_stack.remove(0);
+        }
+        self.redo_stack.clear();
+    }
+
+    pub fn undo(&mut self, current: &mut GraphState<S>) -> bool {
+        if let Some(prev) = self.undo_stack.pop() {
+            self.redo_stack.push(current.clone());
+            *current = prev;
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn redo(&mut self, current: &mut GraphState<S>) -> bool {
+        if let Some(next) = self.redo_stack.pop() {
+            self.undo_stack.push(current.clone());
+            *current = next;
+            true
+        } else {
+            false
+        }
+    }
+}
+
+// JSON Serialization types
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct SerializedNode {
+    pub x: f32,
+    pub y: f32,
+    pub w: f32,
+    pub h: f32,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct SerializedEdge {
+    pub source_idx: usize,
+    pub target_idx: usize,
+}
+
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct SerializedGraph {
+    pub nodes: Vec<SerializedNode>,
+    pub edges: Vec<SerializedEdge>,
+}
+

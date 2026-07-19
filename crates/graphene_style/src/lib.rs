@@ -432,3 +432,141 @@ impl RuleEngine {
         computed
     }
 }
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Theme {
+    pub name: &'static str,
+    pub bg: ColorValue,
+    pub panel_bg: ColorValue,
+    pub border: ColorValue,
+    pub accent: ColorValue,
+    pub text: ColorValue,
+    pub text_dim: ColorValue,
+    pub node_fill: ColorValue,
+    pub node_border: ColorValue,
+    pub edge_color: ColorValue,
+}
+
+impl Theme {
+    pub fn catppuccin_mocha() -> Self {
+        Self {
+            name: "Catppuccin Mocha",
+            bg: ColorValue::Rgba(0.12, 0.12, 0.18, 1.0),
+            panel_bg: ColorValue::Rgba(0.09, 0.09, 0.15, 1.0),
+            border: ColorValue::Rgba(0.19, 0.20, 0.27, 1.0),
+            accent: ColorValue::Rgba(0.54, 0.71, 0.98, 1.0),
+            text: ColorValue::Rgba(0.80, 0.84, 0.96, 1.0),
+            text_dim: ColorValue::Rgba(0.65, 0.68, 0.78, 1.0),
+            node_fill: ColorValue::Rgba(0.19, 0.20, 0.27, 1.0),
+            node_border: ColorValue::Rgba(0.80, 0.84, 0.96, 1.0),
+            edge_color: ColorValue::Rgba(0.27, 0.28, 0.35, 1.0),
+        }
+    }
+
+    pub fn gruvbox_dark() -> Self {
+        Self {
+            name: "Gruvbox Dark",
+            bg: ColorValue::Rgba(0.16, 0.16, 0.16, 1.0),
+            panel_bg: ColorValue::Rgba(0.11, 0.13, 0.13, 1.0),
+            border: ColorValue::Rgba(0.24, 0.22, 0.21, 1.0),
+            accent: ColorValue::Rgba(0.84, 0.36, 0.05, 1.0),
+            text: ColorValue::Rgba(0.98, 0.95, 0.78, 1.0),
+            text_dim: ColorValue::Rgba(0.66, 0.60, 0.52, 1.0),
+            node_fill: ColorValue::Rgba(0.24, 0.22, 0.21, 1.0),
+            node_border: ColorValue::Rgba(0.98, 0.95, 0.78, 1.0),
+            edge_color: ColorValue::Rgba(0.31, 0.29, 0.27, 1.0),
+        }
+    }
+
+    pub fn one_dark() -> Self {
+        Self {
+            name: "One Dark",
+            bg: ColorValue::Rgba(0.16, 0.17, 0.20, 1.0),
+            panel_bg: ColorValue::Rgba(0.13, 0.15, 0.17, 1.0),
+            border: ColorValue::Rgba(0.09, 0.10, 0.12, 1.0),
+            accent: ColorValue::Rgba(0.60, 0.76, 0.47, 1.0),
+            text: ColorValue::Rgba(0.67, 0.70, 0.75, 1.0),
+            text_dim: ColorValue::Rgba(0.36, 0.39, 0.44, 1.0),
+            node_fill: ColorValue::Rgba(0.24, 0.27, 0.32, 1.0),
+            node_border: ColorValue::Rgba(0.67, 0.70, 0.75, 1.0),
+            edge_color: ColorValue::Rgba(0.17, 0.19, 0.24, 1.0),
+        }
+    }
+
+    pub fn github_light() -> Self {
+        Self {
+            name: "GitHub Light",
+            bg: ColorValue::Rgba(1.0, 1.0, 1.0, 1.0),
+            panel_bg: ColorValue::Rgba(0.96, 0.97, 0.98, 1.0),
+            border: ColorValue::Rgba(0.82, 0.84, 0.87, 1.0),
+            accent: ColorValue::Rgba(0.04, 0.41, 0.85, 1.0),
+            text: ColorValue::Rgba(0.14, 0.16, 0.18, 1.0),
+            text_dim: ColorValue::Rgba(0.34, 0.38, 0.42, 1.0),
+            node_fill: ColorValue::Rgba(0.96, 0.97, 0.98, 1.0),
+            node_border: ColorValue::Rgba(0.14, 0.16, 0.18, 1.0),
+            edge_color: ColorValue::Rgba(0.82, 0.84, 0.87, 1.0),
+        }
+    }
+}
+
+pub struct ThemeRegistry {
+    pub themes: Vec<Theme>,
+}
+
+impl ThemeRegistry {
+    pub fn new() -> Self {
+        Self {
+            themes: vec![
+                Theme::catppuccin_mocha(),
+                Theme::gruvbox_dark(),
+                Theme::one_dark(),
+                Theme::github_light(),
+            ],
+        }
+    }
+}
+
+impl Default for ThemeRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+pub struct DataMapper {
+    pub min_val: f32,
+    pub max_val: f32,
+}
+
+impl DataMapper {
+    pub fn new(min_val: f32, max_val: f32) -> Self {
+        Self { min_val, max_val }
+    }
+
+    pub fn map_color(&self, val: f32, start: ColorValue, end: ColorValue) -> ColorValue {
+        let t = if self.max_val > self.min_val {
+            ((val - self.min_val) / (self.max_val - self.min_val)).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        match (start, end) {
+            (ColorValue::Rgba(r1, g1, b1, a1), ColorValue::Rgba(r2, g2, b2, a2)) => {
+                ColorValue::Rgba(
+                    r1 + t * (r2 - r1),
+                    g1 + t * (g2 - g1),
+                    b1 + t * (b2 - b1),
+                    a1 + t * (a2 - a1),
+                )
+            }
+        }
+    }
+
+    pub fn map_size(&self, val: f32, min_size: f32, max_size: f32) -> f32 {
+        let t = if self.max_val > self.min_val {
+            ((val - self.min_val) / (self.max_val - self.min_val)).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        min_size + t * (max_size - min_size)
+    }
+}
+
