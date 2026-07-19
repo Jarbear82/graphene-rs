@@ -5,6 +5,7 @@ use graphene_layout::{
     CollisionForceDirectedLayout, CompoundLayout, ConcentricHubLayout, DisconnectedPacker,
     ForceDirectedLayout, GridSortedLayout, KamadaKawaiLayout, Layout, MdsLayout,
     RegionalPartitionLayout, ReingoldTilfordLayout, SugiyamaLayout, WeightedForceDirectedLayout,
+    FCoseLayout,
 };
 use std::collections::HashMap;
 
@@ -396,3 +397,107 @@ fn test_barnes_hut_layout() {
     let n = f_classic.state.node_index_to_id.len();
     assert!(n > 0);
 }
+
+// 17. FCOSE & FILE TREE TESTS
+#[test]
+fn test_fcose_layout_and_file_tree_preset() {
+    let fixtures = get_all_fixtures::<()>();
+
+    // 1. Verify the Workspace File Tree preset loads correctly
+    let f_tree = fixtures
+        .iter()
+        .find(|f| f.name.contains("Workspace File Tree"))
+        .expect("Workspace File Tree preset should exist");
+
+    assert!(f_tree.state.node_index_to_id.len() > 0, "File tree should contain nodes");
+    assert!(f_tree.state.edges.len() > 0, "File tree should contain edges");
+
+    // 2. Verify fCoSE layout computes successfully on the file tree graph
+    let mut f_layout = f_tree.clone();
+    let mut fcose = FCoseLayout::default();
+    fcose.compute(&mut f_layout.state);
+
+    assert_valid_positions(&f_layout.state);
+}
+
+// 18. UNIVERSAL COMPOUND FLATTENING TESTS
+#[test]
+fn test_compound_flattening_on_circle_layout() {
+    let fixtures = get_all_fixtures::<()>();
+
+    let f_tree = fixtures
+        .iter()
+        .find(|f| f.name.contains("Workspace File Tree"))
+        .expect("Workspace File Tree preset should exist");
+
+    let mut f_flat = f_tree.clone();
+    let mut circle = CircleLayout {
+        radius: 200.0,
+        center: Vec2::default(),
+        animate: false,
+    };
+
+    // Run CircleLayout via the flattening helper
+    let collapsed = std::collections::HashSet::new();
+    graphene_layout::compute_flat_layout(&mut circle, &mut f_flat.state, &collapsed);
+
+    assert_valid_positions(&f_flat.state);
+
+    // Verify parent directories enclose their child files/subfolders
+    // (i.e. parent size w/h must be > 0 and center must reflect child coordinates)
+    for idx in 0..f_flat.state.node_index_to_id.len() {
+        let id = f_flat.state.node_index_to_id[idx];
+        let mut is_parent = false;
+        for j in 0..f_flat.state.node_index_to_id.len() {
+            if let Some(p_id) = *f_flat.state.hierarchy.parent.get(j) {
+                if p_id == id {
+                    is_parent = true;
+                    break;
+                }
+            }
+        }
+
+        if is_parent {
+            let size = *f_flat.state.sizes.get(idx);
+            assert!(size.w > 0.0, "Compound parent width should be greater than 0");
+            assert!(size.h > 0.0, "Compound parent height should be greater than 0");
+        }
+    }
+}
+
+// 19. COLLAPSED COMPOUND LAYOUT TESTS
+#[test]
+fn test_collapsed_compound_parent_filtering() {
+    let fixtures = get_all_fixtures::<()>();
+
+    let f_tree = fixtures
+        .iter()
+        .find(|f| f.name.contains("Workspace File Tree"))
+        .expect("Workspace File Tree preset should exist");
+
+    let mut f_collapsed = f_tree.clone();
+
+    // Find the root compound node
+    let root_id = f_collapsed.state.node_index_to_id[0];
+
+    // Collapse the root folder
+    let mut collapsed = std::collections::HashSet::new();
+    collapsed.insert(root_id);
+
+    let mut circle = CircleLayout {
+        radius: 200.0,
+        center: Vec2::default(),
+        animate: false,
+    };
+
+    // Run layout with root collapsed
+    graphene_layout::compute_flat_layout(&mut circle, &mut f_collapsed.state, &collapsed);
+
+    assert_valid_positions(&f_collapsed.state);
+
+    // Verify that the collapsed parent is sized correctly as a standard node
+    let root_idx = f_collapsed.state.node_keys[root_id];
+    let size = *f_collapsed.state.sizes.get(root_idx);
+    assert_eq!(size.w, f_tree.state.sizes.get(root_idx).w, "Collapsed parent size should match its initial standard size, not enclose children");
+}
+

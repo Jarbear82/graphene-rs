@@ -6,6 +6,165 @@ pub trait Layout<S: Copy = ()> {
     fn compute(&mut self, state: &mut GraphState<S>);
 }
 
+pub fn resolve_compound_bounds<S: Copy>(
+    state: &mut GraphState<S>,
+    collapsed_parents: &HashSet<NodeId>,
+    padding: f32,
+) {
+    let n = state.node_index_to_id.len();
+    if n == 0 { return; }
+
+    let mut parent_to_children: HashMap<NodeId, Vec<NodeId>> = HashMap::new();
+    let mut all_parents = HashSet::new();
+
+    for idx in 0..n {
+        let id = state.node_index_to_id[idx];
+        if let Some(parent_id) = *state.hierarchy.parent.get(idx) {
+            parent_to_children.entry(parent_id).or_default().push(id);
+            all_parents.insert(parent_id);
+        }
+    }
+
+    let mut resolved_parents = HashSet::new();
+    let mut attempts = 0;
+    while resolved_parents.len() < all_parents.len() && attempts < 100 {
+        attempts += 1;
+        for &parent_id in &all_parents {
+            if resolved_parents.contains(&parent_id) { continue; }
+
+            // If the parent itself is collapsed, skip resolving bounds from children
+            if collapsed_parents.contains(&parent_id) {
+                resolved_parents.insert(parent_id);
+                continue;
+            }
+
+            let children = &parent_to_children[&parent_id];
+            let mut can_resolve = true;
+            for &child_id in children {
+                if all_parents.contains(&child_id) && !resolved_parents.contains(&child_id) {
+                    can_resolve = false;
+                    break;
+                }
+            }
+
+            if can_resolve {
+                let mut min_x = f32::INFINITY;
+                let mut max_x = -f32::INFINITY;
+                let mut min_y = f32::INFINITY;
+                let mut max_y = -f32::INFINITY;
+
+                for &child_id in children {
+                    let Some(&idx) = state.node_keys.get(child_id) else { continue };
+                    let pos = *state.positions.get(idx);
+                    let size = *state.sizes.get(idx);
+                    min_x = min_x.min(pos.x - size.w / 2.0);
+                    max_x = max_x.max(pos.x + size.w / 2.0);
+                    min_y = min_y.min(pos.y - size.h / 2.0);
+                    max_y = max_y.max(pos.y + size.h / 2.0);
+                }
+
+                if min_x.is_finite() {
+                    let center_x = (min_x + max_x) / 2.0;
+                    let center_y = (min_y + max_y) / 2.0;
+                    let w = (max_x - min_x) + 2.0 * padding;
+                    let h = (max_y - min_y) + 2.0 * padding;
+
+                    if let Some(&p_idx) = state.node_keys.get(parent_id) {
+                        state.positions.set(p_idx, Vec2::new(center_x, center_y));
+                        state.sizes.set(p_idx, Size2::new(w, h));
+                    }
+                }
+                resolved_parents.insert(parent_id);
+            }
+        }
+    }
+}
+
+pub fn compute_flat_layout<S: Copy + Default, L: Layout<S>>(
+    layout: &mut L,
+    state: &mut GraphState<S>,
+    collapsed_parents: &HashSet<NodeId>,
+) {
+    let n = state.node_index_to_id.len();
+    let mut visible_indices = Vec::new();
+    let mut node_map = HashMap::new();
+
+    let get_visible_rep = |mut curr: NodeId| -> NodeId {
+        let mut rep = curr;
+        while let Some(&idx) = state.node_keys.get(curr) {
+            if let Some(parent_id) = *state.hierarchy.parent.get(idx) {
+                if collapsed_parents.contains(&parent_id) {
+                    rep = parent_id;
+                }
+                curr = parent_id;
+            } else {
+                break;
+            }
+        }
+        rep
+    };
+
+    let mut flat_state = GraphState::new();
+    for idx in 0..n {
+        let id = state.node_index_to_id[idx];
+        if get_visible_rep(id) == id {
+            visible_indices.push(idx);
+            let pos = *state.positions.get(idx);
+            let size = *state.sizes.get(idx);
+            let new_id = flat_state.add_node(pos, size);
+            node_map.insert(id, new_id);
+        }
+    }
+
+    for idx in 0..n {
+        let id = state.node_index_to_id[idx];
+        if get_visible_rep(id) == id {
+            if let Some(parent_id) = *state.hierarchy.parent.get(idx) {
+                let parent_rep = get_visible_rep(parent_id);
+                if parent_rep == parent_id && !collapsed_parents.contains(&parent_id) {
+                    if let (Some(&new_child_id), Some(&new_parent_id)) = (node_map.get(&id), node_map.get(&parent_id)) {
+                        let new_child_idx = flat_state.node_keys[new_child_id];
+                        flat_state.hierarchy.parent.set(new_child_idx, Some(new_parent_id));
+                    }
+                }
+            }
+        }
+    }
+
+    for i in 0..state.edges.len() {
+        let src = *state.edge_sources.get(i);
+        let tgt = *state.edge_targets.get(i);
+        let src_rep = get_visible_rep(src);
+        let tgt_rep = get_visible_rep(tgt);
+
+        if src_rep != tgt_rep {
+            if let (Some(&new_src), Some(&new_tgt)) = (node_map.get(&src_rep), node_map.get(&tgt_rep)) {
+                let mut edge_exists = false;
+                for e_idx in 0..flat_state.edges.len() {
+                    if flat_state.edge_sources[e_idx] == new_src && flat_state.edge_targets[e_idx] == new_tgt {
+                        edge_exists = true;
+                        break;
+                    }
+                }
+                if !edge_exists {
+                    flat_state.add_edge(new_src, new_tgt, graphene_core::EdgeData::default());
+                }
+            }
+        }
+    }
+
+    layout.compute(&mut flat_state);
+
+    for (&id, &new_id) in &node_map {
+        if let (Some(&idx), Some(&flat_idx)) = (state.node_keys.get(id), flat_state.node_keys.get(new_id)) {
+            state.positions.set(idx, *flat_state.positions.get(flat_idx));
+        }
+    }
+
+    resolve_compound_bounds(state, collapsed_parents, 20.0);
+    state.dirty_flags |= graphene_core::DirtyFlags::POSITION_DIRTY;
+}
+
 pub struct RandomLayout {
     pub width: f32,
     pub height: f32,
@@ -2098,6 +2257,191 @@ impl<S: Copy> Layout<S> for CollisionForceDirectedLayout {
             }
 
             temp *= 0.95;
+        }
+
+        state.dirty_flags |= graphene_core::DirtyFlags::POSITION_DIRTY;
+    }
+}
+
+
+// === FCOSE LAYOUT ===
+
+pub struct FCoseLayout {
+    pub iterations: usize,
+    pub ideal_edge_length: f32,
+    pub nesting_factor: f32,
+    pub gravity: f32,
+    pub node_repulsion: f32,
+    pub initial_temp: f32,
+    pub cooling_factor: f32,
+}
+
+impl Default for FCoseLayout {
+    fn default() -> Self {
+        Self {
+            iterations: 150,
+            ideal_edge_length: 50.0,
+            nesting_factor: 1.2,
+            gravity: 1.5,
+            node_repulsion: 4500.0,
+            initial_temp: 50.0,
+            cooling_factor: 0.95,
+        }
+    }
+}
+
+impl<S: Copy + Default> Layout<S> for FCoseLayout {
+    fn compute(&mut self, state: &mut GraphState<S>) {
+        let n = state.node_index_to_id.len();
+        if n == 0 { return; }
+
+        let mut all_zero = true;
+        for i in 0..n {
+            let pos = *state.positions.get(i);
+            if pos.x != 0.0 || pos.y != 0.0 {
+                all_zero = false;
+                break;
+            }
+        }
+        if all_zero {
+            let mut circle = CircleLayout {
+                radius: 150.0,
+                center: Vec2::default(),
+                animate: false,
+            };
+            circle.compute(state);
+        }
+
+        let mut temp = self.initial_temp;
+        let mut _state_lcg = 42u64;
+
+        for _step in 0..self.iterations {
+            if temp < 0.1 { break; }
+
+            let mut displacements_x = vec![0.0f32; n];
+            let mut displacements_y = vec![0.0f32; n];
+
+            let positions_slice: Vec<Vec2> = state.positions.iter().copied().collect();
+            let quadtree = Quadtree::build(&positions_slice);
+            for i in 0..n {
+                let pos_i = positions_slice[i];
+                let force_rep = quadtree.accumulate_repulsion(i, pos_i, &positions_slice, self.node_repulsion, 0.9);
+                displacements_x[i] += force_rep.x;
+                displacements_y[i] += force_rep.y;
+            }
+
+            for idx in 0..state.edges.len() {
+                let src_node = *state.edge_sources.get(idx);
+                let tgt_node = *state.edge_targets.get(idx);
+                let Some(&src_idx) = state.node_keys.get(src_node) else { continue };
+                let Some(&tgt_idx) = state.node_keys.get(tgt_node) else { continue };
+
+                if src_idx == tgt_idx { continue; }
+
+                let pos_src = *state.positions.get(src_idx);
+                let pos_tgt = *state.positions.get(tgt_idx);
+                let size_src = *state.sizes.get(src_idx);
+                let size_tgt = *state.sizes.get(tgt_idx);
+
+                let dir_x = pos_tgt.x - pos_src.x;
+                let dir_y = pos_tgt.y - pos_src.y;
+
+                if dir_x == 0.0 && dir_y == 0.0 { continue; }
+
+                let p1 = find_clipping_point(pos_src, size_src, dir_x, dir_y);
+                let p2 = find_clipping_point(pos_tgt, size_tgt, -dir_x, -dir_y);
+
+                let lx = p2.x - p1.x;
+                let ly = p2.y - p1.y;
+                let l = (lx * lx + ly * ly).sqrt().max(0.01);
+
+                let depth = get_nesting_depth(state, src_node, tgt_node);
+                let ideal = self.ideal_edge_length * self.nesting_factor.powi(depth as i32);
+
+                let force_att = (ideal - l).powi(2) / 32.0;
+                let fx = force_att * lx / l;
+                let fy = force_att * ly / l;
+
+                displacements_x[src_idx] += fx;
+                displacements_y[src_idx] += fy;
+                displacements_x[tgt_idx] -= fx;
+                displacements_y[tgt_idx] -= fy;
+            }
+
+            let mut center = Vec2::default();
+            for i in 0..n {
+                center += *state.positions.get(i);
+            }
+            center = center / n as f32;
+
+            for i in 0..n {
+                let pos = *state.positions.get(i);
+                let dx = center.x - pos.x;
+                let dy = center.y - pos.y;
+                let d = (dx * dx + dy * dy).sqrt().max(0.01);
+                let fx = self.gravity * dx / d;
+                let fy = self.gravity * dy / d;
+
+                displacements_x[i] += fx;
+                displacements_y[i] += fy;
+            }
+
+            for i in 0..n {
+                let dx = displacements_x[i];
+                let dy = displacements_y[i];
+                let dist = (dx * dx + dy * dy).sqrt();
+                if dist > 0.01 {
+                    let cap = dist.min(temp);
+                    let pos = state.positions.get_mut(i);
+                    pos.x += dx * cap / dist;
+                    pos.y += dy * cap / dist;
+                }
+            }
+
+            temp *= self.cooling_factor;
+        }
+
+        let padding = 12.0;
+        for _ in 0..4 {
+            for i in 0..n {
+                for j in (i + 1)..n {
+                    let pos_i = *state.positions.get(i);
+                    let pos_j = *state.positions.get(j);
+                    let size_i = *state.sizes.get(i);
+                    let size_j = *state.sizes.get(j);
+
+                    let dx = pos_j.x - pos_i.x;
+                    let dy = pos_j.y - pos_i.y;
+
+                    let min_dx = (size_i.w + size_j.w) / 2.0 + padding;
+                    let min_dy = (size_i.h + size_j.h) / 2.0 + padding;
+
+                    let overlap_x = min_dx - dx.abs();
+                    let overlap_y = min_dy - dy.abs();
+
+                    if overlap_x > 0.0 && overlap_y > 0.0 {
+                        let push_x;
+                        let push_y;
+                        if overlap_x < overlap_y {
+                            let sign_x = if dx >= 0.0 { 1.0 } else { -1.0 };
+                            push_x = sign_x * overlap_x * 0.5;
+                            push_y = 0.0;
+                        } else {
+                            let sign_y = if dy >= 0.0 { 1.0 } else { -1.0 };
+                            push_x = 0.0;
+                            push_y = sign_y * overlap_y * 0.5;
+                        }
+
+                        let p_i = state.positions.get_mut(i);
+                        p_i.x -= push_x;
+                        p_i.y -= push_y;
+
+                        let p_j = state.positions.get_mut(j);
+                        p_j.x += push_x;
+                        p_j.y += push_y;
+                    }
+                }
+            }
         }
 
         state.dirty_flags |= graphene_core::DirtyFlags::POSITION_DIRTY;

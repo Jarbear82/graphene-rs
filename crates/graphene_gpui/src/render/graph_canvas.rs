@@ -23,6 +23,8 @@ pub struct GraphCanvas<'a> {
     pub theme: &'a Theme,
     pub selected_node: Option<NodeId>,
     pub node_labels: &'a std::collections::HashMap<NodeId, String>,
+    pub max_untruncated_len: usize,
+    pub collapsed_parents: &'a std::collections::HashSet<NodeId>,
 }
 
 impl<'a> GraphCanvas<'a> {
@@ -33,6 +35,8 @@ impl<'a> GraphCanvas<'a> {
         theme: &'a Theme,
         selected_node: Option<NodeId>,
         node_labels: &'a std::collections::HashMap<NodeId, String>,
+        max_untruncated_len: usize,
+        collapsed_parents: &'a std::collections::HashSet<NodeId>,
     ) -> Self {
         Self {
             state,
@@ -41,6 +45,8 @@ impl<'a> GraphCanvas<'a> {
             theme,
             selected_node,
             node_labels,
+            max_untruncated_len,
+            collapsed_parents,
         }
     }
 }
@@ -54,6 +60,8 @@ impl<'a> IntoElement for GraphCanvas<'a> {
         let theme = *self.theme;
         let selected_node = self.selected_node;
         let node_labels = self.node_labels.clone();
+        let max_untruncated_len = self.max_untruncated_len;
+        let collapsed_parents = self.collapsed_parents;
 
         let edge_color = color_to_gpui(theme.edge_color);
         let text_color = color_to_gpui(theme.text);
@@ -61,12 +69,35 @@ impl<'a> IntoElement for GraphCanvas<'a> {
         let node_fill_color = color_to_gpui(theme.node_fill);
         let node_border_color = color_to_gpui(theme.node_border);
 
+        let get_visible_rep = |mut curr: NodeId| -> NodeId {
+            let mut rep = curr;
+            while let Some(&idx) = state.node_keys.get(curr) {
+                if let Some(parent_id) = *state.hierarchy.parent.get(idx) {
+                    if collapsed_parents.contains(&parent_id) {
+                        rep = parent_id;
+                    }
+                    curr = parent_id;
+                } else {
+                    break;
+                }
+            }
+            rep
+        };
+
         // Precompute edge paths for drawing
         let mut edge_paths = Vec::new();
         for i in 0..state.edges.len() {
             let src = *state.edge_sources.get(i);
             let tgt = *state.edge_targets.get(i);
-            let (Some(&src_idx), Some(&tgt_idx)) = (state.node_keys.get(src), state.node_keys.get(tgt)) else {
+
+            let src_rep = get_visible_rep(src);
+            let tgt_rep = get_visible_rep(tgt);
+
+            if src_rep == tgt_rep {
+                continue; // Hidden internal edge
+            }
+
+            let (Some(&src_idx), Some(&tgt_idx)) = (state.node_keys.get(src_rep), state.node_keys.get(tgt_rep)) else {
                 continue;
             };
             let pos_src = *state.positions.get(src_idx);
@@ -84,6 +115,143 @@ impl<'a> IntoElement for GraphCanvas<'a> {
         }
 
         let nodes_count = state.node_index_to_id.len();
+
+        let mut parent_indices = Vec::new();
+        let mut leaf_indices = Vec::new();
+        for idx in 0..nodes_count {
+            let id = state.node_index_to_id[idx];
+            if get_visible_rep(id) != id {
+                continue; // Hidden descendant
+            }
+
+            let mut is_parent = false;
+            for j in 0..nodes_count {
+                let child_id = state.node_index_to_id[j];
+                if let Some(p_id) = *state.hierarchy.parent.get(j) {
+                    if p_id == id {
+                        if get_visible_rep(child_id) == child_id {
+                            is_parent = true;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if is_parent {
+                parent_indices.push(idx);
+            } else {
+                leaf_indices.push(idx);
+            }
+        }
+
+        let render_node = |idx: usize| {
+            let id = state.node_index_to_id[idx];
+            let pos = *state.positions.get(idx);
+            let size_val = *state.sizes.get(idx);
+
+            let mut label = node_labels.get(&id)
+                .cloned()
+                .unwrap_or_else(|| format!("N{}", idx));
+
+            let is_compound = {
+                let id = state.node_index_to_id[idx];
+                let mut found = false;
+                for j in 0..nodes_count {
+                    let child_id = state.node_index_to_id[j];
+                    if let Some(p_id) = *state.hierarchy.parent.get(j) {
+                        if p_id == id {
+                            if get_visible_rep(child_id) == child_id {
+                                found = true;
+                                break;
+                            }
+                        }
+                    }
+                }
+                found
+            };
+            let is_collapsed = collapsed_parents.contains(&id);
+
+            if is_compound {
+                if is_collapsed {
+                    label = format!("[+] {}", label);
+                } else {
+                    label = format!("[-] {}", label);
+                }
+            }
+
+            let is_selected = selected_node == Some(id);
+            if label.chars().count() > max_untruncated_len && !is_selected {
+                label = label.chars().take(max_untruncated_len).collect::<String>() + "...";
+            }
+
+            let node_w = size_val.w * viewport.zoom;
+            let node_h = size_val.h * viewport.zoom;
+            let screen_x = (pos.x + viewport.offset.x) * viewport.zoom + viewport.bounds.size.width / 2.0 - (node_w / 2.0);
+            let screen_y = (pos.y + viewport.offset.y) * viewport.zoom + viewport.bounds.size.height / 2.0 - (node_h / 2.0);
+
+            let mut shape = if is_compound {
+                NodeShape::Rectangle
+            } else {
+                NodeShape::Ellipse
+            };
+
+            let mut fill_color = if is_selected {
+                accent_color
+            } else if is_compound {
+                let mut col = accent_color;
+                col.a = 0.08;
+                col
+            } else {
+                node_fill_color
+            };
+
+            let mut border_color = if is_selected {
+                accent_color
+            } else if is_compound {
+                let mut col = accent_color;
+                col.a = 0.4;
+                col
+            } else {
+                node_border_color
+            };
+
+            if idx < state.computed_styles.len() {
+                if let StylingTarget::Node(node_style) = state.computed_styles.get(idx).target {
+                    if !is_compound {
+                        fill_color = color_to_gpui(node_style.fill_color);
+                        border_color = color_to_gpui(node_style.border_color);
+                        shape = node_style.shape;
+                    }
+                }
+            }
+
+            if is_selected {
+                border_color = accent_color;
+            }
+
+            gpui::div()
+                .id(SharedString::from(format!("canvas-node-{}", idx)))
+                .absolute()
+                .left(px(screen_x))
+                .top(px(screen_y))
+                .w(px(node_w))
+                .h(px(node_h))
+                .border(px(2.0))
+                .border_color(border_color)
+                .bg(fill_color)
+                .when(shape == NodeShape::Ellipse, |d| d.rounded_full())
+                .when(shape == NodeShape::Rectangle, |d| d.rounded_none())
+                .when(shape == NodeShape::Diamond, |d| d.rounded_md())
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(
+                    gpui::div()
+                        .text_color(text_color)
+                        .text_size(px(10.0 * viewport.zoom))
+                        .child(label),
+                )
+        };
 
         gpui::div()
             .flex_1()
@@ -160,69 +328,8 @@ impl<'a> IntoElement for GraphCanvas<'a> {
                 .size_full()
                 .absolute()
             )
-            .children((0..nodes_count).map(|idx| {
-                let id = state.node_index_to_id[idx];
-                let pos = *state.positions.get(idx);
-                let size_val = *state.sizes.get(idx);
-
-                let label = node_labels.get(&id)
-                    .cloned()
-                    .unwrap_or_else(|| format!("N{}", idx));
-
-                let node_w = size_val.w * viewport.zoom;
-                let node_h = size_val.h * viewport.zoom;
-                let screen_x = (pos.x + viewport.offset.x) * viewport.zoom + viewport.bounds.size.width / 2.0 - (node_w / 2.0);
-                let screen_y = (pos.y + viewport.offset.y) * viewport.zoom + viewport.bounds.size.height / 2.0 - (node_h / 2.0);
-
-                let is_selected = selected_node == Some(id);
-
-                let mut fill_color = if is_selected {
-                    accent_color
-                } else {
-                    node_fill_color
-                };
-                let mut border_color = if is_selected {
-                    color_to_gpui(theme.panel_bg)
-                } else {
-                    node_border_color
-                };
-
-                let mut shape = NodeShape::Ellipse;
-                if idx < state.computed_styles.len() {
-                    if let StylingTarget::Node(node_style) = state.computed_styles.get(idx).target {
-                        fill_color = color_to_gpui(node_style.fill_color);
-                        border_color = color_to_gpui(node_style.border_color);
-                        shape = node_style.shape;
-                    }
-                }
-
-                if is_selected {
-                    border_color = accent_color;
-                }
-
-                gpui::div()
-                    .id(SharedString::from(format!("canvas-node-{}", idx)))
-                    .absolute()
-                    .left(px(screen_x))
-                    .top(px(screen_y))
-                    .w(px(node_w))
-                    .h(px(node_h))
-                    .border(px(2.0))
-                    .border_color(border_color)
-                    .bg(fill_color)
-                    .when(shape == NodeShape::Ellipse, |d| d.rounded_full())
-                    .when(shape == NodeShape::Rectangle, |d| d.rounded_none())
-                    .when(shape == NodeShape::Diamond, |d| d.rounded_md())
-                    .flex()
-                    .items_center()
-                    .justify_center()
-                    .child(
-                        gpui::div()
-                            .text_color(text_color)
-                            .text_size(px(10.0 * viewport.zoom))
-                            .child(label),
-                    )
-            }))
+            .children(parent_indices.into_iter().map(render_node))
+            .children(leaf_indices.into_iter().map(render_node))
             .into_any_element()
     }
 }

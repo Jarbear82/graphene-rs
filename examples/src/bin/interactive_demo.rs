@@ -1,23 +1,23 @@
 use gpui::{
-    px, Bounds, EntityInputHandler, InteractiveElement, MouseDownEvent,
-    Pixels, Point, SharedString, StatefulInteractiveElement, Styled, WindowOptions,
+    px, Bounds, EntityInputHandler, InteractiveElement, MouseDownEvent, Pixels, Point,
+    SharedString, StatefulInteractiveElement, Styled, WindowOptions,
 };
 use gpui::{AppContext, Application, Context, Entity, IntoElement, ParentElement, Render, Window};
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::input::{Input, InputState};
 use gpui_component::Root;
 use graphene_core::fixtures::{get_all_fixtures, GraphFixture};
-use graphene_core::{EdgeData, GraphState, NodeId, Size2, Vec2, UndoRedoManager};
+use graphene_core::{EdgeData, GraphState, NodeId, Size2, UndoRedoManager, Vec2};
+use graphene_gpui::interaction::state::InteractionState;
+use graphene_gpui::render::draw_pipeline::Viewport;
+use graphene_gpui::render::graph_canvas::GraphCanvas;
 use graphene_layout::{
     BipartiteLayout, CircleLayout, CollisionForceDirectedLayout, CompoundLayout,
-    ConcentricHubLayout, DisconnectedPacker, ForceDirectedLayout, GridSortedLayout,
+    ConcentricHubLayout, DisconnectedPacker, FCoseLayout, ForceDirectedLayout, GridSortedLayout,
     KamadaKawaiLayout, Layout, MdsLayout, RegionalPartitionLayout, ReingoldTilfordLayout,
     SugiyamaLayout, WeightedForceDirectedLayout,
 };
 use graphene_style::{ColorValue, ComputedStyle, NodeShape, StylingTarget, ThemeRegistry};
-use graphene_gpui::render::draw_pipeline::Viewport;
-use graphene_gpui::interaction::state::InteractionState;
-use graphene_gpui::render::graph_canvas::GraphCanvas;
 use std::collections::HashMap;
 
 // Layout names list
@@ -37,6 +37,7 @@ const LAYOUT_NAMES: &[&str] = &[
     "DisconnectedPack",
     "Compound",
     "RegionalPartition",
+    "fCoSE",
 ];
 
 // Helper to compute point-to-segment distance on screen
@@ -141,8 +142,7 @@ struct DemoApp {
 
     themes: ThemeRegistry,
     current_theme_idx: usize,
-
-
+    input_max_len: Entity<InputState>,
 
     // Live physics simulation fields
     physics_enabled: bool,
@@ -151,6 +151,8 @@ struct DemoApp {
 
     // Undo/Redo
     undo_redo: UndoRedoManager<ComputedStyle>,
+    collapsed_parents: std::collections::HashSet<NodeId>,
+    last_node_click: Option<(NodeId, std::time::Instant)>,
 }
 
 impl DemoApp {
@@ -253,6 +255,11 @@ impl DemoApp {
             s.replace_text_in_range(None, "1.0", window, cx);
             s
         });
+        let input_max_len = cx.new(|cx| {
+            let mut s = InputState::new(window, cx);
+            s.replace_text_in_range(None, "10", window, cx);
+            s
+        });
 
         let mut app = Self {
             state: GraphState::new(),
@@ -284,11 +291,14 @@ impl DemoApp {
             edge_weight_state,
             themes: ThemeRegistry::new(),
             current_theme_idx: 3, // GitHub Light index is 3
+            input_max_len,
 
             physics_enabled: true,
             physics_temperature: 10.0,
             use_barnes_hut: false,
             undo_redo: UndoRedoManager::new(),
+            collapsed_parents: std::collections::HashSet::new(),
+            last_node_click: None,
         };
         app.load_preset(0, window, cx);
         app
@@ -393,29 +403,39 @@ impl DemoApp {
             return;
         }
 
-        let min_distance = 65.0;
+        let padding = 12.0; // Margin around the node boxes
 
-        for _ in 0..3 {
+        for _ in 0..4 {
             for i in 0..n {
                 for j in (i + 1)..n {
                     let pos_i = *self.state.positions.get(i);
                     let pos_j = *self.state.positions.get(j);
+                    let size_i = *self.state.sizes.get(i);
+                    let size_j = *self.state.sizes.get(j);
 
                     let dx = pos_j.x - pos_i.x;
                     let dy = pos_j.y - pos_i.y;
-                    let dist_sq = dx * dx + dy * dy;
-                    let dist = dist_sq.sqrt();
 
-                    if dist < min_distance {
-                        let overlap = min_distance - dist;
+                    // Compute the required min distance along each axis
+                    let min_dx = (size_i.w + size_j.w) / 2.0 + padding;
+                    let min_dy = (size_i.h + size_j.h) / 2.0 + padding;
+
+                    let overlap_x = min_dx - dx.abs();
+                    let overlap_y = min_dy - dy.abs();
+
+                    // Overlap on both axes means collision
+                    if overlap_x > 0.0 && overlap_y > 0.0 {
                         let push_x;
                         let push_y;
-                        if dist > 0.001 {
-                            push_x = (dx / dist) * overlap * 0.5;
-                            push_y = (dy / dist) * overlap * 0.5;
-                        } else {
-                            push_x = overlap * 0.5;
+
+                        if overlap_x < overlap_y {
+                            let sign_x = if dx >= 0.0 { 1.0 } else { -1.0 };
+                            push_x = sign_x * overlap_x * 0.5;
                             push_y = 0.0;
+                        } else {
+                            let sign_y = if dy >= 0.0 { 1.0 } else { -1.0 };
+                            push_x = 0.0;
+                            push_y = sign_y * overlap_y * 0.5;
                         }
 
                         let id_i = self.state.node_index_to_id[i];
@@ -464,6 +484,8 @@ impl DemoApp {
         self.state = fixture.state.clone();
         self.selected_node = None;
         self.selected_edge = None;
+        self.collapsed_parents.clear();
+        self.last_node_click = None;
 
         for i in 0..self.state.node_index_to_id.len() {
             let mut style = ComputedStyle::default();
@@ -530,12 +552,15 @@ impl DemoApp {
         let duration = std::time::Duration::from_millis(300);
         for (idx, &node_id) in self.state.node_index_to_id.iter().enumerate() {
             if idx < start_pos.len() && idx < target_pos.len() {
-                self.state.animations.tracks.insert(node_id, graphene_core::AnimationTrack::Position {
-                    from: start_pos[idx],
-                    to: target_pos[idx],
-                    duration,
-                    elapsed: std::time::Duration::ZERO,
-                });
+                self.state.animations.tracks.insert(
+                    node_id,
+                    graphene_core::AnimationTrack::Position {
+                        from: start_pos[idx],
+                        to: target_pos[idx],
+                        duration,
+                        elapsed: std::time::Duration::ZERO,
+                    },
+                );
             }
         }
         cx.notify();
@@ -655,7 +680,11 @@ impl DemoApp {
                     center: Vec2::default(),
                     animate: false,
                 };
-                circle.compute(&mut self.state);
+                graphene_layout::compute_flat_layout(
+                    &mut circle,
+                    &mut self.state,
+                    &self.collapsed_parents,
+                );
             }
             "ForceDirected" => {
                 let mut force = ForceDirectedLayout {
@@ -668,7 +697,11 @@ impl DemoApp {
                     use_barnes_hut: self.use_barnes_hut,
                     theta,
                 };
-                force.compute(&mut self.state);
+                graphene_layout::compute_flat_layout(
+                    &mut force,
+                    &mut self.state,
+                    &self.collapsed_parents,
+                );
             }
             "CoSE" => {
                 let mut cose = CompoundLayout {
@@ -684,7 +717,11 @@ impl DemoApp {
                     },
                     padding: compound_padding,
                 };
-                cose.compute(&mut self.state);
+                graphene_layout::compute_flat_layout(
+                    &mut cose,
+                    &mut self.state,
+                    &self.collapsed_parents,
+                );
             }
             "KamadaKawai" => {
                 let mut kk = KamadaKawaiLayout {
@@ -692,33 +729,57 @@ impl DemoApp {
                     k: 1.0,
                     l_0: 50.0,
                 };
-                kk.compute(&mut self.state);
+                graphene_layout::compute_flat_layout(
+                    &mut kk,
+                    &mut self.state,
+                    &self.collapsed_parents,
+                );
             }
             "Sugiyama" => {
                 let mut sugi = SugiyamaLayout {
                     layer_spacing,
                     node_spacing,
                 };
-                sugi.compute(&mut self.state);
+                graphene_layout::compute_flat_layout(
+                    &mut sugi,
+                    &mut self.state,
+                    &self.collapsed_parents,
+                );
             }
             "ReingoldTilford" => {
                 let mut rt = ReingoldTilfordLayout::default();
-                rt.compute(&mut self.state);
+                graphene_layout::compute_flat_layout(
+                    &mut rt,
+                    &mut self.state,
+                    &self.collapsed_parents,
+                );
             }
             "MDS" => {
                 let mut mds = MdsLayout {
                     iterations,
                     base_dist: mds_base_dist,
                 };
-                mds.compute(&mut self.state);
+                graphene_layout::compute_flat_layout(
+                    &mut mds,
+                    &mut self.state,
+                    &self.collapsed_parents,
+                );
             }
             "Grid" => {
                 let mut grid = GridSortedLayout::default();
-                grid.compute(&mut self.state);
+                graphene_layout::compute_flat_layout(
+                    &mut grid,
+                    &mut self.state,
+                    &self.collapsed_parents,
+                );
             }
             "Concentric" => {
                 let mut concentric = ConcentricHubLayout::default();
-                concentric.compute(&mut self.state);
+                graphene_layout::compute_flat_layout(
+                    &mut concentric,
+                    &mut self.state,
+                    &self.collapsed_parents,
+                );
             }
             "Bipartite" => {
                 let node_partitions = vec![0, 0, 1, 1];
@@ -731,7 +792,11 @@ impl DemoApp {
                     column_spacing: bipartite_col_spacing,
                     vertical_spacing: bipartite_vert_spacing,
                 };
-                bipartite.compute(&mut self.state);
+                graphene_layout::compute_flat_layout(
+                    &mut bipartite,
+                    &mut self.state,
+                    &self.collapsed_parents,
+                );
             }
             "WeightedForce" => {
                 let weights = self.fixtures[self.selected_fixture_idx].weights.clone();
@@ -749,7 +814,11 @@ impl DemoApp {
                         }
                     },
                 };
-                weighted.compute(&mut self.state);
+                graphene_layout::compute_flat_layout(
+                    &mut weighted,
+                    &mut self.state,
+                    &self.collapsed_parents,
+                );
             }
             "CollisionForce" => {
                 let mut collision = CollisionForceDirectedLayout {
@@ -757,7 +826,11 @@ impl DemoApp {
                     gravity,
                     ideal_length: 50.0,
                 };
-                collision.compute(&mut self.state);
+                graphene_layout::compute_flat_layout(
+                    &mut collision,
+                    &mut self.state,
+                    &self.collapsed_parents,
+                );
             }
             "DisconnectedPack" => {
                 let mut packer = DisconnectedPacker {
@@ -773,7 +846,11 @@ impl DemoApp {
                     },
                     spacing: packer_spacing,
                 };
-                packer.compute(&mut self.state);
+                graphene_layout::compute_flat_layout(
+                    &mut packer,
+                    &mut self.state,
+                    &self.collapsed_parents,
+                );
             }
             "Compound" => {
                 let mut comp = CompoundLayout {
@@ -789,7 +866,11 @@ impl DemoApp {
                     },
                     padding: compound_padding,
                 };
-                comp.compute(&mut self.state);
+                graphene_layout::compute_flat_layout(
+                    &mut comp,
+                    &mut self.state,
+                    &self.collapsed_parents,
+                );
             }
             "RegionalPartition" => {
                 let mut clusters = HashMap::new();
@@ -811,7 +892,19 @@ impl DemoApp {
                     columns: regional_columns,
                     cell_size: regional_cell_size,
                 };
-                regional.compute(&mut self.state);
+                graphene_layout::compute_flat_layout(
+                    &mut regional,
+                    &mut self.state,
+                    &self.collapsed_parents,
+                );
+            }
+            "fCoSE" => {
+                let mut fcose = FCoseLayout::default();
+                graphene_layout::compute_flat_layout(
+                    &mut fcose,
+                    &mut self.state,
+                    &self.collapsed_parents,
+                );
             }
             _ => {}
         }
@@ -908,11 +1001,71 @@ impl DemoApp {
             });
         }
     }
+
+    fn get_max_untruncated_len(&self, cx: &Context<Self>) -> usize {
+        self.input_max_len
+            .read(cx)
+            .text()
+            .to_string()
+            .parse::<usize>()
+            .unwrap_or(10)
+    }
 }
 
 impl Render for DemoApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = self.get_theme();
+
+        // 0. Adjust node sizes dynamically based on selection and label length
+        let max_len = self.get_max_untruncated_len(cx);
+        let fixture = &self.fixtures[self.selected_fixture_idx];
+
+        let nodes_count = self.state.node_index_to_id.len();
+        let mut is_parent = vec![false; nodes_count];
+        for idx in 0..nodes_count {
+            let id = self.state.node_index_to_id[idx];
+            for j in 0..nodes_count {
+                if let Some(p_id) = *self.state.hierarchy.parent.get(j) {
+                    if p_id == id {
+                        is_parent[idx] = true;
+                        break;
+                    }
+                }
+            }
+        }
+
+        for (idx, &id) in self.state.node_index_to_id.iter().enumerate() {
+            let is_collapsed = self.collapsed_parents.contains(&id);
+
+            // Skip overriding size for expanded parent compound nodes
+            if is_parent[idx] && !is_collapsed {
+                continue;
+            }
+
+            let mut label = fixture.node_labels.get(&id).cloned().unwrap_or_default();
+            if is_parent[idx] && is_collapsed {
+                label = format!("[+] {}", label);
+            }
+            let label_len = label.chars().count();
+
+            let is_selected = self.selected_node == Some(id);
+            let target_w;
+            if label_len > max_len {
+                if is_selected {
+                    // Expand width to fit full label
+                    target_w = 40.0 + (label_len as f32) * 6.0;
+                } else {
+                    // Truncated width (standard size)
+                    target_w = 40.0 + (max_len as f32) * 6.0;
+                }
+            } else {
+                // Fits without truncation
+                target_w = 40.0 + (label_len as f32) * 6.0;
+            }
+
+            let size = self.state.sizes.get_mut(idx);
+            size.w = target_w;
+        }
 
         let is_animating = !self.state.animations.tracks.is_empty();
         let needs_physics = self.physics_enabled
@@ -921,12 +1074,16 @@ impl Render for DemoApp {
 
         if needs_tick {
             if is_animating {
-                self.state.tick_animations(std::time::Duration::from_millis(16));
+                self.state
+                    .tick_animations(std::time::Duration::from_millis(16));
                 if self.state.animations.tracks.is_empty() {
                     self.interaction_state.rebuild_grid(&self.state);
                 }
             } else if needs_physics {
                 self.run_physics_step();
+                if self.physics_temperature <= 0.05 {
+                    self.interaction_state.rebuild_grid(&self.state);
+                }
             }
 
             self.resolve_collisions();
@@ -1210,6 +1367,41 @@ impl DemoApp {
                     ),
             )
             .child(
+                gpui::div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(
+                        gpui::div()
+                            .text_color(theme.text)
+                            .font_weight(gpui::FontWeight::BOLD)
+                            .text_size(px(12.0))
+                            .child("4. FONT & TEXT CONFIG"),
+                    )
+                    .child(
+                        gpui::div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .p_2()
+                            .bg(theme.bg)
+                            .rounded_md()
+                            .border(px(1.0))
+                            .border_color(theme.border)
+                            .child(
+                                gpui::div()
+                                    .text_color(theme.text_dim)
+                                    .text_size(px(11.0))
+                                    .child("Max Label Length"),
+                            )
+                            .child(
+                                gpui::div()
+                                    .w(px(50.0))
+                                    .child(Input::new(&self.input_max_len)),
+                            ),
+                    ),
+            )
+            .child(
                 Button::new("run-layout-btn")
                     .primary()
                     .label("RUN LAYOUT")
@@ -1251,123 +1443,205 @@ impl DemoApp {
 
             let has_force_directed = matches!(
                 layout,
-                "ForceDirected" | "CoSE" | "WeightedForce" | "DisconnectedPack" | "Compound" | "RegionalPartition"
+                "ForceDirected"
+                    | "CoSE"
+                    | "WeightedForce"
+                    | "DisconnectedPack"
+                    | "Compound"
+                    | "RegionalPartition"
             );
 
             if has_force_directed {
                 children.push(
                     gpui::div()
-                        .child(gpui::div().text_color(theme.text_dim).text_size(px(10.0)).child("Gravity"))
-                        .child(Input::new(&self.input_gravity))
+                        .child(
+                            gpui::div()
+                                .text_color(theme.text_dim)
+                                .text_size(px(10.0))
+                                .child("Gravity"),
+                        )
+                        .child(Input::new(&self.input_gravity)),
                 );
                 children.push(
                     gpui::div()
-                        .child(gpui::div().text_color(theme.text_dim).text_size(px(10.0)).child("Repulsion"))
-                        .child(Input::new(&self.input_k_rep))
+                        .child(
+                            gpui::div()
+                                .text_color(theme.text_dim)
+                                .text_size(px(10.0))
+                                .child("Repulsion"),
+                        )
+                        .child(Input::new(&self.input_k_rep)),
                 );
                 children.push(
                     gpui::div()
-                        .child(gpui::div().text_color(theme.text_dim).text_size(px(10.0)).child("Attraction"))
-                        .child(Input::new(&self.input_k_att))
+                        .child(
+                            gpui::div()
+                                .text_color(theme.text_dim)
+                                .text_size(px(10.0))
+                                .child("Attraction"),
+                        )
+                        .child(Input::new(&self.input_k_att)),
                 );
             }
 
             if has_force_directed || matches!(layout, "KamadaKawai" | "MDS" | "CollisionForce") {
                 children.push(
                     gpui::div()
-                        .child(gpui::div().text_color(theme.text_dim).text_size(px(10.0)).child("Iterations"))
-                        .child(Input::new(&self.input_iterations))
+                        .child(
+                            gpui::div()
+                                .text_color(theme.text_dim)
+                                .text_size(px(10.0))
+                                .child("Iterations"),
+                        )
+                        .child(Input::new(&self.input_iterations)),
                 );
             }
 
             if layout == "Circle" {
                 children.push(
                     gpui::div()
-                        .child(gpui::div().text_color(theme.text_dim).text_size(px(10.0)).child("Circle Radius"))
-                        .child(Input::new(&self.input_circle_radius))
+                        .child(
+                            gpui::div()
+                                .text_color(theme.text_dim)
+                                .text_size(px(10.0))
+                                .child("Circle Radius"),
+                        )
+                        .child(Input::new(&self.input_circle_radius)),
                 );
             }
 
-            if matches!(layout, "ForceDirected" | "CoSE" | "DisconnectedPack" | "Compound" | "RegionalPartition") {
+            if matches!(
+                layout,
+                "ForceDirected" | "CoSE" | "DisconnectedPack" | "Compound" | "RegionalPartition"
+            ) {
                 children.push(
                     gpui::div()
-                        .child(gpui::div().text_color(theme.text_dim).text_size(px(10.0)).child("Barnes-Hut Theta"))
-                        .child(Input::new(&self.input_theta))
+                        .child(
+                            gpui::div()
+                                .text_color(theme.text_dim)
+                                .text_size(px(10.0))
+                                .child("Barnes-Hut Theta"),
+                        )
+                        .child(Input::new(&self.input_theta)),
                 );
             }
 
             if layout == "Sugiyama" {
                 children.push(
                     gpui::div()
-                        .child(gpui::div().text_color(theme.text_dim).text_size(px(10.0)).child("Layer Spacing"))
-                        .child(Input::new(&self.input_layer_spacing))
+                        .child(
+                            gpui::div()
+                                .text_color(theme.text_dim)
+                                .text_size(px(10.0))
+                                .child("Layer Spacing"),
+                        )
+                        .child(Input::new(&self.input_layer_spacing)),
                 );
                 children.push(
                     gpui::div()
-                        .child(gpui::div().text_color(theme.text_dim).text_size(px(10.0)).child("Node Spacing"))
-                        .child(Input::new(&self.input_node_spacing))
+                        .child(
+                            gpui::div()
+                                .text_color(theme.text_dim)
+                                .text_size(px(10.0))
+                                .child("Node Spacing"),
+                        )
+                        .child(Input::new(&self.input_node_spacing)),
                 );
             }
 
             if layout == "MDS" {
                 children.push(
                     gpui::div()
-                        .child(gpui::div().text_color(theme.text_dim).text_size(px(10.0)).child("Base Distance"))
-                        .child(Input::new(&self.input_mds_base_dist))
+                        .child(
+                            gpui::div()
+                                .text_color(theme.text_dim)
+                                .text_size(px(10.0))
+                                .child("Base Distance"),
+                        )
+                        .child(Input::new(&self.input_mds_base_dist)),
                 );
             }
 
             if layout == "Bipartite" {
                 children.push(
                     gpui::div()
-                        .child(gpui::div().text_color(theme.text_dim).text_size(px(10.0)).child("Column Spacing"))
-                        .child(Input::new(&self.input_bipartite_col_spacing))
+                        .child(
+                            gpui::div()
+                                .text_color(theme.text_dim)
+                                .text_size(px(10.0))
+                                .child("Column Spacing"),
+                        )
+                        .child(Input::new(&self.input_bipartite_col_spacing)),
                 );
                 children.push(
                     gpui::div()
-                        .child(gpui::div().text_color(theme.text_dim).text_size(px(10.0)).child("Vertical Spacing"))
-                        .child(Input::new(&self.input_bipartite_vert_spacing))
+                        .child(
+                            gpui::div()
+                                .text_color(theme.text_dim)
+                                .text_size(px(10.0))
+                                .child("Vertical Spacing"),
+                        )
+                        .child(Input::new(&self.input_bipartite_vert_spacing)),
                 );
             }
 
             if layout == "DisconnectedPack" {
                 children.push(
                     gpui::div()
-                        .child(gpui::div().text_color(theme.text_dim).text_size(px(10.0)).child("Packer Spacing"))
-                        .child(Input::new(&self.input_packer_spacing))
+                        .child(
+                            gpui::div()
+                                .text_color(theme.text_dim)
+                                .text_size(px(10.0))
+                                .child("Packer Spacing"),
+                        )
+                        .child(Input::new(&self.input_packer_spacing)),
                 );
             }
 
             if matches!(layout, "CoSE" | "Compound") {
                 children.push(
                     gpui::div()
-                        .child(gpui::div().text_color(theme.text_dim).text_size(px(10.0)).child("Compound Padding"))
-                        .child(Input::new(&self.input_compound_padding))
+                        .child(
+                            gpui::div()
+                                .text_color(theme.text_dim)
+                                .text_size(px(10.0))
+                                .child("Compound Padding"),
+                        )
+                        .child(Input::new(&self.input_compound_padding)),
                 );
             }
 
             if layout == "RegionalPartition" {
                 children.push(
                     gpui::div()
-                        .child(gpui::div().text_color(theme.text_dim).text_size(px(10.0)).child("Regional Columns"))
-                        .child(Input::new(&self.input_regional_columns))
+                        .child(
+                            gpui::div()
+                                .text_color(theme.text_dim)
+                                .text_size(px(10.0))
+                                .child("Regional Columns"),
+                        )
+                        .child(Input::new(&self.input_regional_columns)),
                 );
-                children.push(
-                    gpui::div()
-                        .child(gpui::div().text_color(theme.text_dim).text_size(px(10.0)).child("Regional Cell Size"))
-                        .child(Input::new(&self.input_regional_cell_size))
-                );
-            }
-
-            if children.is_empty() {
                 children.push(
                     gpui::div()
                         .child(
                             gpui::div()
                                 .text_color(theme.text_dim)
-                                .text_size(px(11.0))
-                                .child("No configurable options for this layout.")
+                                .text_size(px(10.0))
+                                .child("Regional Cell Size"),
                         )
+                        .child(Input::new(&self.input_regional_cell_size)),
+                );
+            }
+
+            if children.is_empty() {
+                children.push(
+                    gpui::div().child(
+                        gpui::div()
+                            .text_color(theme.text_dim)
+                            .text_size(px(11.0))
+                            .child("No configurable options for this layout."),
+                    ),
                 );
             }
 
@@ -1551,7 +1825,8 @@ impl DemoApp {
                                                     this.selected_edge = None;
                                                     this.state.dirty_flags |=
                                                         graphene_core::DirtyFlags::TOPOLOGY_DIRTY;
-                                                    this.interaction_state.rebuild_grid(&this.state);
+                                                    this.interaction_state
+                                                        .rebuild_grid(&this.state);
                                                 }
                                             })),
                                     ),
@@ -1690,7 +1965,8 @@ impl DemoApp {
                             ]
                             .into_iter()
                             .map(|t| {
-                                let is_active = self.themes.themes[self.current_theme_idx].name == t;
+                                let is_active =
+                                    self.themes.themes[self.current_theme_idx].name == t;
                                 gpui::div()
                                     .id(SharedString::from(format!("theme-{}", t)))
                                     .p_1()
@@ -1704,7 +1980,9 @@ impl DemoApp {
                                     .rounded_md()
                                     .cursor_pointer()
                                     .on_click(cx.listener(move |this, _, _, _| {
-                                        if let Some(pos) = this.themes.themes.iter().position(|x| x.name == t) {
+                                        if let Some(pos) =
+                                            this.themes.themes.iter().position(|x| x.name == t)
+                                        {
                                             this.current_theme_idx = pos;
                                         }
                                     }))
@@ -1729,27 +2007,23 @@ impl DemoApp {
                         gpui::div()
                             .flex()
                             .gap_2()
-                            .child(
-                                Button::new("undo-btn")
-                                    .label("UNDO")
-                                    .on_click(cx.listener(|this, _, _, _| {
-                                        this.undo_redo.undo(&mut this.state);
-                                        this.selected_node = None;
-                                        this.selected_edge = None;
-                                        this.interaction_state.rebuild_grid(&this.state);
-                                    })),
-                            )
-                            .child(
-                                Button::new("redo-btn")
-                                    .label("REDO")
-                                    .on_click(cx.listener(|this, _, _, _| {
-                                        this.undo_redo.redo(&mut this.state);
-                                        this.selected_node = None;
-                                        this.selected_edge = None;
-                                        this.interaction_state.rebuild_grid(&this.state);
-                                    })),
-                            )
-                    )
+                            .child(Button::new("undo-btn").label("UNDO").on_click(cx.listener(
+                                |this, _, _, _| {
+                                    this.undo_redo.undo(&mut this.state);
+                                    this.selected_node = None;
+                                    this.selected_edge = None;
+                                    this.interaction_state.rebuild_grid(&this.state);
+                                },
+                            )))
+                            .child(Button::new("redo-btn").label("REDO").on_click(cx.listener(
+                                |this, _, _, _| {
+                                    this.undo_redo.redo(&mut this.state);
+                                    this.selected_node = None;
+                                    this.selected_edge = None;
+                                    this.interaction_state.rebuild_grid(&this.state);
+                                },
+                            ))),
+                    ),
             )
             .child(
                 gpui::div()
@@ -1768,47 +2042,43 @@ impl DemoApp {
                             .flex()
                             .flex_col()
                             .gap_2()
-                            .child(
-                                Button::new("save-json-btn")
-                                    .label("SAVE JSON")
-                                    .on_click(cx.listener(|this, _, _, _| {
-                                        let json = this.state.to_json();
-                                        if let Err(e) = std::fs::write("workspace_graph.json", json) {
-                                            println!("Failed to save graph: {:?}", e);
-                                        } else {
-                                            println!("Saved graph to workspace_graph.json");
+                            .child(Button::new("save-json-btn").label("SAVE JSON").on_click(
+                                cx.listener(|this, _, _, _| {
+                                    let json = this.state.to_json();
+                                    if let Err(e) = std::fs::write("workspace_graph.json", json) {
+                                        println!("Failed to save graph: {:?}", e);
+                                    } else {
+                                        println!("Saved graph to workspace_graph.json");
+                                    }
+                                }),
+                            ))
+                            .child(Button::new("load-json-btn").label("LOAD JSON").on_click(
+                                cx.listener(|this, _, _, _| {
+                                    if let Ok(json) =
+                                        std::fs::read_to_string("workspace_graph.json")
+                                    {
+                                        if let Ok(new_state) = GraphState::from_json(&json) {
+                                            this.undo_redo.record_state(&this.state);
+                                            this.state = new_state;
+                                            this.selected_node = None;
+                                            this.selected_edge = None;
+                                            this.interaction_state.rebuild_grid(&this.state);
+                                            this.viewport.fit_to_graph(&this.state);
                                         }
-                                    })),
-                            )
-                            .child(
-                                Button::new("load-json-btn")
-                                    .label("LOAD JSON")
-                                    .on_click(cx.listener(|this, _, _, _| {
-                                        if let Ok(json) = std::fs::read_to_string("workspace_graph.json") {
-                                            if let Ok(new_state) = GraphState::from_json(&json) {
-                                                this.undo_redo.record_state(&this.state);
-                                                this.state = new_state;
-                                                this.selected_node = None;
-                                                this.selected_edge = None;
-                                                this.interaction_state.rebuild_grid(&this.state);
-                                                this.viewport.fit_to_graph(&this.state);
-                                            }
-                                        }
-                                    })),
-                            )
-                            .child(
-                                Button::new("export-dot-btn")
-                                    .label("EXPORT DOT")
-                                    .on_click(cx.listener(|this, _, _, _| {
-                                        let dot = this.state.to_dot();
-                                        if let Err(e) = std::fs::write("workspace_graph.dot", dot) {
-                                            println!("Failed to export DOT: {:?}", e);
-                                        } else {
-                                            println!("Exported graph to workspace_graph.dot");
-                                        }
-                                    })),
-                            )
-                    )
+                                    }
+                                }),
+                            ))
+                            .child(Button::new("export-dot-btn").label("EXPORT DOT").on_click(
+                                cx.listener(|this, _, _, _| {
+                                    let dot = this.state.to_dot();
+                                    if let Err(e) = std::fs::write("workspace_graph.dot", dot) {
+                                        println!("Failed to export DOT: {:?}", e);
+                                    } else {
+                                        println!("Exported graph to workspace_graph.dot");
+                                    }
+                                }),
+                            )),
+                    ),
             )
     }
 
@@ -1833,27 +2103,33 @@ impl DemoApp {
                         if let Some(entity) = weak_entity.upgrade() {
                             entity.update(cx, |this, _| {
                                 this.viewport.bounds = gpui::Bounds {
-                                    origin: gpui::point(f32::from(bounds.origin.x), f32::from(bounds.origin.y)),
-                                    size: gpui::size(f32::from(bounds.size.width), f32::from(bounds.size.height)),
+                                    origin: gpui::point(
+                                        f32::from(bounds.origin.x),
+                                        f32::from(bounds.origin.y),
+                                    ),
+                                    size: gpui::size(
+                                        f32::from(bounds.size.width),
+                                        f32::from(bounds.size.height),
+                                    ),
                                 };
                             });
                         }
                     },
-                    move |_, _, _, _| {}
+                    move |_, _, _, _| {},
                 )
                 .size_full()
                 .absolute(),
             )
-            .child(
-                GraphCanvas::new(
-                    &self.state,
-                    &self.viewport,
-                    &self.interaction_state,
-                    &self.themes.themes[self.current_theme_idx],
-                    self.selected_node,
-                    &fixture.node_labels,
-                )
-            )
+            .child(GraphCanvas::new(
+                &self.state,
+                &self.viewport,
+                &self.interaction_state,
+                &self.themes.themes[self.current_theme_idx],
+                self.selected_node,
+                &fixture.node_labels,
+                self.get_max_untruncated_len(cx),
+                &self.collapsed_parents,
+            ))
             .on_mouse_down(
                 gpui::MouseButton::Left,
                 cx.listener(|this, ev: &MouseDownEvent, window, cx| {
@@ -1863,10 +2139,48 @@ impl DemoApp {
                         &this.state,
                         this.physics_enabled,
                     );
+                    let now = std::time::Instant::now();
                     if let Some(node_id) = hit_node {
+                        if let Some((prev_id, prev_time)) = this.last_node_click {
+                            if prev_id == node_id && now.duration_since(prev_time).as_millis() < 300
+                            {
+                                let mut is_parent = false;
+                                for j in 0..this.state.node_index_to_id.len() {
+                                    if let Some(p_id) = *this.state.hierarchy.parent.get(j) {
+                                        if p_id == node_id {
+                                            is_parent = true;
+                                            break;
+                                        }
+                                    }
+                                }
+                                if is_parent {
+                                    this.undo_redo.record_state(&this.state);
+                                    if this.collapsed_parents.contains(&node_id) {
+                                        this.collapsed_parents.remove(&node_id);
+                                    } else {
+                                        this.collapsed_parents.insert(node_id);
+                                    }
+                                    graphene_layout::resolve_compound_bounds(
+                                        &mut this.state,
+                                        &this.collapsed_parents,
+                                        20.0,
+                                    );
+                                    this.physics_temperature = 5.0;
+                                    this.interaction_state.rebuild_grid(&this.state);
+                                    this.last_node_click = None;
+                                    cx.notify();
+                                    return;
+                                }
+                            }
+                        }
+                        this.last_node_click = Some((node_id, now));
+
                         this.undo_redo.record_state(&this.state);
                         this.selected_node = Some(node_id);
                         this.selected_edge = None;
+                        if this.physics_enabled {
+                            this.physics_temperature = 5.0;
+                        }
 
                         let label = this.fixtures[this.selected_fixture_idx]
                             .node_labels
@@ -1877,6 +2191,7 @@ impl DemoApp {
                             input.replace_text_in_range(None, &label, window, cx);
                         });
                     } else {
+                        this.last_node_click = None;
                         let mut hit_edge = None;
                         for edge_idx in 0..this.state.edges.len() {
                             let src = *this.state.edge_sources.get(edge_idx);
@@ -1920,7 +2235,7 @@ impl DemoApp {
                     );
                     this.interaction_state = is_mut;
                     cx.notify();
-                })
+                }),
             )
             .on_mouse_move(cx.listener(|this, ev: &gpui::MouseMoveEvent, _, cx| {
                 let mut is_mut = this.interaction_state.clone();
@@ -1951,7 +2266,7 @@ impl DemoApp {
                     this.interaction_state = is_mut;
                     this.interaction_state.rebuild_grid(&this.state);
                     cx.notify();
-                })
+                }),
             )
             .on_scroll_wheel(cx.listener(|this, ev: &gpui::ScrollWheelEvent, _, cx| {
                 let amount = match ev.delta {
@@ -2061,7 +2376,10 @@ impl DemoApp {
                         gpui::div()
                             .text_color(theme.text_dim)
                             .text_size(px(11.0))
-                            .child(format!("Theme: {}", self.themes.themes[self.current_theme_idx].name)),
+                            .child(format!(
+                                "Theme: {}",
+                                self.themes.themes[self.current_theme_idx].name
+                            )),
                     ),
             )
     }

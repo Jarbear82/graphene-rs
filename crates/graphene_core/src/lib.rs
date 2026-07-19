@@ -69,6 +69,12 @@ impl<T: Copy> std::ops::Deref for DenseStorage<T> {
     }
 }
 
+impl<T: Copy> std::ops::DerefMut for DenseStorage<T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.data
+    }
+}
+
 impl<T: Copy> Default for DenseStorage<T> {
     fn default() -> Self {
         Self::new()

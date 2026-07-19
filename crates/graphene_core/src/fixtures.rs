@@ -34,6 +34,57 @@ impl<S: Copy + Default> GraphFixture<S> {
     }
 }
 
+fn add_dir_to_fixture<S: Copy + Default>(
+    f: &mut GraphFixture<S>,
+    dir_path: &std::path::Path,
+    parent_id: Option<NodeId>,
+    depth_limit: usize,
+) {
+    if depth_limit == 0 {
+        return;
+    }
+
+    let dir_name = dir_path
+        .file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "Root".to_string());
+
+    let dir_node = f.state.add_node(Vec2::new(0.0, 0.0), Size2::new(50.0, 30.0));
+    f.node_labels.insert(dir_node, dir_name);
+
+    if let Some(pid) = parent_id {
+        f.state.reparent_node(dir_node, Some(pid));
+        f.state.add_edge(pid, dir_node, EdgeData::default());
+    }
+
+    if let Ok(entries) = std::fs::read_dir(dir_path) {
+        // Sort entries to make visualizer layout deterministic
+        let mut entry_paths = Vec::new();
+        for entry in entries.filter_map(Result::ok) {
+            entry_paths.push(entry.path());
+        }
+        entry_paths.sort();
+
+        for path in entry_paths {
+            let name = path
+                .file_name()
+                .map(|s| s.to_string_lossy().into_owned())
+                .unwrap_or_default();
+
+            if path.is_dir() {
+                if !name.starts_with('.') && name != "target" {
+                    add_dir_to_fixture(f, &path, Some(dir_node), depth_limit - 1);
+                }
+            } else {
+                let file_node = f.state.add_node(Vec2::new(0.0, 0.0), Size2::new(40.0, 30.0));
+                f.node_labels.insert(file_node, name);
+                f.state.reparent_node(file_node, Some(dir_node));
+                f.state.add_edge(dir_node, file_node, EdgeData::default());
+            }
+        }
+    }
+}
+
 pub fn get_all_fixtures<S: Copy + Default>() -> Vec<GraphFixture<S>> {
     let mut fixtures = Vec::new();
 
@@ -1049,6 +1100,22 @@ pub fn get_all_fixtures<S: Copy + Default>() -> Vec<GraphFixture<S>> {
             for &v in &outputs {
                 f.state.add_edge(u, v, EdgeData::default());
             }
+        }
+        fixtures.push(f);
+    }
+
+    // 5. FILE SYSTEM TREE
+    {
+        let mut f = GraphFixture::new("Workspace File Tree", "Real file system hierarchy read from the 'crates' directory.");
+        let root_path = std::path::Path::new("crates");
+        if root_path.exists() {
+            add_dir_to_fixture(&mut f, root_path, None, 3);
+        } else {
+            let root = f.state.add_node(Vec2::new(0.0, 0.0), Size2::new(50.0, 30.0));
+            f.node_labels.insert(root, "Root".to_string());
+            let src = f.state.add_node(Vec2::new(0.0, 0.0), Size2::new(40.0, 30.0));
+            f.node_labels.insert(src, "src".to_string());
+            f.state.add_edge(root, src, EdgeData::default());
         }
         fixtures.push(f);
     }
