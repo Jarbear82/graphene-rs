@@ -123,8 +123,7 @@ pub fn compute_flat_layout<S: Copy + Default, L: Layout<S>>(
                 let parent_rep = get_visible_rep(parent_id);
                 if parent_rep == parent_id && !collapsed_parents.contains(&parent_id) {
                     if let (Some(&new_child_id), Some(&new_parent_id)) = (node_map.get(&id), node_map.get(&parent_id)) {
-                        let new_child_idx = flat_state.node_keys[new_child_id];
-                        flat_state.hierarchy.parent.set(new_child_idx, Some(new_parent_id));
+                        flat_state.reparent_node(new_child_id, Some(new_parent_id));
                     }
                 }
             }
@@ -1680,7 +1679,7 @@ impl<S: Copy + Default, L: Layout<S>> Layout<S> for DisconnectedPacker<L> {
                 let src = *state.edge_sources.get(idx);
                 let tgt = *state.edge_targets.get(idx);
                 if component.contains(&src) && component.contains(&tgt) {
-                    let data = state.edges[idx];
+                    let data = state.edges[idx].clone();
                     sub_state.add_edge(node_mapping[&src], node_mapping[&tgt], data);
                 }
             }
@@ -2266,6 +2265,39 @@ impl<S: Copy> Layout<S> for CollisionForceDirectedLayout {
 
 // === FCOSE LAYOUT ===
 
+#[derive(Clone, Debug)]
+pub struct FixedNodeConstraint {
+    pub node_id: NodeId,
+    pub position: Vec2,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct AlignmentConstraint {
+    pub horizontal: Vec<Vec<NodeId>>, // share Y coordinate
+    pub vertical: Vec<Vec<NodeId>>,   // share X coordinate
+}
+
+#[derive(Clone, Debug)]
+pub enum RelativePlacementConstraint {
+    LeftRight {
+        left: NodeId,
+        right: NodeId,
+        gap: f32,
+    },
+    TopBottom {
+        top: NodeId,
+        bottom: NodeId,
+        gap: f32,
+    },
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct FCoseConstraints {
+    pub fixed_nodes: Vec<FixedNodeConstraint>,
+    pub alignment: AlignmentConstraint,
+    pub relative_placement: Vec<RelativePlacementConstraint>,
+}
+
 pub struct FCoseLayout {
     pub iterations: usize,
     pub ideal_edge_length: f32,
@@ -2274,6 +2306,15 @@ pub struct FCoseLayout {
     pub node_repulsion: f32,
     pub initial_temp: f32,
     pub cooling_factor: f32,
+    pub randomize: bool,
+
+    // Advanced constraints
+    pub constraints: FCoseConstraints,
+
+    // Per-element layout tuning callbacks
+    pub node_repulsion_fn: Option<Box<dyn Fn(NodeId) -> f32>>,
+    pub ideal_edge_length_fn: Option<Box<dyn Fn(EdgeId) -> f32>>,
+    pub edge_elasticity_fn: Option<Box<dyn Fn(EdgeId) -> f32>>,
 }
 
 impl Default for FCoseLayout {
@@ -2286,7 +2327,34 @@ impl Default for FCoseLayout {
             node_repulsion: 4500.0,
             initial_temp: 50.0,
             cooling_factor: 0.95,
+            randomize: true,
+            constraints: FCoseConstraints::default(),
+            node_repulsion_fn: None,
+            ideal_edge_length_fn: None,
+            edge_elasticity_fn: None,
         }
+    }
+}
+
+impl FCoseLayout {
+    pub fn with_constraints(mut self, constraints: FCoseConstraints) -> Self {
+        self.constraints = constraints;
+        self
+    }
+
+    pub fn with_node_repulsion_fn<F: Fn(NodeId) -> f32 + 'static>(mut self, f: F) -> Self {
+        self.node_repulsion_fn = Some(Box::new(f));
+        self
+    }
+
+    pub fn with_ideal_edge_length_fn<F: Fn(EdgeId) -> f32 + 'static>(mut self, f: F) -> Self {
+        self.ideal_edge_length_fn = Some(Box::new(f));
+        self
+    }
+
+    pub fn with_edge_elasticity_fn<F: Fn(EdgeId) -> f32 + 'static>(mut self, f: F) -> Self {
+        self.edge_elasticity_fn = Some(Box::new(f));
+        self
     }
 }
 
@@ -2295,25 +2363,376 @@ impl<S: Copy + Default> Layout<S> for FCoseLayout {
         let n = state.node_index_to_id.len();
         if n == 0 { return; }
 
-        let mut all_zero = true;
+        // Determine parent/leaf node division
+        let mut is_parent = vec![false; n];
         for i in 0..n {
-            let pos = *state.positions.get(i);
+            if state.hierarchy.first_child.get(i).is_some() {
+                is_parent[i] = true;
+            }
+        }
+        let leaf_indices: Vec<usize> = (0..n).filter(|&i| !is_parent[i]).collect();
+        let leaf_count = leaf_indices.len();
+        if leaf_count == 0 { return; }
+
+        let mut leaf_to_local = vec![None; n];
+        for (local_idx, &global_idx) in leaf_indices.iter().enumerate() {
+            leaf_to_local[global_idx] = Some(local_idx);
+        }
+
+        // Helper to retrieve leaf descendants recursively
+        let get_leaf_descendants = |node_idx: usize, h_state: &GraphState<S>, is_p: &[bool]| -> Vec<usize> {
+            let mut leaves = Vec::new();
+            let mut stack = vec![node_idx];
+            while let Some(curr) = stack.pop() {
+                if !is_p[curr] {
+                    leaves.push(curr);
+                } else {
+                    let mut next_child = *h_state.hierarchy.first_child.get(curr);
+                    while let Some(child_id) = next_child {
+                        if let Some(&child_idx) = h_state.node_keys.get(child_id) {
+                            stack.push(child_idx);
+                            next_child = *h_state.hierarchy.next_sibling.get(child_idx);
+                        } else {
+                            break;
+                        }
+                    }
+                }
+            }
+            leaves
+        };
+
+        let mut all_zero = true;
+        for &idx in &leaf_indices {
+            let pos = *state.positions.get(idx);
             if pos.x != 0.0 || pos.y != 0.0 {
                 all_zero = false;
                 break;
             }
         }
-        if all_zero {
-            let mut circle = CircleLayout {
-                radius: 150.0,
-                center: Vec2::default(),
-                animate: false,
+
+        if self.randomize || all_zero {
+            // === PHASE I: OBTAIN DRAFT LAYOUT ===
+            let mut adj = vec![Vec::new(); leaf_count];
+            let add_local_edge = |u_global: usize, v_global: usize, adj_list: &mut Vec<Vec<usize>>| {
+                if let (Some(u_local), Some(v_local)) = (leaf_to_local[u_global], leaf_to_local[v_global]) {
+                    if u_local != v_local {
+                        adj_list[u_local].push(v_local);
+                        adj_list[v_local].push(u_local);
+                    }
+                }
             };
-            circle.compute(state);
+
+            // Map edges to leaf descendants
+            for edge_idx in 0..state.edges.len() {
+                let src_id = *state.edge_sources.get(edge_idx);
+                let tgt_id = *state.edge_targets.get(edge_idx);
+                if let (Some(&src_global), Some(&tgt_global)) = (state.node_keys.get(src_id), state.node_keys.get(tgt_id)) {
+                    let src_leaves = get_leaf_descendants(src_global, state, &is_parent);
+                    let tgt_leaves = get_leaf_descendants(tgt_global, state, &is_parent);
+                    for &u in &src_leaves {
+                        for &v in &tgt_leaves {
+                            add_local_edge(u, v, &mut adj);
+                        }
+                    }
+                }
+            }
+
+            // Map hierarchy sibling leaf descendants
+            for idx in 0..n {
+                if is_parent[idx] {
+                    let children_leaves = get_leaf_descendants(idx, state, &is_parent);
+                    for i in 0..children_leaves.len() {
+                        for j in (i + 1)..children_leaves.len() {
+                            add_local_edge(children_leaves[i], children_leaves[j], &mut adj);
+                        }
+                    }
+                }
+            }
+
+            // Find connected components
+            let mut visited = vec![false; leaf_count];
+            let mut components = Vec::new();
+            for start in 0..leaf_count {
+                if visited[start] { continue; }
+                let mut comp = Vec::new();
+                let mut q = std::collections::VecDeque::new();
+                q.push_back(start);
+                visited[start] = true;
+                while let Some(curr) = q.pop_front() {
+                    comp.push(curr);
+                    for &next in &adj[curr] {
+                        if !visited[next] {
+                            visited[next] = true;
+                            q.push_back(next);
+                        }
+                    }
+                }
+                components.push(comp);
+            }
+
+            // Extend with dummy node to connect multiple components
+            let mut ext_adj = adj.clone();
+            if components.len() > 1 {
+                let dummy = leaf_count;
+                ext_adj.push(Vec::new());
+                for comp in &components {
+                    let rep = comp[0];
+                    ext_adj[dummy].push(rep);
+                    ext_adj[rep].push(dummy);
+                }
+            }
+
+            let total_nodes = ext_adj.len();
+            let mut dists = vec![vec![f32::INFINITY; total_nodes]; total_nodes];
+            for start in 0..total_nodes {
+                dists[start][start] = 0.0;
+                let mut q = std::collections::VecDeque::new();
+                q.push_back(start);
+                while let Some(curr) = q.pop_front() {
+                    let d_curr = dists[start][curr];
+                    for &next in &ext_adj[curr] {
+                        if dists[start][next] == f32::INFINITY {
+                            dists[start][next] = d_curr + 1.0;
+                            q.push_back(next);
+                        }
+                    }
+                }
+            }
+
+            // Build squared distance matrix D over actual leaf nodes
+            let mut d_matrix = vec![vec![0.0f32; leaf_count]; leaf_count];
+            for i in 0..leaf_count {
+                for j in 0..leaf_count {
+                    let val = dists[i][j];
+                    d_matrix[i][j] = if val.is_finite() { val * val } else { 16.0 };
+                }
+            }
+
+            // Double center
+            let mut row_sums = vec![0.0f32; leaf_count];
+            let mut total_sum = 0.0f32;
+            for i in 0..leaf_count {
+                let mut r_sum = 0.0f32;
+                for j in 0..leaf_count {
+                    r_sum += d_matrix[i][j];
+                }
+                row_sums[i] = r_sum;
+                total_sum += r_sum;
+            }
+
+            let mut b_matrix = vec![vec![0.0f32; leaf_count]; leaf_count];
+            let l_f = leaf_count as f32;
+            for i in 0..leaf_count {
+                for j in 0..leaf_count {
+                    b_matrix[i][j] = -0.5 * (d_matrix[i][j] - row_sums[i] / l_f - row_sums[j] / l_f + total_sum / (l_f * l_f));
+                }
+            }
+
+            // Power iteration for classical MDS
+            let mut seed = 42u64;
+            let mut lcg_rand = || {
+                seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+                (seed >> 32) as f32 / u32::MAX as f32
+            };
+
+            let power_iteration = |matrix: &[Vec<f32>], rand_fn: &mut dyn FnMut() -> f32| -> (f32, Vec<f32>) {
+                let sz = matrix.len();
+                let mut u_vec = vec![0.0f32; sz];
+                for val in u_vec.iter_mut() {
+                    *val = rand_fn() - 0.5;
+                }
+                let norm = u_vec.iter().map(|&x| x * x).sum::<f32>().sqrt().max(1e-5);
+                for val in u_vec.iter_mut() {
+                    *val /= norm;
+                }
+
+                for _ in 0..100 {
+                    let mut w_vec = vec![0.0f32; sz];
+                    for row in 0..sz {
+                        for col in 0..sz {
+                            w_vec[row] += matrix[row][col] * u_vec[col];
+                        }
+                    }
+                    let w_norm = w_vec.iter().map(|&x| x * x).sum::<f32>().sqrt();
+                    if w_norm < 1e-5 {
+                        break;
+                    }
+                    for row in 0..sz {
+                        u_vec[row] = w_vec[row] / w_norm;
+                    }
+                }
+
+                let mut lamb = 0.0f32;
+                let mut mu_vec = vec![0.0f32; sz];
+                for row in 0..sz {
+                    for col in 0..sz {
+                        mu_vec[row] += matrix[row][col] * u_vec[col];
+                    }
+                    lamb += u_vec[row] * mu_vec[row];
+                }
+
+                (lamb, u_vec)
+            };
+
+            let (lambda_1, v_1) = power_iteration(&b_matrix, &mut lcg_rand);
+            let mut b_deflated = b_matrix.clone();
+            if lambda_1 > 0.0 {
+                for i in 0..leaf_count {
+                    for j in 0..leaf_count {
+                        b_deflated[i][j] -= lambda_1 * v_1[i] * v_1[j];
+                    }
+                }
+            }
+            let (lambda_2, v_2) = power_iteration(&b_deflated, &mut lcg_rand);
+
+            let l1 = lambda_1.max(0.0).sqrt();
+            let l2 = lambda_2.max(0.0).sqrt();
+            let mut draft_coords = vec![Vec2::default(); leaf_count];
+            for i in 0..leaf_count {
+                draft_coords[i] = Vec2::new(l1 * v_1[i], l2 * v_2[i]);
+            }
+
+            let mut total_dist = 0.0f32;
+            let mut edge_cnt = 0;
+            for i in 0..leaf_count {
+                for &j in &adj[i] {
+                    if i < j {
+                        total_dist += (draft_coords[i] - draft_coords[j]).len();
+                        edge_cnt += 1;
+                    }
+                }
+            }
+            let scale = if edge_cnt > 0 && total_dist > 0.01 {
+                (edge_cnt as f32 * self.ideal_edge_length) / total_dist
+            } else {
+                1.0
+            };
+
+            for i in 0..leaf_count {
+                let global_idx = leaf_indices[i];
+                state.positions.set(global_idx, draft_coords[i] * scale);
+            }
         }
 
+        // === PHASE II: SATISFY CONSTRAINTS INITIALIZATION ===
+        let project_constraints = |h_state: &mut GraphState<S>, cons: &FCoseConstraints| {
+            // 1. Fixed node constraints
+            for c in &cons.fixed_nodes {
+                if let Some(&idx) = h_state.node_keys.get(c.node_id) {
+                    h_state.positions.set(idx, c.position);
+                }
+            }
+
+            // 2. Alignment constraints
+            for group in &cons.alignment.vertical {
+                let valid_idxs: Vec<usize> = group.iter()
+                    .filter_map(|&id| h_state.node_keys.get(id).copied())
+                    .collect();
+                if !valid_idxs.is_empty() {
+                    let sum_x: f32 = valid_idxs.iter().map(|&idx| h_state.positions.get(idx).x).sum();
+                    let avg_x = sum_x / valid_idxs.len() as f32;
+                    for &idx in &valid_idxs {
+                        let mut p = *h_state.positions.get(idx);
+                        p.x = avg_x;
+                        h_state.positions.set(idx, p);
+                    }
+                }
+            }
+            for group in &cons.alignment.horizontal {
+                let valid_idxs: Vec<usize> = group.iter()
+                    .filter_map(|&id| h_state.node_keys.get(id).copied())
+                    .collect();
+                if !valid_idxs.is_empty() {
+                    let sum_y: f32 = valid_idxs.iter().map(|&idx| h_state.positions.get(idx).y).sum();
+                    let avg_y = sum_y / valid_idxs.len() as f32;
+                    for &idx in &valid_idxs {
+                        let mut p = *h_state.positions.get(idx);
+                        p.y = avg_y;
+                        h_state.positions.set(idx, p);
+                    }
+                }
+            }
+
+            // 3. Relative placement constraints (project multiple times for relaxation)
+            for _ in 0..5 {
+                for rel in &cons.relative_placement {
+                    match rel {
+                        &RelativePlacementConstraint::LeftRight { left, right, gap } => {
+                            if let (Some(&l_idx), Some(&r_idx)) = (h_state.node_keys.get(left), h_state.node_keys.get(right)) {
+                                let l_pos = *h_state.positions.get(l_idx);
+                                let r_pos = *h_state.positions.get(r_idx);
+                                if r_pos.x < l_pos.x + gap {
+                                    let overlap = (l_pos.x + gap) - r_pos.x;
+                                    let mut new_l = l_pos;
+                                    let mut new_r = r_pos;
+                                    let l_fixed = cons.fixed_nodes.iter().any(|f| f.node_id == left);
+                                    let r_fixed = cons.fixed_nodes.iter().any(|f| f.node_id == right);
+                                    if l_fixed && !r_fixed {
+                                        new_r.x += overlap;
+                                    } else if !l_fixed && r_fixed {
+                                        new_l.x -= overlap;
+                                    } else if !l_fixed && !r_fixed {
+                                        new_l.x -= overlap * 0.5;
+                                        new_r.x += overlap * 0.5;
+                                    }
+                                    h_state.positions.set(l_idx, new_l);
+                                    h_state.positions.set(r_idx, new_r);
+                                }
+                            }
+                        }
+                        &RelativePlacementConstraint::TopBottom { top, bottom, gap } => {
+                            if let (Some(&t_idx), Some(&b_idx)) = (h_state.node_keys.get(top), h_state.node_keys.get(bottom)) {
+                                let t_pos = *h_state.positions.get(t_idx);
+                                let b_pos = *h_state.positions.get(b_idx);
+                                if b_pos.y < t_pos.y + gap {
+                                    let overlap = (t_pos.y + gap) - b_pos.y;
+                                    let mut new_t = t_pos;
+                                    let mut new_b = b_pos;
+                                    let t_fixed = cons.fixed_nodes.iter().any(|f| f.node_id == top);
+                                    let b_fixed = cons.fixed_nodes.iter().any(|f| f.node_id == bottom);
+                                    if t_fixed && !b_fixed {
+                                        new_b.y += overlap;
+                                    } else if !t_fixed && b_fixed {
+                                        new_t.y -= overlap;
+                                    } else if !t_fixed && !b_fixed {
+                                        new_t.y -= overlap * 0.5;
+                                        new_b.y += overlap * 0.5;
+                                    }
+                                    h_state.positions.set(t_idx, new_t);
+                                    h_state.positions.set(b_idx, new_b);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        };
+
+        // Align draft coordinate system with fixed nodes (rigid translation)
+        if !self.constraints.fixed_nodes.is_empty() {
+            let mut draft_sum = Vec2::default();
+            let mut target_sum = Vec2::default();
+            let mut cnt = 0;
+            for c in &self.constraints.fixed_nodes {
+                if let Some(&idx) = state.node_keys.get(c.node_id) {
+                    draft_sum += *state.positions.get(idx);
+                    target_sum += c.position;
+                    cnt += 1;
+                }
+            }
+            if cnt > 0 {
+                let trans = (target_sum / cnt as f32) - (draft_sum / cnt as f32);
+                for idx in 0..n {
+                    let p = *state.positions.get(idx);
+                    state.positions.set(idx, p + trans);
+                }
+            }
+        }
+
+        project_constraints(state, &self.constraints);
+
+        // === PHASE III: THE POLISHING PHASE ===
         let mut temp = self.initial_temp;
-        let mut _state_lcg = 42u64;
 
         for _step in 0..self.iterations {
             if temp < 0.1 { break; }
@@ -2321,16 +2740,29 @@ impl<S: Copy + Default> Layout<S> for FCoseLayout {
             let mut displacements_x = vec![0.0f32; n];
             let mut displacements_y = vec![0.0f32; n];
 
-            let positions_slice: Vec<Vec2> = state.positions.iter().copied().collect();
-            let quadtree = Quadtree::build(&positions_slice);
-            for i in 0..n {
-                let pos_i = positions_slice[i];
-                let force_rep = quadtree.accumulate_repulsion(i, pos_i, &positions_slice, self.node_repulsion, 0.9);
-                displacements_x[i] += force_rep.x;
-                displacements_y[i] += force_rep.y;
+            // 1. Repulsion forces on leaf nodes
+            let leaf_positions: Vec<Vec2> = leaf_indices.iter().map(|&idx| *state.positions.get(idx)).collect();
+            let quadtree = Quadtree::build(&leaf_positions);
+
+            for i in 0..leaf_count {
+                let global_idx = leaf_indices[i];
+                let id = state.node_index_to_id[global_idx];
+                let pos_i = leaf_positions[i];
+
+                let k_rep = if let Some(ref rep_fn) = self.node_repulsion_fn {
+                    rep_fn(id)
+                } else {
+                    self.node_repulsion
+                };
+
+                let force_rep = quadtree.accumulate_repulsion(i, pos_i, &leaf_positions, k_rep, 0.9);
+                displacements_x[global_idx] += force_rep.x;
+                displacements_y[global_idx] += force_rep.y;
             }
 
+            // 2. Attraction forces along edges
             for idx in 0..state.edges.len() {
+                let edge_id = state.edge_index_to_id[idx];
                 let src_node = *state.edge_sources.get(idx);
                 let tgt_node = *state.edge_targets.get(idx);
                 let Some(&src_idx) = state.node_keys.get(src_node) else { continue };
@@ -2355,10 +2787,21 @@ impl<S: Copy + Default> Layout<S> for FCoseLayout {
                 let ly = p2.y - p1.y;
                 let l = (lx * lx + ly * ly).sqrt().max(0.01);
 
-                let depth = get_nesting_depth(state, src_node, tgt_node);
-                let ideal = self.ideal_edge_length * self.nesting_factor.powi(depth as i32);
+                let custom_ideal = if let Some(ref ideal_fn) = self.ideal_edge_length_fn {
+                    ideal_fn(edge_id)
+                } else {
+                    self.ideal_edge_length
+                };
+                let custom_elasticity = if let Some(ref elasticity_fn) = self.edge_elasticity_fn {
+                    elasticity_fn(edge_id)
+                } else {
+                    32.0
+                };
 
-                let force_att = (ideal - l).powi(2) / 32.0;
+                let depth = get_nesting_depth(state, src_node, tgt_node);
+                let ideal = custom_ideal * self.nesting_factor.powi(depth as i32);
+
+                let force_att = (ideal - l).powi(2) / custom_elasticity;
                 let fx = force_att * lx / l;
                 let fy = force_att * ly / l;
 
@@ -2368,38 +2811,104 @@ impl<S: Copy + Default> Layout<S> for FCoseLayout {
                 displacements_y[tgt_idx] -= fy;
             }
 
+            // 3. Gravity towards center of mass of leaf nodes
             let mut center = Vec2::default();
-            for i in 0..n {
-                center += *state.positions.get(i);
+            for &idx in &leaf_indices {
+                center += *state.positions.get(idx);
             }
-            center = center / n as f32;
+            center = center / leaf_count as f32;
 
-            for i in 0..n {
-                let pos = *state.positions.get(i);
+            for &idx in &leaf_indices {
+                let pos = *state.positions.get(idx);
                 let dx = center.x - pos.x;
                 let dy = center.y - pos.y;
                 let d = (dx * dx + dy * dy).sqrt().max(0.01);
                 let fx = self.gravity * dx / d;
                 let fy = self.gravity * dy / d;
 
-                displacements_x[i] += fx;
-                displacements_y[i] += fy;
+                displacements_x[idx] += fx;
+                displacements_y[idx] += fy;
             }
 
-            for i in 0..n {
-                let dx = displacements_x[i];
-                let dy = displacements_y[i];
-                let dist = (dx * dx + dy * dy).sqrt();
-                if dist > 0.01 {
-                    let cap = dist.min(temp);
-                    let pos = state.positions.get_mut(i);
-                    pos.x += dx * cap / dist;
-                    pos.y += dy * cap / dist;
+            // Apply constraints to displacements (fixed / alignment)
+            for c in &self.constraints.fixed_nodes {
+                if let Some(&idx) = state.node_keys.get(c.node_id) {
+                    displacements_x[idx] = 0.0;
+                    displacements_y[idx] = 0.0;
                 }
             }
 
+            for group in &self.constraints.alignment.vertical {
+                let valid_idxs: Vec<usize> = group.iter()
+                    .filter_map(|&id| state.node_keys.get(id).copied())
+                    .collect();
+                if !valid_idxs.is_empty() {
+                    let sum_dx: f32 = valid_idxs.iter().map(|&idx| displacements_x[idx]).sum();
+                    let avg_dx = sum_dx / valid_idxs.len() as f32;
+                    for &idx in &valid_idxs {
+                        displacements_x[idx] = avg_dx;
+                    }
+                }
+            }
+
+            for group in &self.constraints.alignment.horizontal {
+                let valid_idxs: Vec<usize> = group.iter()
+                    .filter_map(|&id| state.node_keys.get(id).copied())
+                    .collect();
+                if !valid_idxs.is_empty() {
+                    let sum_dy: f32 = valid_idxs.iter().map(|&idx| displacements_y[idx]).sum();
+                    let avg_dy = sum_dy / valid_idxs.len() as f32;
+                    for &idx in &valid_idxs {
+                        displacements_y[idx] = avg_dy;
+                    }
+                }
+            }
+
+            // 4. Update coordinates with temperature cap
+            for &idx in &leaf_indices {
+                let dx = displacements_x[idx];
+                let dy = displacements_y[idx];
+                let dist = (dx * dx + dy * dy).sqrt();
+                if dist > 0.01 {
+                    let cap = dist.min(temp);
+                    let capped_x = dx * cap / dist;
+                    let capped_y = dy * cap / dist;
+
+                    let old_pos = *state.positions.get(idx);
+                    state.positions.set(idx, Vec2::new(old_pos.x + capped_x, old_pos.y + capped_y));
+                }
+            }
+
+            // Project constraints to clean up any error
+            project_constraints(state, &self.constraints);
+
+            // Re-resolve compound bounds
+            resolve_compound_bounds(state, &HashSet::new(), 12.0);
+
             temp *= self.cooling_factor;
         }
+
+        // === OVERLAP REMOVAL ===
+        let apply_push = |node_idx: usize, push: Vec2, h_state: &mut GraphState<S>, is_p: &[bool], cons: &FCoseConstraints| {
+            if !is_p[node_idx] {
+                let leaf_id = h_state.node_index_to_id[node_idx];
+                if !cons.fixed_nodes.iter().any(|f| f.node_id == leaf_id) {
+                    let p = h_state.positions.get_mut(node_idx);
+                    p.x += push.x;
+                    p.y += push.y;
+                }
+            } else {
+                let leaf_descendants = get_leaf_descendants(node_idx, h_state, is_p);
+                for &leaf_idx in &leaf_descendants {
+                    let leaf_id = h_state.node_index_to_id[leaf_idx];
+                    if !cons.fixed_nodes.iter().any(|f| f.node_id == leaf_id) {
+                        let p = h_state.positions.get_mut(leaf_idx);
+                        p.x += push.x;
+                        p.y += push.y;
+                    }
+                }
+            }
+        };
 
         let padding = 12.0;
         for _ in 0..4 {
@@ -2432,16 +2941,14 @@ impl<S: Copy + Default> Layout<S> for FCoseLayout {
                             push_y = sign_y * overlap_y * 0.5;
                         }
 
-                        let p_i = state.positions.get_mut(i);
-                        p_i.x -= push_x;
-                        p_i.y -= push_y;
-
-                        let p_j = state.positions.get_mut(j);
-                        p_j.x += push_x;
-                        p_j.y += push_y;
+                        let push = Vec2::new(push_x, push_y);
+                        apply_push(i, Vec2::new(-push.x, -push.y), state, &is_parent, &self.constraints);
+                        apply_push(j, push, state, &is_parent, &self.constraints);
                     }
                 }
             }
+            project_constraints(state, &self.constraints);
+            resolve_compound_bounds(state, &HashSet::new(), 12.0);
         }
 
         state.dirty_flags |= graphene_core::DirtyFlags::POSITION_DIRTY;

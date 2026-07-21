@@ -16,11 +16,11 @@ new_key_type! {
 /// Safe wrapper around a parallel array. Operates purely on `usize` indices.
 /// **Key invariant:** All DenseStorage instances in GraphState share the same length.
 #[derive(Debug, Clone)]
-pub struct DenseStorage<T: Copy> {
+pub struct DenseStorage<T> {
     data: Vec<T>,
 }
 
-impl<T: Copy> DenseStorage<T> {
+impl<T> DenseStorage<T> {
     pub fn new() -> Self {
         Self { data: Vec::new() }
     }
@@ -62,33 +62,95 @@ impl<T: Copy> DenseStorage<T> {
     }
 }
 
-impl<T: Copy> std::ops::Deref for DenseStorage<T> {
+impl<T> std::ops::Deref for DenseStorage<T> {
     type Target = [T];
     fn deref(&self) -> &Self::Target {
         &self.data
     }
 }
 
-impl<T: Copy> std::ops::DerefMut for DenseStorage<T> {
+impl<T> std::ops::DerefMut for DenseStorage<T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.data
     }
 }
 
-impl<T: Copy> Default for DenseStorage<T> {
+impl<T> Default for DenseStorage<T> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
-pub struct NodeData {
-    // Custom user metadata or basic properties
+pub type StringId = u32;
+
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
+pub struct StringArena {
+    pub strings: Vec<String>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Default)]
+impl StringArena {
+    pub fn new() -> Self {
+        Self {
+            strings: Vec::new(),
+        }
+    }
+
+    pub fn intern(&mut self, s: String) -> StringId {
+        if let Some(pos) = self.strings.iter().position(|x| x == &s) {
+            pos as u32
+        } else {
+            let id = self.strings.len() as u32;
+            self.strings.push(s);
+            id
+        }
+    }
+
+    pub fn get(&self, id: StringId) -> Option<&str> {
+        self.strings.get(id as usize).map(|s| s.as_str())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum UserDataValue {
+    String(StringId),
+    Integer(i64),
+    Float(f64),
+    Boolean(bool),
+}
+
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
+pub struct UserData {
+    pub fields: std::collections::HashMap<StringId, UserDataValue>,
+}
+
+impl UserData {
+    pub fn new() -> Self {
+        Self {
+            fields: std::collections::HashMap::new(),
+        }
+    }
+
+    pub fn insert(&mut self, key: StringId, value: UserDataValue) {
+        self.fields.insert(key, value);
+    }
+
+    pub fn get(&self, key: StringId) -> Option<&UserDataValue> {
+        self.fields.get(&key)
+    }
+
+    pub fn remove(&mut self, key: StringId) -> Option<UserDataValue> {
+        self.fields.remove(&key)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
+pub struct NodeData {
+    pub user_data: UserData,
+}
+
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
 pub struct EdgeData {
-    // Custom user metadata or basic properties
+    pub user_data: UserData,
 }
 
 /// Doubly-linked tree in SoA — O(1) reparenting and deletion.
@@ -279,6 +341,9 @@ pub struct GraphState<S: Copy = ()> {
 
     // === EVENT LOG (with coalescing) ===
     pub event_log: Vec<GraphEvent<S>>,
+
+    // === PRESENTATION STRINGS ===
+    pub string_arena: StringArena,
 }
 
 impl<S: Copy + Default> GraphState<S> {
@@ -301,6 +366,7 @@ impl<S: Copy + Default> GraphState<S> {
             dirty_flags: DirtyFlags::empty(),
             animations: AnimationRegistry::new(),
             event_log: Vec::new(),
+            string_arena: StringArena::new(),
         }
     }
 

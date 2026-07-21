@@ -2522,6 +2522,7 @@ version = "0.1.0"
 dependencies = [
  "bitflags 2.13.1",
  "graphene_core",
+ "serde",
 ]
 
 [[package]]

@@ -2127,6 +2127,7 @@ impl DemoApp {
                 &self.themes.themes[self.current_theme_idx],
                 self.selected_node,
                 &fixture.node_labels,
+                &fixture.edge_labels,
                 self.get_max_untruncated_len(cx),
                 &self.collapsed_parents,
             ))

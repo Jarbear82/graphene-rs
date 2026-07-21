@@ -501,3 +501,83 @@ fn test_collapsed_compound_parent_filtering() {
     assert_eq!(size.w, f_tree.state.sizes.get(root_idx).w, "Collapsed parent size should match its initial standard size, not enclose children");
 }
 
+// 20. FCOSE CONSTRAINTS & CALLBACKS INTEGRATION TESTS
+#[test]
+fn test_fcose_constraints_and_callbacks() {
+    use graphene_core::fixtures::get_all_fixtures;
+    use graphene_layout::{
+        FixedNodeConstraint, AlignmentConstraint, RelativePlacementConstraint, FCoseConstraints,
+    };
+
+    let fixtures = get_all_fixtures::<()>();
+    let f_small = fixtures
+        .iter()
+        .find(|f| f.name.contains("Undirected Small"))
+        .unwrap()
+        .clone();
+
+    let mut state = f_small.state;
+    // We have three nodes A, B, C
+    let nodes = state.node_index_to_id.clone();
+    assert!(nodes.len() >= 3);
+    let id_a = nodes[0];
+    let id_b = nodes[1];
+    let id_c = nodes[2];
+
+    // Define constraints
+    let fixed_pos = Vec2::new(123.0, 456.0);
+    let fixed_node = FixedNodeConstraint {
+        node_id: id_a,
+        position: fixed_pos,
+    };
+
+    // Align B and C vertically (share same X)
+    let alignment = AlignmentConstraint {
+        vertical: vec![vec![id_b, id_c]],
+        horizontal: vec![],
+    };
+
+    // Relative placement: B is to the left of A by at least 100.0
+    let relative = RelativePlacementConstraint::LeftRight {
+        left: id_b,
+        right: id_a,
+        gap: 100.0,
+    };
+
+    let constraints = FCoseConstraints {
+        fixed_nodes: vec![fixed_node],
+        alignment,
+        relative_placement: vec![relative],
+    };
+
+    // Per-element callbacks
+    let mut fcose = FCoseLayout::default()
+        .with_constraints(constraints)
+        .with_node_repulsion_fn(move |id| {
+            if id == id_a { 10000.0 } else { 4500.0 }
+        })
+        .with_ideal_edge_length_fn(|_edge| 60.0)
+        .with_edge_elasticity_fn(|_edge| 20.0);
+
+    fcose.compute(&mut state);
+
+    assert_valid_positions(&state);
+
+    // 1. Verify fixed node position is exactly preserved
+    let idx_a = state.node_keys[id_a];
+    let pos_a = *state.positions.get(idx_a);
+    assert_eq!(pos_a.x, 123.0);
+    assert_eq!(pos_a.y, 456.0);
+
+    // 2. Verify vertical alignment (B and C have the same X coordinate)
+    let idx_b = state.node_keys[id_b];
+    let idx_c = state.node_keys[id_c];
+    let pos_b = *state.positions.get(idx_b);
+    let pos_c = *state.positions.get(idx_c);
+    assert!((pos_b.x - pos_c.x).abs() < 1e-3, "B and C should have the same X coordinate, got {} and {}", pos_b.x, pos_c.x);
+
+    // 3. Verify relative placement constraint (B is to the left of A by at least 100)
+    assert!(pos_b.x <= pos_a.x - 100.0 + 1e-3, "B.x ({}) should be to the left of A.x ({}) by at least 100", pos_b.x, pos_a.x);
+}
+
+

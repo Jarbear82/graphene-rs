@@ -23,6 +23,7 @@ pub struct GraphCanvas<'a> {
     pub theme: &'a Theme,
     pub selected_node: Option<NodeId>,
     pub node_labels: &'a std::collections::HashMap<NodeId, String>,
+    pub edge_labels: &'a std::collections::HashMap<usize, String>,
     pub max_untruncated_len: usize,
     pub collapsed_parents: &'a std::collections::HashSet<NodeId>,
 }
@@ -35,6 +36,7 @@ impl<'a> GraphCanvas<'a> {
         theme: &'a Theme,
         selected_node: Option<NodeId>,
         node_labels: &'a std::collections::HashMap<NodeId, String>,
+        edge_labels: &'a std::collections::HashMap<usize, String>,
         max_untruncated_len: usize,
         collapsed_parents: &'a std::collections::HashSet<NodeId>,
     ) -> Self {
@@ -45,6 +47,7 @@ impl<'a> GraphCanvas<'a> {
             theme,
             selected_node,
             node_labels,
+            edge_labels,
             max_untruncated_len,
             collapsed_parents,
         }
@@ -60,6 +63,7 @@ impl<'a> IntoElement for GraphCanvas<'a> {
         let theme = *self.theme;
         let selected_node = self.selected_node;
         let node_labels = self.node_labels.clone();
+        let edge_labels = self.edge_labels.clone();
         let max_untruncated_len = self.max_untruncated_len;
         let collapsed_parents = self.collapsed_parents;
 
@@ -86,6 +90,7 @@ impl<'a> IntoElement for GraphCanvas<'a> {
 
         // Precompute edge paths for drawing
         let mut edge_paths = Vec::new();
+        let mut edge_labels_to_render = Vec::new();
         for i in 0..state.edges.len() {
             let src = *state.edge_sources.get(i);
             let tgt = *state.edge_targets.get(i);
@@ -106,12 +111,29 @@ impl<'a> IntoElement for GraphCanvas<'a> {
             let src_screen = viewport.model_to_screen(pos_src);
             let tgt_screen = viewport.model_to_screen(pos_tgt);
 
-            let curve_style = match state.edge_computed_styles.get(i).target {
-                StylingTarget::Edge(edge_style) => edge_style.curve_style,
-                _ => EdgeCurveStyle::Straight,
-            };
+            let mut curve_style = EdgeCurveStyle::Straight;
+            let mut label_text = edge_labels.get(&i).cloned();
+
+            let style = state.edge_computed_styles.get(i);
+            if let StylingTarget::Edge(ref edge_style) = style.target {
+                if !edge_style.visible {
+                    continue;
+                }
+                curve_style = edge_style.curve_style;
+                if label_text.is_none() {
+                    if let Some(lbl_id) = edge_style.label {
+                        label_text = state.string_arena.get(lbl_id).map(|s| s.to_string());
+                    }
+                }
+            }
 
             edge_paths.push((src_screen, tgt_screen, curve_style));
+
+            if let Some(lbl) = label_text {
+                if !lbl.is_empty() {
+                    edge_labels_to_render.push((i, src_screen, tgt_screen, curve_style, lbl));
+                }
+            }
         }
 
         let nodes_count = state.node_index_to_id.len();
@@ -253,6 +275,70 @@ impl<'a> IntoElement for GraphCanvas<'a> {
                 )
         };
 
+        let render_edge_label = |(i, src_p, tgt_p, curve_style, label): (usize, Point<f32>, Point<f32>, EdgeCurveStyle, String)| {
+            let src_x = f32::from(src_p.x);
+            let src_y = f32::from(src_p.y);
+            let tgt_x = f32::from(tgt_p.x);
+            let tgt_y = f32::from(tgt_p.y);
+
+            let (mid_x, mid_y) = match curve_style {
+                EdgeCurveStyle::Straight => {
+                    ((src_x + tgt_x) / 2.0, (src_y + tgt_y) / 2.0)
+                }
+                _ => {
+                    let mid_x = (src_x + tgt_x) / 2.0;
+                    let mid_y = (src_y + tgt_y) / 2.0;
+                    let dx = tgt_x - src_x;
+                    let dy = tgt_y - src_y;
+                    let len = (dx * dx + dy * dy).sqrt();
+                    let curvature = 35.0;
+                    let ctrl_x = if len > 0.0 {
+                        mid_x - (dy / len) * curvature
+                    } else {
+                        mid_x
+                    };
+                    let ctrl_y = if len > 0.0 {
+                        mid_y + (dx / len) * curvature
+                    } else {
+                        mid_y
+                    };
+                    // t = 0.5 on quadratic bezier
+                    (
+                        0.25 * src_x + 0.5 * ctrl_x + 0.25 * tgt_x,
+                        0.25 * src_y + 0.5 * ctrl_y + 0.25 * tgt_y,
+                    )
+                }
+            };
+
+            let font_size = match state.edge_computed_styles.get(i).target {
+                StylingTarget::Edge(edge_style) => edge_style.label_font_size,
+                _ => 12.0,
+            };
+
+            // Position label box centered on the midpoint
+            let label_w = 60.0 * viewport.zoom;
+            let label_h = 16.0 * viewport.zoom;
+            let screen_x = mid_x - (label_w / 2.0);
+            let screen_y = mid_y - (label_h / 2.0);
+
+            gpui::div()
+                .id(SharedString::from(format!("canvas-edge-label-{}", i)))
+                .absolute()
+                .left(px(screen_x))
+                .top(px(screen_y))
+                .w(px(label_w))
+                .h(px(label_h))
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(
+                    gpui::div()
+                        .text_color(text_color)
+                        .text_size(px(font_size * viewport.zoom))
+                        .child(label),
+                )
+        };
+
         gpui::div()
             .flex_1()
             .h_full()
@@ -330,6 +416,7 @@ impl<'a> IntoElement for GraphCanvas<'a> {
             )
             .children(parent_indices.into_iter().map(render_node))
             .children(leaf_indices.into_iter().map(render_node))
+            .children(edge_labels_to_render.into_iter().map(render_edge_label))
             .into_any_element()
     }
 }
