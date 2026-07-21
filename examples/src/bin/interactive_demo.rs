@@ -316,31 +316,102 @@ impl DemoApp {
         let k_att = 0.06;
         let gravity = 0.3;
 
-        // 1. Repulsive forces (classical O(N^2) or Barnes-Hut O(N log N))
-        if self.use_barnes_hut {
-            let positions_slice = &*self.state.positions;
-            let quadtree = graphene_layout::Quadtree::build(positions_slice);
-            for i in 0..n {
-                let pos_i = positions_slice[i];
-                forces[i] = quadtree.accumulate_repulsion(i, pos_i, positions_slice, k_rep, 0.5);
-            }
-        } else {
-            for i in 0..n {
-                for j in 0..n {
-                    if i == j {
-                        continue;
+        let is_parent = |idx: usize, state: &graphene_core::GraphState<graphene_style::ComputedStyle>| -> bool {
+            state.hierarchy.first_child.get(idx).is_some()
+        };
+
+        let get_leaf_descendants = |node_idx: usize, state: &graphene_core::GraphState<graphene_style::ComputedStyle>| -> Vec<usize> {
+            let mut leaves = Vec::new();
+            let mut stack = vec![node_idx];
+            while let Some(curr) = stack.pop() {
+                if !is_parent(curr, state) {
+                    leaves.push(curr);
+                } else {
+                    let mut next_child = *state.hierarchy.first_child.get(curr);
+                    while let Some(child_id) = next_child {
+                        if let Some(&child_idx) = state.node_keys.get(child_id) {
+                            stack.push(child_idx);
+                            next_child = *state.hierarchy.next_sibling.get(child_idx);
+                        } else {
+                            break;
+                        }
                     }
-                    let pos_i = *self.state.positions.get(i);
-                    let pos_j = *self.state.positions.get(j);
+                }
+            }
+            leaves
+        };
 
-                    let dx = pos_i.x - pos_j.x;
-                    let dy = pos_i.y - pos_j.y;
-                    let dist_sq = dx * dx + dy * dy + 0.01;
-                    let dist = dist_sq.sqrt();
+        let is_ancestor = |mut child_idx: usize, parent_idx: usize, state: &graphene_core::GraphState<graphene_style::ComputedStyle>| -> bool {
+            let parent_id = state.node_index_to_id[parent_idx];
+            while let Some(p_id) = *state.hierarchy.parent.get(child_idx) {
+                if p_id == parent_id {
+                    return true;
+                }
+                if let Some(&p_idx) = state.node_keys.get(p_id) {
+                    child_idx = p_idx;
+                } else {
+                    break;
+                }
+            }
+            false
+        };
 
-                    let force = k_rep / dist_sq;
-                    forces[i].x += (dx / dist) * force;
-                    forces[i].y += (dy / dist) * force;
+        // 1. Size-aware repulsive forces (excluding ancestor containment, propagating to children)
+        for i in 0..n {
+            for j in (i + 1)..n {
+                if is_ancestor(i, j, &self.state) || is_ancestor(j, i, &self.state) {
+                    continue;
+                }
+
+                let pos_i = *self.state.positions.get(i);
+                let pos_j = *self.state.positions.get(j);
+                let size_i = *self.state.sizes.get(i);
+                let size_j = *self.state.sizes.get(j);
+
+                let dx = pos_j.x - pos_i.x;
+                let dy = pos_j.y - pos_i.y;
+                let dist = (dx * dx + dy * dy + 0.01).sqrt();
+
+                let p1 = graphene_layout::find_clipping_point(pos_i, size_i, dx, dy);
+                let p2 = graphene_layout::find_clipping_point(pos_j, size_j, -dx, -dy);
+                let border_dx = p2.x - p1.x;
+                let border_dy = p2.y - p1.y;
+                let border_dist = (border_dx * border_dx + border_dy * border_dy).sqrt().max(1.0);
+
+                let force = k_rep / (border_dist * border_dist);
+                let fx = -force * dx / dist; // repels i away from j
+                let fy = -force * dy / dist;
+
+                // Apply to i
+                if !is_parent(i, &self.state) {
+                    forces[i].x += fx;
+                    forces[i].y += fy;
+                } else {
+                    let leaves = get_leaf_descendants(i, &self.state);
+                    if !leaves.is_empty() {
+                        let f_each_x = fx / leaves.len() as f32;
+                        let f_each_y = fy / leaves.len() as f32;
+                        for &leaf_idx in &leaves {
+                            forces[leaf_idx].x += f_each_x;
+                            forces[leaf_idx].y += f_each_y;
+                        }
+                    }
+                }
+
+                // Apply to j
+                if !is_parent(j, &self.state) {
+                    forces[j].x -= fx;
+                    forces[j].y -= fy;
+                } else {
+                    let leaves = get_leaf_descendants(j, &self.state);
+                    if !leaves.is_empty() {
+                        let f_each_x = -fx / leaves.len() as f32;
+                        let f_each_y = -fy / leaves.len() as f32;
+                        for &leaf_idx in &leaves {
+                            forces[leaf_idx].x += f_each_x;
+                            forces[leaf_idx].y += f_each_y;
+                        }
+                    }
                 }
             }
         }
@@ -403,11 +474,32 @@ impl DemoApp {
             return;
         }
 
+        let is_ancestor = |mut child_idx: usize,
+                           parent_idx: usize,
+                           state: &graphene_core::GraphState<graphene_style::ComputedStyle>|
+         -> bool {
+            let parent_id = state.node_index_to_id[parent_idx];
+            while let Some(p_id) = *state.hierarchy.parent.get(child_idx) {
+                if p_id == parent_id {
+                    return true;
+                }
+                if let Some(&p_idx) = state.node_keys.get(p_id) {
+                    child_idx = p_idx;
+                } else {
+                    break;
+                }
+            }
+            false
+        };
+
         let padding = 12.0; // Margin around the node boxes
 
         for _ in 0..4 {
             for i in 0..n {
                 for j in (i + 1)..n {
+                    if is_ancestor(i, j, &self.state) || is_ancestor(j, i, &self.state) {
+                        continue;
+                    }
                     let pos_i = *self.state.positions.get(i);
                     let pos_j = *self.state.positions.get(j);
                     let size_i = *self.state.sizes.get(i);
@@ -1087,6 +1179,11 @@ impl Render for DemoApp {
             }
 
             self.resolve_collisions();
+            graphene_layout::resolve_compound_bounds(
+                &mut self.state,
+                &self.collapsed_parents,
+                20.0,
+            );
 
             cx.spawn(async move |this, cx| {
                 cx.background_executor()
@@ -2255,6 +2352,11 @@ impl DemoApp {
 
                 if this.interaction_state.drag_start.is_some() {
                     this.resolve_collisions();
+                    graphene_layout::resolve_compound_bounds(
+                        &mut this.state,
+                        &this.collapsed_parents,
+                        20.0,
+                    );
                     this.state.dirty_flags |= graphene_core::DirtyFlags::POSITION_DIRTY;
                 }
                 cx.notify();

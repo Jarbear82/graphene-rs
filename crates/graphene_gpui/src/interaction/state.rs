@@ -89,6 +89,23 @@ impl InteractionState {
     ) -> Option<NodeId> {
         let model_pos = viewport.screen_to_model(screen_pos);
 
+        let get_nesting_depth = |node_id: NodeId, h_state: &GraphState<ComputedStyle>| -> usize {
+            let mut depth = 0;
+            let mut curr = node_id;
+            while let Some(&idx) = h_state.node_keys.get(curr) {
+                if let Some(parent_id) = *h_state.hierarchy.parent.get(idx) {
+                    curr = parent_id;
+                    depth += 1;
+                } else {
+                    break;
+                }
+            }
+            depth
+        };
+
+        let mut best_match = None;
+        let mut max_depth = 0;
+
         if physics_active {
             // Linear scan over visible-only candidates during active simulation
             for (idx, &id) in state.node_index_to_id.iter().enumerate() {
@@ -102,7 +119,11 @@ impl InteractionState {
                         && model_pos.y >= pos.y - half_h
                         && model_pos.y <= pos.y + half_h
                     {
-                        return Some(id);
+                        let depth = get_nesting_depth(id, state);
+                        if best_match.is_none() || depth > max_depth {
+                            best_match = Some(id);
+                            max_depth = depth;
+                        }
                     }
                 }
             }
@@ -120,13 +141,17 @@ impl InteractionState {
                         && model_pos.y >= pos.y - half_h
                         && model_pos.y <= pos.y + half_h
                     {
-                        return Some(id);
+                        let depth = get_nesting_depth(id, state);
+                        if best_match.is_none() || depth > max_depth {
+                            best_match = Some(id);
+                            max_depth = depth;
+                        }
                     }
                 }
             }
         }
 
-        None
+        best_match
     }
 
     pub fn on_mouse_down(
@@ -174,5 +199,57 @@ impl InteractionState {
     pub fn on_mouse_up(&mut self) {
         self.drag_start = None;
         self.pan_origin = None;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use graphene_core::math::Size2;
+
+    #[test]
+    fn test_hit_test_prioritizes_nested_children() {
+        let mut state = GraphState::new();
+
+        // 1. Create a parent node (cover -100 to 100 on both axes)
+        let parent_id = state.add_node(Vec2::new(0.0, 0.0), Size2::new(200.0, 200.0));
+
+        // 2. Create a child node (nested inside, cover 30 to 70 on both axes)
+        let child_id = state.add_node(Vec2::new(50.0, 50.0), Size2::new(40.0, 40.0));
+        
+        // Reparent child to parent
+        state.reparent_node(child_id, Some(parent_id));
+
+        // Create viewport (centered at 0, 0 in model space)
+        let bounds = gpui::Bounds {
+            origin: gpui::Point { x: 0.0, y: 0.0 },
+            size: gpui::Size { width: 800.0, height: 600.0 },
+        };
+        let viewport = Viewport::new(bounds);
+
+        // Rebuild spatial grid
+        let mut interaction = InteractionState::new(60.0);
+        interaction.rebuild_grid(&state);
+
+        // Click directly on the child node at model coordinate (50, 50)
+        // Screen position corresponding to (50, 50)
+        let screen_pos = viewport.model_to_screen(Vec2::new(50.0, 50.0));
+
+        // Hit test with active simulation (linear scan)
+        let hit_active = interaction.hit_test(screen_pos, &viewport, &state, true);
+        assert_eq!(hit_active, Some(child_id), "Active hit_test did not prioritize nested child node!");
+
+        // Hit test with inactive simulation (spatial grid query)
+        let hit_inactive = interaction.hit_test(screen_pos, &viewport, &state, false);
+        assert_eq!(hit_inactive, Some(child_id), "Inactive hit_test did not prioritize nested child node!");
+
+        // Click on the parent margin (e.g. at model coordinate (-50, -50), outside child)
+        let screen_margin = viewport.model_to_screen(Vec2::new(-50.0, -50.0));
+        
+        let hit_margin_active = interaction.hit_test(screen_margin, &viewport, &state, true);
+        assert_eq!(hit_margin_active, Some(parent_id), "Hit test at margin should match parent node!");
+
+        let hit_margin_inactive = interaction.hit_test(screen_margin, &viewport, &state, false);
+        assert_eq!(hit_margin_inactive, Some(parent_id), "Hit test at margin should match parent node!");
     }
 }

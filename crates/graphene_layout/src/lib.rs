@@ -708,7 +708,7 @@ impl Default for CoseLayout {
     }
 }
 
-fn find_clipping_point(pos: Vec2, size: graphene_core::Size2, dx: f32, dy: f32) -> Vec2 {
+pub fn find_clipping_point(pos: Vec2, size: graphene_core::Size2, dx: f32, dy: f32) -> Vec2 {
     let w = size.w;
     let h = size.h;
     if dx == 0.0 && dy > 0.0 {
@@ -2401,6 +2401,21 @@ impl<S: Copy + Default> Layout<S> for FCoseLayout {
             leaves
         };
 
+        let is_ancestor = |mut child_idx: usize, parent_idx: usize, h_state: &GraphState<S>| -> bool {
+            let parent_id = h_state.node_index_to_id[parent_idx];
+            while let Some(p_id) = *h_state.hierarchy.parent.get(child_idx) {
+                if p_id == parent_id {
+                    return true;
+                }
+                if let Some(&p_idx) = h_state.node_keys.get(p_id) {
+                    child_idx = p_idx;
+                } else {
+                    break;
+                }
+            }
+            false
+        };
+
         let mut all_zero = true;
         for &idx in &leaf_indices {
             let pos = *state.positions.get(idx);
@@ -2412,47 +2427,37 @@ impl<S: Copy + Default> Layout<S> for FCoseLayout {
 
         if self.randomize || all_zero {
             // === PHASE I: OBTAIN DRAFT LAYOUT ===
-            let mut adj = vec![Vec::new(); leaf_count];
+            // Run MDS over all n nodes (treating compound nodes as regular nodes)
+            let mut adj = vec![Vec::new(); n];
             let add_local_edge = |u_global: usize, v_global: usize, adj_list: &mut Vec<Vec<usize>>| {
-                if let (Some(u_local), Some(v_local)) = (leaf_to_local[u_global], leaf_to_local[v_global]) {
-                    if u_local != v_local {
-                        adj_list[u_local].push(v_local);
-                        adj_list[v_local].push(u_local);
-                    }
+                if u_global != v_global {
+                    adj_list[u_global].push(v_global);
+                    adj_list[v_global].push(u_global);
                 }
             };
 
-            // Map edges to leaf descendants
+            // Map edges directly
             for edge_idx in 0..state.edges.len() {
                 let src_id = *state.edge_sources.get(edge_idx);
                 let tgt_id = *state.edge_targets.get(edge_idx);
                 if let (Some(&src_global), Some(&tgt_global)) = (state.node_keys.get(src_id), state.node_keys.get(tgt_id)) {
-                    let src_leaves = get_leaf_descendants(src_global, state, &is_parent);
-                    let tgt_leaves = get_leaf_descendants(tgt_global, state, &is_parent);
-                    for &u in &src_leaves {
-                        for &v in &tgt_leaves {
-                            add_local_edge(u, v, &mut adj);
-                        }
-                    }
+                    add_local_edge(src_global, tgt_global, &mut adj);
                 }
             }
 
-            // Map hierarchy sibling leaf descendants
+            // Map hierarchy parent-child relationships as virtual edges in MDS
             for idx in 0..n {
-                if is_parent[idx] {
-                    let children_leaves = get_leaf_descendants(idx, state, &is_parent);
-                    for i in 0..children_leaves.len() {
-                        for j in (i + 1)..children_leaves.len() {
-                            add_local_edge(children_leaves[i], children_leaves[j], &mut adj);
-                        }
+                if let Some(parent_id) = *state.hierarchy.parent.get(idx) {
+                    if let Some(&parent_idx) = state.node_keys.get(parent_id) {
+                        add_local_edge(idx, parent_idx, &mut adj);
                     }
                 }
             }
 
-            // Find connected components
-            let mut visited = vec![false; leaf_count];
+            // Find connected components in this flat representation
+            let mut visited = vec![false; n];
             let mut components = Vec::new();
-            for start in 0..leaf_count {
+            for start in 0..n {
                 if visited[start] { continue; }
                 let mut comp = Vec::new();
                 let mut q = std::collections::VecDeque::new();
@@ -2473,7 +2478,7 @@ impl<S: Copy + Default> Layout<S> for FCoseLayout {
             // Extend with dummy node to connect multiple components
             let mut ext_adj = adj.clone();
             if components.len() > 1 {
-                let dummy = leaf_count;
+                let dummy = n;
                 ext_adj.push(Vec::new());
                 for comp in &components {
                     let rep = comp[0];
@@ -2499,31 +2504,31 @@ impl<S: Copy + Default> Layout<S> for FCoseLayout {
                 }
             }
 
-            // Build squared distance matrix D over actual leaf nodes
-            let mut d_matrix = vec![vec![0.0f32; leaf_count]; leaf_count];
-            for i in 0..leaf_count {
-                for j in 0..leaf_count {
+            // Build squared distance matrix D over all nodes
+            let mut d_matrix = vec![vec![0.0f32; n]; n];
+            for i in 0..n {
+                for j in 0..n {
                     let val = dists[i][j];
                     d_matrix[i][j] = if val.is_finite() { val * val } else { 16.0 };
                 }
             }
 
             // Double center
-            let mut row_sums = vec![0.0f32; leaf_count];
+            let mut row_sums = vec![0.0f32; n];
             let mut total_sum = 0.0f32;
-            for i in 0..leaf_count {
+            for i in 0..n {
                 let mut r_sum = 0.0f32;
-                for j in 0..leaf_count {
+                for j in 0..n {
                     r_sum += d_matrix[i][j];
                 }
                 row_sums[i] = r_sum;
                 total_sum += r_sum;
             }
 
-            let mut b_matrix = vec![vec![0.0f32; leaf_count]; leaf_count];
-            let l_f = leaf_count as f32;
-            for i in 0..leaf_count {
-                for j in 0..leaf_count {
+            let mut b_matrix = vec![vec![0.0f32; n]; n];
+            let l_f = n as f32;
+            for i in 0..n {
+                for j in 0..n {
                     b_matrix[i][j] = -0.5 * (d_matrix[i][j] - row_sums[i] / l_f - row_sums[j] / l_f + total_sum / (l_f * l_f));
                 }
             }
@@ -2577,8 +2582,8 @@ impl<S: Copy + Default> Layout<S> for FCoseLayout {
             let (lambda_1, v_1) = power_iteration(&b_matrix, &mut lcg_rand);
             let mut b_deflated = b_matrix.clone();
             if lambda_1 > 0.0 {
-                for i in 0..leaf_count {
-                    for j in 0..leaf_count {
+                for i in 0..n {
+                    for j in 0..n {
                         b_deflated[i][j] -= lambda_1 * v_1[i] * v_1[j];
                     }
                 }
@@ -2587,14 +2592,14 @@ impl<S: Copy + Default> Layout<S> for FCoseLayout {
 
             let l1 = lambda_1.max(0.0).sqrt();
             let l2 = lambda_2.max(0.0).sqrt();
-            let mut draft_coords = vec![Vec2::default(); leaf_count];
-            for i in 0..leaf_count {
+            let mut draft_coords = vec![Vec2::default(); n];
+            for i in 0..n {
                 draft_coords[i] = Vec2::new(l1 * v_1[i], l2 * v_2[i]);
             }
 
             let mut total_dist = 0.0f32;
             let mut edge_cnt = 0;
-            for i in 0..leaf_count {
+            for i in 0..n {
                 for &j in &adj[i] {
                     if i < j {
                         total_dist += (draft_coords[i] - draft_coords[j]).len();
@@ -2608,9 +2613,8 @@ impl<S: Copy + Default> Layout<S> for FCoseLayout {
                 1.0
             };
 
-            for i in 0..leaf_count {
-                let global_idx = leaf_indices[i];
-                state.positions.set(global_idx, draft_coords[i] * scale);
+            for idx in 0..n {
+                state.positions.set(idx, draft_coords[idx] * scale);
             }
         }
 
@@ -2705,6 +2709,35 @@ impl<S: Copy + Default> Layout<S> for FCoseLayout {
                         }
                     }
                 }
+                // Re-project alignment constraints so they do not drift during relative positioning
+                for group in &cons.alignment.vertical {
+                    let valid_idxs: Vec<usize> = group.iter()
+                        .filter_map(|&id| h_state.node_keys.get(id).copied())
+                        .collect();
+                    if !valid_idxs.is_empty() {
+                        let sum_x: f32 = valid_idxs.iter().map(|&idx| h_state.positions.get(idx).x).sum();
+                        let avg_x = sum_x / valid_idxs.len() as f32;
+                        for &idx in &valid_idxs {
+                            let mut p = *h_state.positions.get(idx);
+                            p.x = avg_x;
+                            h_state.positions.set(idx, p);
+                        }
+                    }
+                }
+                for group in &cons.alignment.horizontal {
+                    let valid_idxs: Vec<usize> = group.iter()
+                        .filter_map(|&id| h_state.node_keys.get(id).copied())
+                        .collect();
+                    if !valid_idxs.is_empty() {
+                        let sum_y: f32 = valid_idxs.iter().map(|&idx| h_state.positions.get(idx).y).sum();
+                        let avg_y = sum_y / valid_idxs.len() as f32;
+                        for &idx in &valid_idxs {
+                            let mut p = *h_state.positions.get(idx);
+                            p.y = avg_y;
+                            h_state.positions.set(idx, p);
+                        }
+                    }
+                }
             }
         };
 
@@ -2740,24 +2773,65 @@ impl<S: Copy + Default> Layout<S> for FCoseLayout {
             let mut displacements_x = vec![0.0f32; n];
             let mut displacements_y = vec![0.0f32; n];
 
-            // 1. Repulsion forces on leaf nodes
-            let leaf_positions: Vec<Vec2> = leaf_indices.iter().map(|&idx| *state.positions.get(idx)).collect();
-            let quadtree = Quadtree::build(&leaf_positions);
+            // 1. Size-aware repulsion forces between non-ancestor/descendant nodes
+            for i in 0..n {
+                for j in (i + 1)..n {
+                    if is_ancestor(i, j, state) || is_ancestor(j, i, state) {
+                        continue;
+                    }
 
-            for i in 0..leaf_count {
-                let global_idx = leaf_indices[i];
-                let id = state.node_index_to_id[global_idx];
-                let pos_i = leaf_positions[i];
+                    let pos_i = *state.positions.get(i);
+                    let pos_j = *state.positions.get(j);
+                    let size_i = *state.sizes.get(i);
+                    let size_j = *state.sizes.get(j);
 
-                let k_rep = if let Some(ref rep_fn) = self.node_repulsion_fn {
-                    rep_fn(id)
-                } else {
-                    self.node_repulsion
-                };
+                    let dx = pos_j.x - pos_i.x;
+                    let dy = pos_j.y - pos_i.y;
+                    let dist = (dx * dx + dy * dy + 0.01).sqrt();
 
-                let force_rep = quadtree.accumulate_repulsion(i, pos_i, &leaf_positions, k_rep, 0.9);
-                displacements_x[global_idx] += force_rep.x;
-                displacements_y[global_idx] += force_rep.y;
+                    let p1 = find_clipping_point(pos_i, size_i, dx, dy);
+                    let p2 = find_clipping_point(pos_j, size_j, -dx, -dy);
+                    let border_dx = p2.x - p1.x;
+                    let border_dy = p2.y - p1.y;
+                    let border_dist = (border_dx * border_dx + border_dy * border_dy).sqrt().max(1.0);
+
+                    let k_rep = self.node_repulsion;
+                    let force = k_rep / (border_dist * border_dist);
+                    let fx = -force * dx / dist; // repels i away from j
+                    let fy = -force * dy / dist;
+
+                    // Apply to i
+                    if !is_parent[i] {
+                        displacements_x[i] += fx;
+                        displacements_y[i] += fy;
+                    } else {
+                        let leaves = get_leaf_descendants(i, state, &is_parent);
+                        if !leaves.is_empty() {
+                            let f_each_x = fx / leaves.len() as f32;
+                            let f_each_y = fy / leaves.len() as f32;
+                            for &leaf_idx in &leaves {
+                                displacements_x[leaf_idx] += f_each_x;
+                                displacements_y[leaf_idx] += f_each_y;
+                            }
+                        }
+                    }
+
+                    // Apply to j
+                    if !is_parent[j] {
+                        displacements_x[j] -= fx;
+                        displacements_y[j] -= fy;
+                    } else {
+                        let leaves = get_leaf_descendants(j, state, &is_parent);
+                        if !leaves.is_empty() {
+                            let f_each_x = -fx / leaves.len() as f32;
+                            let f_each_y = -fy / leaves.len() as f32;
+                            for &leaf_idx in &leaves {
+                                displacements_x[leaf_idx] += f_each_x;
+                                displacements_y[leaf_idx] += f_each_y;
+                            }
+                        }
+                    }
+                }
             }
 
             // 2. Attraction forces along edges
@@ -2914,6 +2988,10 @@ impl<S: Copy + Default> Layout<S> for FCoseLayout {
         for _ in 0..4 {
             for i in 0..n {
                 for j in (i + 1)..n {
+                    if is_ancestor(i, j, state) || is_ancestor(j, i, state) {
+                        continue;
+                    }
+
                     let pos_i = *state.positions.get(i);
                     let pos_j = *state.positions.get(j);
                     let size_i = *state.sizes.get(i);
