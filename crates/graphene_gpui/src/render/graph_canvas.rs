@@ -88,6 +88,7 @@ impl RenderOnce for GraphNodeElement {
             .border(px(self.border_width))
             .border_color(self.border_color)
             .bg(self.fill_color)
+            .cursor_pointer()
             .when(self.shape == NodeShape::Ellipse, |d| d.rounded_full())
             .when(self.shape == NodeShape::Rectangle, |d| d.rounded_none())
             .when(self.shape == NodeShape::Diamond, |d| d.rounded_md())
