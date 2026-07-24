@@ -60,11 +60,17 @@ impl DemoApp {
                                         theme.text
                                     })
                                     .text_size(px(11.0))
+                                    .font_weight(if is_selected { gpui::FontWeight::BOLD } else { gpui::FontWeight::NORMAL })
                                     .cursor_pointer()
+                                    .hover(|s| if is_selected { s } else { s.bg(theme.border) })
                                     .on_click(cx.listener(move |this, _, window, cx| {
                                         this.load_preset(idx, window, cx);
                                     }))
-                                    .child(f.name.clone())
+                                    .child(if is_selected {
+                                        format!("✓ {}", f.name)
+                                    } else {
+                                        f.name.clone()
+                                    })
                             })),
                     ),
             )
@@ -109,11 +115,17 @@ impl DemoApp {
                                         theme.text
                                     })
                                     .text_size(px(11.0))
+                                    .font_weight(if is_selected { gpui::FontWeight::BOLD } else { gpui::FontWeight::NORMAL })
                                     .cursor_pointer()
+                                    .hover(|s| if is_selected { s } else { s.bg(theme.border) })
                                     .on_click(cx.listener(move |this, _, _, _| {
                                         this.selected_layout = name.to_string();
                                     }))
-                                    .child(name)
+                                    .child(if is_selected {
+                                        format!("▶ {}", name)
+                                    } else {
+                                        name.to_string()
+                                    })
                             })),
                     ),
             )

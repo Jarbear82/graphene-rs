@@ -347,42 +347,53 @@ impl DemoApp {
                                             .child("Shape"),
                                     )
                                     .child(
-                                        gpui::div().flex_auto().gap_1().children(
-                                            vec![
-                                                NodeShape::Ellipse,
-                                                NodeShape::Rectangle,
-                                                NodeShape::Diamond,
-                                            ]
-                                            .into_iter()
-                                            .map(
-                                                |shape| {
-                                                    let label = format!("{:?}", shape);
-                                                    Button::new(SharedString::from(format!(
-                                                        "shape-btn-{}",
-                                                        label
-                                                    )))
-                                                    .label(label)
-                                                    .on_click(cx.listener(move |this, _, _, _| {
-                                                        if let Some(id) = this.selected_node {
-                                                            if let Some(&idx) =
-                                                                this.state.node_keys.get(id)
-                                                            {
-                                                                let style = this
-                                                                    .state
-                                                                    .computed_styles
-                                                                    .get_mut(idx);
-                                                                if let StylingTarget::Node(
-                                                                    ref mut node_style,
-                                                                ) = style.target
+                                        gpui::div()
+                                            .flex()
+                                            .flex_wrap()
+                                            .gap_1()
+                                            .children(
+                                                vec![
+                                                    NodeShape::Ellipse,
+                                                    NodeShape::Rectangle,
+                                                    NodeShape::Square,
+                                                    NodeShape::Triangle,
+                                                    NodeShape::Diamond,
+                                                    NodeShape::Pentagon,
+                                                    NodeShape::Hexagon,
+                                                    NodeShape::Octagon,
+                                                    NodeShape::Star,
+                                                    NodeShape::Ribbon,
+                                                ]
+                                                .into_iter()
+                                                .map(
+                                                    |shape| {
+                                                        let label = format!("{:?}", shape);
+                                                        Button::new(SharedString::from(format!(
+                                                            "shape-btn-{}",
+                                                            label
+                                                        )))
+                                                        .label(label)
+                                                        .on_click(cx.listener(move |this, _, _, _| {
+                                                            if let Some(id) = this.selected_node {
+                                                                if let Some(&idx) =
+                                                                    this.state.node_keys.get(id)
                                                                 {
-                                                                    node_style.shape = shape;
+                                                                    let style = this
+                                                                        .state
+                                                                        .computed_styles
+                                                                        .get_mut(idx);
+                                                                    if let StylingTarget::Node(
+                                                                        ref mut node_style,
+                                                                    ) = style.target
+                                                                    {
+                                                                        node_style.shape = shape;
+                                                                    }
                                                                 }
                                                             }
-                                                        }
-                                                    }))
-                                                },
+                                                        }))
+                                                    },
+                                                ),
                                             ),
-                                        ),
                                     ),
                             )
                             .child(
