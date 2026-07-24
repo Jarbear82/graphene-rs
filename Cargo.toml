@@ -3,6 +3,7 @@ members = [
     "crates/graphene_core",
     "crates/graphene_style",
     "crates/graphene_algo",
+    "crates/graphene_analysis",
     "crates/graphene_layout",
     "crates/graphene_gpui",
     "examples",

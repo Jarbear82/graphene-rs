@@ -177,13 +177,16 @@ impl InteractionState {
         state: &mut GraphState<ComputedStyle>,
     ) {
         if let Some((id, start_mouse_pos, start_node_pos)) = self.drag_start {
-            let delta = gpui::point(
+            let total_mouse_delta = gpui::point(
                 position.x - start_mouse_pos.x,
                 position.y - start_mouse_pos.y,
             );
-            // Convert screen delta → model delta (taking zoom into account)
-            let model_delta = Vec2::new(delta.x / viewport.zoom, delta.y / viewport.zoom);
-            state.set_node_position(id, start_node_pos + model_delta);
+            let target_parent_pos = start_node_pos + Vec2::new(total_mouse_delta.x / viewport.zoom, total_mouse_delta.y / viewport.zoom);
+            if let Some(&idx) = state.node_keys.get(id) {
+                let current_parent_pos = *state.positions.get(idx);
+                let step_delta = target_parent_pos - current_parent_pos;
+                state.translate_node_and_descendants(id, step_delta);
+            }
         } else if let Some(last_pos) = self.pan_origin {
             let delta = gpui::point(
                 position.x - last_pos.x,
@@ -251,5 +254,39 @@ mod tests {
 
         let hit_margin_inactive = interaction.hit_test(screen_margin, &viewport, &state, false);
         assert_eq!(hit_margin_inactive, Some(parent_id), "Hit test at margin should match parent node!");
+    }
+
+    #[test]
+    fn test_drag_compound_node_translates_children() {
+        let mut state = GraphState::new();
+
+        let parent_id = state.add_node(Vec2::new(0.0, 0.0), Size2::new(200.0, 200.0));
+        let child_id = state.add_node(Vec2::new(50.0, 50.0), Size2::new(40.0, 40.0));
+        state.reparent_node(child_id, Some(parent_id));
+
+        let bounds = gpui::Bounds {
+            origin: gpui::Point { x: 0.0, y: 0.0 },
+            size: gpui::Size { width: 800.0, height: 600.0 },
+        };
+        let mut viewport = Viewport::new(bounds);
+
+        let mut interaction = InteractionState::new(60.0);
+        let start_screen_pos = viewport.model_to_screen(Vec2::new(0.0, 0.0));
+
+        // Mouse down on parent node
+        interaction.on_mouse_down(start_screen_pos, Some(parent_id), &state);
+
+        // Drag parent node by +100 in x, +50 in y
+        let target_screen_pos = gpui::point(start_screen_pos.x + 100.0, start_screen_pos.y + 50.0);
+        interaction.on_mouse_drag(target_screen_pos, &mut viewport, &mut state);
+
+        let p_idx = state.node_keys[parent_id];
+        let c_idx = state.node_keys[child_id];
+
+        let parent_pos = *state.positions.get(p_idx);
+        let child_pos = *state.positions.get(c_idx);
+
+        assert_eq!(parent_pos, Vec2::new(100.0, 50.0));
+        assert_eq!(child_pos, Vec2::new(150.0, 100.0));
     }
 }

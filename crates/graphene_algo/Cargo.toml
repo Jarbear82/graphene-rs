@@ -6,3 +6,5 @@ edition = "2021"
 [dependencies]
 graphene_core = { path = "../graphene_core" }
 smallvec = "1.11"
+rand = "0.8"
+

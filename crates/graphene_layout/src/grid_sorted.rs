@@ -1,0 +1,56 @@
+use crate::traits::Layout;
+use graphene_core::{math::Vec2, GraphState};
+use std::collections::HashMap;
+
+pub struct GridSortedLayout {
+    pub columns: usize,
+    pub node_spacing: f32,
+    pub sort_by_degree: bool,
+}
+
+impl Default for GridSortedLayout {
+    fn default() -> Self {
+        Self {
+            columns: 5,
+            node_spacing: 80.0,
+            sort_by_degree: true,
+        }
+    }
+}
+
+impl<S: Copy> Layout<S> for GridSortedLayout {
+    fn compute(&mut self, state: &mut GraphState<S>) {
+        let n = state.node_index_to_id.len();
+        if n == 0 { return; }
+
+        let mut sorted_nodes = state.node_index_to_id.clone();
+        if self.sort_by_degree {
+            let mut degrees = HashMap::new();
+            for &id in &state.node_index_to_id {
+                degrees.insert(id, 0);
+            }
+            for idx in 0..state.edges.len() {
+                let src = *state.edge_sources.get(idx);
+                let tgt = *state.edge_targets.get(idx);
+                if let Some(deg) = degrees.get_mut(&src) { *deg += 1; }
+                if let Some(deg) = degrees.get_mut(&tgt) { *deg += 1; }
+            }
+            sorted_nodes.sort_by(|a, b| degrees[b].cmp(&degrees[a]));
+        } else {
+            sorted_nodes.sort();
+        }
+
+        let cols = self.columns.max(1);
+        for (idx, id) in sorted_nodes.into_iter().enumerate() {
+            if let Some(&node_idx) = state.node_keys.get(id) {
+                let r = idx / cols;
+                let c = idx % cols;
+                let x = (c as f32) * self.node_spacing;
+                let y = (r as f32) * self.node_spacing;
+                state.positions.set(node_idx, Vec2::new(x, y));
+            }
+        }
+
+        state.dirty_flags |= graphene_core::DirtyFlags::POSITION_DIRTY;
+    }
+}

@@ -2470,7 +2470,18 @@ name = "graphene_algo"
 version = "0.1.0"
 dependencies = [
  "graphene_core",
+ "rand 0.8.7",
  "smallvec",
+]
+
+[[package]]
+name = "graphene_analysis"
+version = "0.1.0"
+dependencies = [
+ "graphene_algo",
+ "graphene_core",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -2479,6 +2490,7 @@ version = "0.1.0"
 dependencies = [
  "bitflags 2.13.1",
  "bitvec",
+ "graphene_algo",
  "serde",
  "serde_json",
  "slotmap",
@@ -2492,6 +2504,7 @@ dependencies = [
  "gpui",
  "gpui-component",
  "graphene_algo",
+ "graphene_analysis",
  "graphene_core",
  "graphene_gpui",
  "graphene_layout",
@@ -2505,6 +2518,7 @@ dependencies = [
  "bitflags 2.13.1",
  "gpui",
  "graphene_core",
+ "graphene_layout",
  "graphene_style",
 ]
 
@@ -5401,6 +5415,7 @@ version = "1.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bdd58c3c93c3d278ca835519292445cb4b0d4dc59ccfdf7ceadaab3f8aeb4038"
 dependencies = [
+ "serde",
  "version_check",
 ]
 
