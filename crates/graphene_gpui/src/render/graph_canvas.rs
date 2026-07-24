@@ -60,6 +60,82 @@ pub fn heatmap_color(val: f32) -> gpui::Rgba {
     gpui::rgba((r << 24) | (g << 16) | (b << 8) | 255)
 }
 
+#[derive(IntoElement)]
+pub struct GraphNodeElement {
+    pub id: SharedString,
+    pub screen_x: f32,
+    pub screen_y: f32,
+    pub width: f32,
+    pub height: f32,
+    pub border_width: f32,
+    pub border_color: gpui::Rgba,
+    pub fill_color: gpui::Rgba,
+    pub shape: NodeShape,
+    pub text_color: gpui::Rgba,
+    pub font_size: f32,
+    pub label: String,
+}
+
+impl RenderOnce for GraphNodeElement {
+    fn render(self, _window: &mut gpui::Window, _cx: &mut gpui::App) -> impl IntoElement {
+        gpui::div()
+            .id(self.id)
+            .absolute()
+            .left(px(self.screen_x))
+            .top(px(self.screen_y))
+            .w(px(self.width))
+            .h(px(self.height))
+            .border(px(self.border_width))
+            .border_color(self.border_color)
+            .bg(self.fill_color)
+            .when(self.shape == NodeShape::Ellipse, |d| d.rounded_full())
+            .when(self.shape == NodeShape::Rectangle, |d| d.rounded_none())
+            .when(self.shape == NodeShape::Diamond, |d| d.rounded_md())
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(
+                gpui::div()
+                    .text_color(self.text_color)
+                    .text_size(px(self.font_size))
+                    .child(self.label),
+            )
+    }
+}
+
+#[derive(IntoElement)]
+pub struct GraphEdgeLabelElement {
+    pub id: SharedString,
+    pub screen_x: f32,
+    pub screen_y: f32,
+    pub width: f32,
+    pub height: f32,
+    pub text_color: gpui::Rgba,
+    pub font_size: f32,
+    pub label: String,
+}
+
+impl RenderOnce for GraphEdgeLabelElement {
+    fn render(self, _window: &mut gpui::Window, _cx: &mut gpui::App) -> impl IntoElement {
+        gpui::div()
+            .id(self.id)
+            .absolute()
+            .left(px(self.screen_x))
+            .top(px(self.screen_y))
+            .w(px(self.width))
+            .h(px(self.height))
+            .flex()
+            .items_center()
+            .justify_center()
+            .child(
+                gpui::div()
+                    .text_color(self.text_color)
+                    .text_size(px(self.font_size))
+                    .child(self.label),
+            )
+    }
+}
+
 pub struct GraphCanvas<'a> {
     pub state: &'a GraphState<ComputedStyle>,
     pub viewport: &'a Viewport,
@@ -328,28 +404,20 @@ impl<'a> IntoElement for GraphCanvas<'a> {
                 border_color = accent_color;
             }
 
-            gpui::div()
-                .id(SharedString::from(format!("canvas-node-{}", idx)))
-                .absolute()
-                .left(px(screen_x))
-                .top(px(screen_y))
-                .w(px(node_w))
-                .h(px(node_h))
-                .border(px(cfg.node_border_width))
-                .border_color(border_color)
-                .bg(fill_color)
-                .when(shape == NodeShape::Ellipse, |d| d.rounded_full())
-                .when(shape == NodeShape::Rectangle, |d| d.rounded_none())
-                .when(shape == NodeShape::Diamond, |d| d.rounded_md())
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(
-                    gpui::div()
-                        .text_color(text_color)
-                        .text_size(px(cfg.node_font_size * viewport.zoom * scale))
-                        .child(label),
-                )
+            GraphNodeElement {
+                id: SharedString::from(format!("canvas-node-{}", idx)),
+                screen_x,
+                screen_y,
+                width: node_w,
+                height: node_h,
+                border_width: cfg.node_border_width,
+                border_color,
+                fill_color,
+                shape,
+                text_color,
+                font_size: cfg.node_font_size * viewport.zoom * scale,
+                label,
+            }
         };
 
         let render_edge_label = |(i, src_p, tgt_p, curve_style, label): (usize, Point<f32>, Point<f32>, EdgeCurveStyle, String)| {
@@ -396,22 +464,16 @@ impl<'a> IntoElement for GraphCanvas<'a> {
             let screen_x = mid_x - (label_w / 2.0);
             let screen_y = mid_y - (label_h / 2.0);
 
-            gpui::div()
-                .id(SharedString::from(format!("canvas-edge-label-{}", i)))
-                .absolute()
-                .left(px(screen_x))
-                .top(px(screen_y))
-                .w(px(label_w))
-                .h(px(label_h))
-                .flex()
-                .items_center()
-                .justify_center()
-                .child(
-                    gpui::div()
-                        .text_color(text_color)
-                        .text_size(px(font_size * viewport.zoom))
-                        .child(label),
-                )
+            GraphEdgeLabelElement {
+                id: SharedString::from(format!("canvas-edge-label-{}", i)),
+                screen_x,
+                screen_y,
+                width: label_w,
+                height: label_h,
+                text_color,
+                font_size: font_size * viewport.zoom,
+                label,
+            }
         };
 
         let graph_type_badge = if is_directed {
@@ -554,3 +616,48 @@ impl<'a> IntoElement for GraphCanvas<'a> {
             .into_any_element()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_graph_node_element_construction() {
+        let elem = GraphNodeElement {
+            id: SharedString::from("test-node-1"),
+            screen_x: 100.0,
+            screen_y: 200.0,
+            width: 50.0,
+            height: 50.0,
+            border_width: 2.0,
+            border_color: gpui::rgba(0xff0000ff),
+            fill_color: gpui::rgba(0x00ff00ff),
+            shape: NodeShape::Ellipse,
+            text_color: gpui::rgba(0xffffffff),
+            font_size: 12.0,
+            label: "Node 1".to_string(),
+        };
+        assert_eq!(elem.label, "Node 1");
+        assert_eq!(elem.screen_x, 100.0);
+        assert_eq!(elem.screen_y, 200.0);
+        assert_eq!(elem.shape, NodeShape::Ellipse);
+    }
+
+    #[test]
+    fn test_graph_edge_label_element_construction() {
+        let elem = GraphEdgeLabelElement {
+            id: SharedString::from("test-edge-1"),
+            screen_x: 50.0,
+            screen_y: 75.0,
+            width: 60.0,
+            height: 20.0,
+            text_color: gpui::rgba(0x0000ffff),
+            font_size: 10.0,
+            label: "Edge A->B".to_string(),
+        };
+        assert_eq!(elem.label, "Edge A->B");
+        assert_eq!(elem.width, 60.0);
+        assert_eq!(elem.height, 20.0);
+    }
+}
+
