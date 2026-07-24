@@ -1,7 +1,7 @@
 use graphene_core::{GraphState, NodeId};
 use std::collections::HashMap;
 
-/// Builds an adjacency list mapping NodeId -> Vec<NodeId> for graph traversal and centrality algorithms.
+/// Builds an adjacency list mapping NodeId -> `Vec<NodeId>` for graph traversal and centrality algorithms.
 pub fn build_adjacency_list<S: Copy>(
     state: &GraphState<S>,
     directed: bool,

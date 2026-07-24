@@ -430,10 +430,12 @@ impl<S: Copy + Default> GraphState<S> {
         dot
     }
 
+    #[cfg(feature = "serde")]
     pub fn to_json(&self) -> String {
         crate::serde_impl::to_json(self)
     }
 
+    #[cfg(feature = "serde")]
     pub fn from_json(json: &str) -> Result<Self, String> {
         crate::serde_impl::from_json(json)
     }
