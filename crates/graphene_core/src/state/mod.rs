@@ -42,6 +42,7 @@ pub struct GraphState<S: Copy = ()> {
     pub animations: AnimationRegistry,
     pub event_log: VecDeque<GraphEvent<S>>,
     pub string_arena: StringArena,
+    pub is_batching: bool,
 }
 
 impl<S: Copy + Default> GraphState<S> {
@@ -69,7 +70,22 @@ impl<S: Copy + Default> GraphState<S> {
             animations: AnimationRegistry::new(),
             event_log: VecDeque::new(),
             string_arena: StringArena::new(),
+            is_batching: false,
         }
+    }
+
+    pub fn batch<F, R>(&mut self, f: F) -> R
+    where
+        F: FnOnce(&mut Self) -> R,
+    {
+        let was_batching = self.is_batching;
+        self.is_batching = true;
+        let result = f(self);
+        self.is_batching = was_batching;
+        if !self.is_batching {
+            self.dirty_flags |= DirtyFlags::TOPOLOGY_DIRTY | DirtyFlags::POSITION_DIRTY;
+        }
+        result
     }
 
     pub fn add_node(&mut self, pos: Vec2, size: Size2) -> NodeId {
@@ -100,7 +116,9 @@ impl<S: Copy + Default> GraphState<S> {
         self.visuals.computed_styles.insert(S::default());
 
         self.push_event(GraphEvent::NodeAdded { id });
-        self.dirty_flags |= DirtyFlags::TOPOLOGY_DIRTY;
+        if !self.is_batching {
+            self.dirty_flags |= DirtyFlags::TOPOLOGY_DIRTY;
+        }
 
         id
     }
@@ -492,5 +510,27 @@ mod tests {
         assert_eq!(restored.topology.node_count(), 2);
         assert_eq!(restored.topology.edge_count(), 1);
     }
+
+    #[test]
+    fn test_graph_state_batch_mutation() {
+        let mut state = GraphState::<()>::new();
+        assert!(!state.is_batching);
+
+        let created_nodes = state.batch(|s| {
+            assert!(s.is_batching);
+            let mut nodes = Vec::new();
+            for i in 0..100 {
+                let id = s.add_node(Vec2::new(i as f32, i as f32), Size2::new(10.0, 10.0));
+                nodes.push(id);
+            }
+            nodes
+        });
+
+        assert!(!state.is_batching);
+        assert_eq!(created_nodes.len(), 100);
+        assert_eq!(state.topology.node_count(), 100);
+        assert!(state.dirty_flags.contains(DirtyFlags::TOPOLOGY_DIRTY));
+    }
 }
+
 
