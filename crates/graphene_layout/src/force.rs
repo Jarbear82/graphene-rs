@@ -22,7 +22,7 @@ impl Default for ForceDirectedLayout {
             k_rep: 2000.0,
             k_att: 0.05,
             initial_temp: 10.0,
-            use_barnes_hut: false,
+            use_barnes_hut: true,
             theta: 0.5,
         }
     }

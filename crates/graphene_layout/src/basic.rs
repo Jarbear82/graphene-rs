@@ -2,6 +2,9 @@ use crate::traits::Layout;
 use graphene_core::{math::Vec2, AnimationTrack, GraphState, NodeId};
 use std::time::Duration;
 
+const LCG_MULTIPLIER: u64 = 6364136223846793005;
+const LCG_INCREMENT: u64 = 1442695040888963407;
+
 pub struct RandomLayout {
     pub width: f32,
     pub height: f32,
@@ -12,7 +15,7 @@ impl<S: Copy + Default> Layout<S> for RandomLayout {
     fn compute(&mut self, state: &mut GraphState<S>) {
         let mut state_lcg = 12345u64;
         let mut next_float = || {
-            state_lcg = state_lcg.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            state_lcg = state_lcg.wrapping_mul(LCG_MULTIPLIER).wrapping_add(LCG_INCREMENT);
             (state_lcg >> 32) as f32 / u32::MAX as f32
         };
 
@@ -128,7 +131,7 @@ impl<S: Copy + Default> Layout<S> for ConcentricLayout {
             return;
         }
 
-        let mut _level = 0;
+        let mut level = 0;
         let mut max_in_level = 5;
         let mut level_count = 0;
         let mut level_radius = self.level_radius_step;
@@ -162,7 +165,7 @@ impl<S: Copy + Default> Layout<S> for ConcentricLayout {
                 }
                 level_nodes.clear();
                 level_count = 0;
-                _level += 1;
+                level += 1;
                 max_in_level *= 2;
                 level_radius += self.level_radius_step;
             }
