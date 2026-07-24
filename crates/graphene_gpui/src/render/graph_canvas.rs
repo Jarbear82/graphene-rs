@@ -90,8 +90,8 @@ impl RenderOnce for GraphNodeElement {
             .bg(self.fill_color)
             .cursor_pointer()
             .when(self.shape == NodeShape::Ellipse, |d| d.rounded_full())
-            .when(self.shape == NodeShape::Rectangle, |d| d.rounded_none())
-            .when(self.shape == NodeShape::Diamond, |d| d.rounded_md())
+            .when(matches!(self.shape, NodeShape::Rectangle | NodeShape::Square), |d| d.rounded_none())
+            .when(matches!(self.shape, NodeShape::Diamond | NodeShape::Triangle | NodeShape::Pentagon | NodeShape::Hexagon | NodeShape::Octagon | NodeShape::Star | NodeShape::Ribbon), |d| d.rounded_md())
             .flex()
             .items_center()
             .justify_center()
@@ -677,6 +677,40 @@ mod tests {
         assert_eq!(clamped_low, min_color);
         assert_eq!(clamped_high, max_color);
     }
+
+    #[test]
+    fn test_all_node_shapes_element_construction() {
+        let shapes = [
+            NodeShape::Ellipse,
+            NodeShape::Rectangle,
+            NodeShape::Triangle,
+            NodeShape::Square,
+            NodeShape::Diamond,
+            NodeShape::Pentagon,
+            NodeShape::Hexagon,
+            NodeShape::Octagon,
+            NodeShape::Star,
+            NodeShape::Ribbon,
+        ];
+        for shape in shapes {
+            let elem = GraphNodeElement {
+                id: SharedString::from(format!("node-{:?}", shape)),
+                screen_x: 10.0,
+                screen_y: 20.0,
+                width: 30.0,
+                height: 30.0,
+                border_width: 1.0,
+                border_color: gpui::rgba(0x000000ff),
+                fill_color: gpui::rgba(0xffffffff),
+                shape,
+                text_color: gpui::rgba(0x000000ff),
+                font_size: 10.0,
+                label: "N".to_string(),
+            };
+            assert_eq!(elem.shape, shape);
+        }
+    }
 }
+
 
 

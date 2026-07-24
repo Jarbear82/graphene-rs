@@ -16,6 +16,11 @@ use graphene_layout::{
 use graphene_style::{ColorValue, ComputedStyle, NodeShape, StylingTarget, ThemeRegistry};
 use std::collections::HashMap;
 
+gpui::actions!(
+    graphene_demo,
+    [ResetView, TogglePhysics, UndoAction, RedoAction]
+);
+
 pub struct DemoApp {
     pub state: GraphState<ComputedStyle>,
     pub fixtures: Vec<GraphFixture<ComputedStyle>>,
@@ -312,6 +317,18 @@ impl DemoApp {
         cfg.edge_stroke_width = self.input_edge_stroke.read(cx).text().to_string().parse().unwrap_or(2.0);
         cfg.edge_curvature = self.input_edge_curvature.read(cx).text().to_string().parse().unwrap_or(35.0);
         cfg
+    }
+
+    pub fn reset_view(&mut self) {
+        self.viewport.offset = Vec2::default();
+        self.viewport.zoom = 1.0;
+    }
+
+    pub fn toggle_physics(&mut self) {
+        self.physics_enabled = !self.physics_enabled;
+        if self.physics_enabled {
+            self.physics_temperature = 10.0;
+        }
     }
 
     pub fn run_analysis(&mut self) {
@@ -873,5 +890,17 @@ impl DemoApp {
             .to_string()
             .parse::<usize>()
             .unwrap_or(10)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_demo_config_defaults() {
+        let cfg = DemoConfig::default();
+        assert_eq!(cfg.gravity, 1.0);
+        assert_eq!(cfg.iterations, 100);
     }
 }
