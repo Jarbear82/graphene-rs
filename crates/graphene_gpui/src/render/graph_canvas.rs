@@ -20,6 +20,8 @@ pub struct CanvasConfig {
     pub edge_label_height: f32,
     pub compound_fill_alpha: f32,
     pub compound_border_alpha: f32,
+    pub hide_edges_during_pan: bool,
+    pub min_visible_font_size: f32,
 }
 
 impl Default for CanvasConfig {
@@ -37,6 +39,8 @@ impl Default for CanvasConfig {
             edge_label_height: 16.0,
             compound_fill_alpha: 0.08,
             compound_border_alpha: 0.4,
+            hide_edges_during_pan: true,
+            min_visible_font_size: 4.0,
         }
     }
 }
@@ -243,7 +247,11 @@ impl<'a> IntoElement for GraphCanvas<'a> {
         // Precompute edge paths for drawing
         let mut edge_paths = Vec::new();
         let mut edge_labels_to_render = Vec::new();
-        for i in 0..state.edges.len() {
+        let is_panning_active = self.interaction_state.drag_start.is_some() || self.interaction_state.pan_origin.is_some();
+        let skip_edges = cfg.hide_edges_during_pan && is_panning_active;
+
+        if !skip_edges {
+            for i in 0..state.edges.len() {
             let src = *state.edge_sources.get(i);
             let tgt = *state.edge_targets.get(i);
 
@@ -294,6 +302,7 @@ impl<'a> IntoElement for GraphCanvas<'a> {
                     edge_labels_to_render.push((i, src_screen, tgt_screen, curve_style, lbl));
                 }
             }
+        }
         }
 
         let nodes_count = state.node_index_to_id.len();
@@ -351,7 +360,10 @@ impl<'a> IntoElement for GraphCanvas<'a> {
             }
 
             let is_selected = selected_node == Some(id);
-            if label.chars().count() > max_untruncated_len && !is_selected {
+            let effective_font_size = cfg.node_font_size * viewport.zoom;
+            if effective_font_size < cfg.min_visible_font_size {
+                label = String::new();
+            } else if label.chars().count() > max_untruncated_len && !is_selected {
                 label = label.chars().take(max_untruncated_len).collect::<String>() + "...";
             }
 
@@ -716,6 +728,13 @@ mod tests {
             };
             assert_eq!(elem.shape, shape);
         }
+    }
+
+    #[test]
+    fn test_canvas_config_performance_mode_defaults() {
+        let cfg = CanvasConfig::default();
+        assert!(cfg.hide_edges_during_pan);
+        assert_eq!(cfg.min_visible_font_size, 4.0);
     }
 }
 
