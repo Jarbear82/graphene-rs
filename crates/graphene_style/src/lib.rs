@@ -35,6 +35,8 @@ pub enum EdgeCurveStyle {
     Straight,
     Bezier,
     Segmented,
+    Taxi,
+    UnbundledBezier(graphene_core::math::Vec2, graphene_core::math::Vec2),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

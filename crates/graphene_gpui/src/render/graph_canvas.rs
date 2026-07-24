@@ -295,7 +295,19 @@ impl<'a> IntoElement for GraphCanvas<'a> {
                 }
             }
 
-            edge_paths.push((src_screen, tgt_screen, curve_style));
+            let screen_curve_style = match curve_style {
+                EdgeCurveStyle::UnbundledBezier(cp1, cp2) => {
+                    let s1 = viewport.model_to_screen(cp1);
+                    let s2 = viewport.model_to_screen(cp2);
+                    EdgeCurveStyle::UnbundledBezier(
+                        graphene_core::math::Vec2::new(s1.x, s1.y),
+                        graphene_core::math::Vec2::new(s2.x, s2.y),
+                    )
+                }
+                other => other,
+            };
+
+            edge_paths.push((src_screen, tgt_screen, screen_curve_style));
 
             if let Some(lbl) = label_text {
                 if !lbl.is_empty() {
@@ -447,8 +459,16 @@ impl<'a> IntoElement for GraphCanvas<'a> {
             let tgt_y = f32::from(tgt_p.y);
 
             let (mid_x, mid_y) = match curve_style {
-                EdgeCurveStyle::Straight => {
+                EdgeCurveStyle::Straight | EdgeCurveStyle::Taxi => {
                     ((src_x + tgt_x) / 2.0, (src_y + tgt_y) / 2.0)
+                }
+                EdgeCurveStyle::UnbundledBezier(cp1, cp2) => {
+                    let s_cp1 = viewport.model_to_screen(cp1);
+                    let s_cp2 = viewport.model_to_screen(cp2);
+                    (
+                        0.125 * src_x + 0.375 * s_cp1.x + 0.375 * s_cp2.x + 0.125 * tgt_x,
+                        0.125 * src_y + 0.375 * s_cp1.y + 0.375 * s_cp2.y + 0.125 * tgt_y,
+                    )
                 }
                 _ => {
                     let mid_x = (src_x + tgt_x) / 2.0;
@@ -545,6 +565,16 @@ impl<'a> IntoElement for GraphCanvas<'a> {
 
                             match curve_style {
                                 EdgeCurveStyle::Straight => {
+                                    builder.line_to(gpui::point(px(tgt_p.x), px(tgt_p.y)));
+                                }
+                                EdgeCurveStyle::Taxi => {
+                                    let mid_x = (src_p.x + tgt_p.x) / 2.0;
+                                    builder.line_to(gpui::point(px(mid_x), px(src_p.y)));
+                                    builder.line_to(gpui::point(px(mid_x), px(tgt_p.y)));
+                                    builder.line_to(gpui::point(px(tgt_p.x), px(tgt_p.y)));
+                                }
+                                EdgeCurveStyle::UnbundledBezier(cp1, cp2) => {
+                                    builder.curve_to(gpui::point(px(cp1.x), px(cp1.y)), gpui::point(px(cp2.x), px(cp2.y)));
                                     builder.line_to(gpui::point(px(tgt_p.x), px(tgt_p.y)));
                                 }
                                 _ => {
@@ -735,6 +765,17 @@ mod tests {
         let cfg = CanvasConfig::default();
         assert!(cfg.hide_edges_during_pan);
         assert_eq!(cfg.min_visible_font_size, 4.0);
+    }
+
+    #[test]
+    fn test_edge_curve_style_extended_variants() {
+        let taxi = EdgeCurveStyle::Taxi;
+        let bezier = EdgeCurveStyle::UnbundledBezier(
+            graphene_core::math::Vec2::new(10.0, 20.0),
+            graphene_core::math::Vec2::new(30.0, 40.0),
+        );
+        assert_eq!(taxi, EdgeCurveStyle::Taxi);
+        assert_ne!(taxi, bezier);
     }
 }
 
