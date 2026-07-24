@@ -660,5 +660,23 @@ mod tests {
         assert_eq!(elem.width, 60.0);
         assert_eq!(elem.height, 20.0);
     }
+
+    #[test]
+    fn test_color_to_gpui_conversion() {
+        let color_val = ColorValue::Rgba(1.0, 0.0, 0.0, 1.0);
+        let gpui_color = color_to_gpui(color_val);
+        assert_eq!(gpui_color, gpui::rgba(0xff0000ff));
+    }
+
+    #[test]
+    fn test_heatmap_color_bounds() {
+        let min_color = heatmap_color(0.0);
+        let max_color = heatmap_color(1.0);
+        let clamped_low = heatmap_color(-0.5);
+        let clamped_high = heatmap_color(1.5);
+        assert_eq!(clamped_low, min_color);
+        assert_eq!(clamped_high, max_color);
+    }
 }
+
 
