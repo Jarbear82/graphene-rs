@@ -1,4 +1,4 @@
-use crate::graph_state_search::EdgeTopology;
+use crate::search_traversal::graph_state_search::EdgeTopology;
 use graphene_core::GraphState;
 
 #[derive(Debug, Clone)]

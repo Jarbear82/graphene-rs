@@ -1,4 +1,4 @@
-use crate::graph_state_search::AdjacencyList;
+use crate::search_traversal::graph_state_search::AdjacencyList;
 use graphene_core::{EdgeId, GraphState, NodeId};
 use std::collections::{HashMap, HashSet, VecDeque};
 
