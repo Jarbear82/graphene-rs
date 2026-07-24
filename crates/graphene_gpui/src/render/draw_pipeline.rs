@@ -269,3 +269,51 @@ impl Default for RenderPipeline {
         Self::new()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_viewport_model_screen_roundtrip() {
+        let bounds = gpui::Bounds {
+            origin: gpui::Point { x: 0.0, y: 0.0 },
+            size: gpui::Size {
+                width: 800.0,
+                height: 600.0,
+            },
+        };
+        let mut viewport = Viewport::new(bounds);
+        viewport.offset = Vec2::new(10.0, -20.0);
+        viewport.zoom = 1.5;
+
+        let original_model_pos = Vec2::new(123.45, -67.89);
+        let screen_pos = viewport.model_to_screen(original_model_pos);
+        let reconstructed_model_pos = viewport.screen_to_model(screen_pos);
+
+        assert!((original_model_pos.x - reconstructed_model_pos.x).abs() < 1e-4);
+        assert!((original_model_pos.y - reconstructed_model_pos.y).abs() < 1e-4);
+    }
+
+    #[test]
+    fn test_viewport_is_visible_bounds_check() {
+        let bounds = gpui::Bounds {
+            origin: gpui::Point { x: 0.0, y: 0.0 },
+            size: gpui::Size {
+                width: 800.0,
+                height: 600.0,
+            },
+        };
+        let viewport = Viewport::new(bounds);
+
+        // Position at center of model space (0,0) with size (50,50) should be visible
+        let visible_node_pos = Vec2::new(0.0, 0.0);
+        let node_size = Size2::new(50.0, 50.0);
+        assert!(viewport.is_visible(visible_node_pos, node_size));
+
+        // Far away node (-2000, -2000) should be frustum-culled
+        let far_node_pos = Vec2::new(-2000.0, -2000.0);
+        assert!(!viewport.is_visible(far_node_pos, node_size));
+    }
+}
+
