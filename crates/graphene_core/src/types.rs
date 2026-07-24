@@ -34,13 +34,14 @@ impl EdgeType for Mixed {
     const IS_DIRECTED: bool = true;
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum GraphError {
     SelfLoopNotAllowed,
     ParallelEdgeNotAllowed,
     NodeNotFound(NodeId),
     EdgeNotFound(EdgeId),
     CycleDetected,
+    SerializationError(String),
 }
 
 impl std::fmt::Display for GraphError {
@@ -51,6 +52,7 @@ impl std::fmt::Display for GraphError {
             GraphError::NodeNotFound(id) => write!(f, "Node {:?} not found", id),
             GraphError::EdgeNotFound(id) => write!(f, "Edge {:?} not found", id),
             GraphError::CycleDetected => write!(f, "Hierarchy cycle detected"),
+            GraphError::SerializationError(msg) => write!(f, "Serialization error: {}", msg),
         }
     }
 }

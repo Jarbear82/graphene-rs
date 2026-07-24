@@ -21,7 +21,7 @@ pub struct SerializedGraph {
     pub edges: Vec<SerializedEdge>,
 }
 
-pub fn to_json<S: Copy>(state: &GraphState<S>) -> String {
+pub fn try_to_json<S: Copy>(state: &GraphState<S>) -> Result<String, GraphError> {
     let serialized = SerializedGraph {
         nodes: (0..state.node_index_to_id.len()).map(|idx| {
             let pos = state.positions[idx];
@@ -39,7 +39,11 @@ pub fn to_json<S: Copy>(state: &GraphState<S>) -> String {
             })
         }).collect(),
     };
-    serde_json::to_string_pretty(&serialized).unwrap_or_default()
+    serde_json::to_string_pretty(&serialized).map_err(|e| GraphError::SerializationError(e.to_string()))
+}
+
+pub fn to_json<S: Copy>(state: &GraphState<S>) -> String {
+    try_to_json(state).unwrap_or_else(|_| "{}".to_string())
 }
 
 pub fn from_json<S: Copy + Default>(json: &str) -> Result<GraphState<S>, String> {
