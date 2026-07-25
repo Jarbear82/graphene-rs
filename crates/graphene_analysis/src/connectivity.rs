@@ -1,4 +1,4 @@
-use graphene_algo::{connected_components, tarjan_scc};
+use graphene_algorithms::{connected_components, tarjan_scc};
 use graphene_core::{EdgeId, GraphState, NodeId};
 
 pub fn find_articulation_points<S: Copy + Default>(state: &GraphState<S>) -> Vec<NodeId> {

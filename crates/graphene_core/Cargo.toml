@@ -16,4 +16,4 @@ serde = { version = "1.0", features = ["derive"], optional = true }
 serde_json = { version = "1.0", optional = true }
 
 [dev-dependencies]
-graphene_algo = { path = "../graphene_algo" }
+graphene_algorithms = { path = "../graphene_algorithms" }

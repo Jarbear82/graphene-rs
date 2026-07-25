@@ -1,8 +1,8 @@
+use graphene_algorithms::{laplacian, to_csr, BfsIter, DfsIter, HierarchyWalk};
 use graphene_core::{
     AllowMulti, Directed, EdgeData, GraphError, GraphState, GraphView, NodeKind, PropertyIndex,
     SimpleOnly, Size2, Undirected, UserDataValue, Vec2,
 };
-use graphene_algo::{laplacian, to_csr, BfsIter, DfsIter, HierarchyWalk};
 
 #[test]
 fn test_edge_type_and_insert_policy() {
@@ -11,7 +11,8 @@ fn test_edge_type_and_insert_policy() {
     let n2 = state.add_node(Vec2::new(20.0, 0.0), Size2::new(10.0, 10.0));
 
     // Test SimpleOnly policy: reject self-loops
-    let self_loop_res = state.add_edge_with_policy::<Directed, SimpleOnly>(n1, n1, EdgeData::default());
+    let self_loop_res =
+        state.add_edge_with_policy::<Directed, SimpleOnly>(n1, n1, EdgeData::default());
     assert_eq!(self_loop_res, Err(GraphError::SelfLoopNotAllowed));
 
     // Test SimpleOnly policy: allow first edge
@@ -21,7 +22,8 @@ fn test_edge_type_and_insert_policy() {
     assert!(state.edge_keys.contains_key(e1));
 
     // Test SimpleOnly policy: reject parallel edge in Directed mode
-    let parallel_res = state.add_edge_with_policy::<Directed, SimpleOnly>(n1, n2, EdgeData::default());
+    let parallel_res =
+        state.add_edge_with_policy::<Directed, SimpleOnly>(n1, n2, EdgeData::default());
     assert_eq!(parallel_res, Err(GraphError::ParallelEdgeNotAllowed));
 
     // Test AllowMulti policy: allow parallel edge
@@ -31,7 +33,8 @@ fn test_edge_type_and_insert_policy() {
     assert!(state.edge_keys.contains_key(e2));
 
     // Test SimpleOnly in Undirected mode: reverse edge rejected
-    let reverse_res = state.add_edge_with_policy::<Undirected, SimpleOnly>(n2, n1, EdgeData::default());
+    let reverse_res =
+        state.add_edge_with_policy::<Undirected, SimpleOnly>(n2, n1, EdgeData::default());
     assert_eq!(reverse_res, Err(GraphError::ParallelEdgeNotAllowed));
 }
 
@@ -42,7 +45,8 @@ fn test_hyperedge_proxy() {
     let v2 = state.add_node(Vec2::new(10.0, 0.0), Size2::new(5.0, 5.0));
     let v3 = state.add_node(Vec2::new(20.0, 0.0), Size2::new(5.0, 5.0));
 
-    let proxy = state.add_hyperedge_proxy(Vec2::new(10.0, 10.0), Size2::new(8.0, 8.0), &[v1, v2, v3]);
+    let proxy =
+        state.add_hyperedge_proxy(Vec2::new(10.0, 10.0), Size2::new(8.0, 8.0), &[v1, v2, v3]);
 
     let proxy_idx = state.node_keys[proxy];
     assert_eq!(state.node_kinds[proxy_idx], NodeKind::HyperedgeProxy);
@@ -88,10 +92,16 @@ fn test_property_index() {
     let idx2 = state.node_keys[n2];
 
     let val_person = UserDataValue::Integer(42);
-    state.nodes.get_mut(idx1).user_data.insert(k_type, val_person);
+    state
+        .nodes
+        .get_mut(idx1)
+        .user_data
+        .insert(k_type, val_person);
 
     let index = PropertyIndex::rebuild(&state);
-    let mask = index.query(k_type, val_person).expect("Query should find match");
+    let mask = index
+        .query(k_type, val_person)
+        .expect("Query should find match");
 
     assert!(mask[idx1]);
     assert!(!mask[idx2]);

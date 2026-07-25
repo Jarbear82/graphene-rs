@@ -1,13 +1,16 @@
 use crate::app::DemoApp;
 use crate::theme::{distance_to_segment, Theme};
-use gpui::{px, Context, EntityInputHandler, InteractiveElement, IntoElement, MouseDownEvent, ParentElement, Render, Styled, Window};
+use gpui::{
+    px, Context, EntityInputHandler, InteractiveElement, IntoElement, MouseDownEvent,
+    ParentElement, Render, Styled, Window,
+};
 use graphene_gpui::render::graph_canvas::GraphCanvas;
 
 impl Render for DemoApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = self.get_theme();
 
-        let max_len = self.get_max_untruncated_len(cx);
+        let max_len = self.get_max_untruncated_len();
         let fixture = &self.fixtures[self.selected_fixture_idx];
 
         let nodes_count = self.state.node_index_to_id.len();
@@ -210,12 +213,12 @@ impl DemoApp {
                     self.selected_node,
                     &fixture.node_labels,
                     &fixture.edge_labels,
-                    self.get_max_untruncated_len(cx),
+                    self.get_max_untruncated_len(),
                     &self.collapsed_parents,
                 )
                 .with_directed(self.is_directed)
                 .with_centrality_scores(self.get_active_centrality_map())
-                .with_config(self.get_canvas_config(cx)),
+                .with_config(self.get_canvas_config()),
             )
             .on_mouse_down(
                 gpui::MouseButton::Left,

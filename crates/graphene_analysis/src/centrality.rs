@@ -1,4 +1,4 @@
-use graphene_algo::{
+use graphene_algorithms::{
     betweenness_centrality, closeness_centrality_normalized, degree_centrality_normalized,
     page_rank,
 };
@@ -32,10 +32,7 @@ pub struct CentralityScores {
     pub page_rank: HashMap<NodeId, f32>,
 }
 
-pub fn compute_all_centrality<S: Copy>(
-    state: &GraphState<S>,
-    directed: bool,
-) -> CentralityScores {
+pub fn compute_all_centrality<S: Copy>(state: &GraphState<S>, directed: bool) -> CentralityScores {
     compute_all_centrality_with_config(state, directed, CentralityConfig::default())
 }
 

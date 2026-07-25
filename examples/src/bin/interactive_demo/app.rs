@@ -1,12 +1,14 @@
 use crate::theme::Theme;
 use gpui::{AppContext, Context, Entity, EntityInputHandler, Window};
-use gpui_component::input::InputState;
+use gpui_component::input::{InputEvent, InputState};
 use graphene_analysis::GraphAnalysisReport;
-use graphene_core::fixtures::{get_all_fixtures, GraphFixture};
-use graphene_core::{EdgeData, GraphState, NodeId, Size2, UndoRedoManager, Vec2};
-use graphene_gpui::interaction::state::InteractionState;
-use graphene_gpui::render::draw_pipeline::Viewport;
-use graphene_gpui::CanvasConfig;
+use graphene_core::{
+    fixtures::{get_all_fixtures, GraphFixture},
+    EdgeData, GraphState, NodeId, Size2, UndoRedoManager, Vec2,
+};
+use graphene_gpui::{
+    interaction::state::InteractionState, render::draw_pipeline::Viewport, CanvasConfig,
+};
 use graphene_layout::{
     BipartiteLayout, CircleLayout, CollisionForceDirectedLayout, CompoundLayout,
     ConcentricHubLayout, DisconnectedPacker, FCoseLayout, ForceDirectedLayout, GridSortedLayout,
@@ -14,7 +16,10 @@ use graphene_layout::{
     SugiyamaLayout, WeightedForceDirectedLayout,
 };
 use graphene_style::{ColorValue, ComputedStyle, NodeShape, StylingTarget, ThemeRegistry};
-use std::collections::HashMap;
+use std::{
+    collections::{HashMap, HashSet},
+    time::Instant,
+};
 
 gpui::actions!(
     graphene_demo,
@@ -22,6 +27,31 @@ gpui::actions!(
 );
 
 pub struct DemoApp {
+    /// cached, typed values (read by layout code, hot path)
+    pub gravity: f32,
+    pub k_rep: f32,
+    pub k_att: f32,
+    pub iterations: usize,
+    pub circle_radius: f32,
+    pub theta: f32,
+    pub layer_spacing: f32,
+    pub node_spacing: f32,
+    pub mds_base_dist: f32,
+    pub bipartite_col_spacing: f32,
+    pub bipartite_vert_spacing: f32,
+    pub packer_spacing: f32,
+    pub compound_padding: f32,
+    pub regional_columns: usize,
+    pub regional_cell_size: f32,
+    pub max_label_len: usize,
+
+    pub grid_spacing: f32,
+    pub arrow_length: f32,
+    pub arrow_width: f32,
+    pub edge_stroke_width: f32,
+    pub edge_curvature: f32,
+
+    /// widget handles (rendering only, never read-and-parsed again)
     pub state: GraphState<ComputedStyle>,
     pub fixtures: Vec<GraphFixture<ComputedStyle>>,
     pub selected_fixture_idx: usize,
@@ -73,8 +103,8 @@ pub struct DemoApp {
     pub analysis_report: Option<GraphAnalysisReport>,
 
     pub undo_redo: UndoRedoManager<ComputedStyle>,
-    pub collapsed_parents: std::collections::HashSet<NodeId>,
-    pub last_node_click: Option<(NodeId, std::time::Instant)>,
+    pub collapsed_parents: HashSet<NodeId>,
+    pub last_node_click: Option<(NodeId, Instant)>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -129,134 +159,466 @@ impl DemoApp {
         let fixtures = get_all_fixtures::<ComputedStyle>();
 
         let input_gravity = cx.new(|cx| {
-            let mut s = InputState::new(window, cx);
+            let mut s = InputState::new(window, cx).validate(|s, _| s.parse::<f32>().is_ok());
             s.replace_text_in_range(None, &format!("{:.1}", cfg.gravity), window, cx);
             s
         });
+
+        cx.subscribe_in(&input_gravity, window, |this, state, event, _window, cx| {
+            if let InputEvent::Change = event {
+                if let Ok(v) = state.read(cx).value().parse::<f32>() {
+                    this.gravity = v;
+                }
+            }
+        })
+        .detach();
+
         let input_k_rep = cx.new(|cx| {
-            let mut s = InputState::new(window, cx);
+            let mut s = InputState::new(window, cx).validate(|s, _| s.parse::<f32>().is_ok());
             s.replace_text_in_range(None, &format!("{:.1}", cfg.k_rep), window, cx);
             s
         });
+
+        cx.subscribe_in(&input_k_rep, window, |this, state, event, _window, cx| {
+            if let InputEvent::Change = event {
+                if let Ok(v) = state.read(cx).value().parse::<f32>() {
+                    this.k_rep = v;
+                }
+            }
+        })
+        .detach();
+
         let input_k_att = cx.new(|cx| {
-            let mut s = InputState::new(window, cx);
+            let mut s = InputState::new(window, cx).validate(|s, _| s.parse::<f32>().is_ok());
             s.replace_text_in_range(None, &format!("{:.1}", cfg.k_att), window, cx);
             s
         });
+
+        cx.subscribe_in(&input_k_att, window, |this, state, event, _window, cx| {
+            if let InputEvent::Change = event {
+                if let Ok(v) = state.read(cx).value().parse::<f32>() {
+                    this.k_att = v;
+                }
+            }
+        })
+        .detach();
+
         let input_iterations = cx.new(|cx| {
-            let mut s = InputState::new(window, cx);
+            let mut s = InputState::new(window, cx).validate(|s, _| s.parse::<usize>().is_ok());
             s.replace_text_in_range(None, &format!("{}", cfg.iterations), window, cx);
             s
         });
+
+        cx.subscribe_in(
+            &input_iterations,
+            window,
+            |this, state, event, _window, cx| {
+                if let InputEvent::Change = event {
+                    if let Ok(v) = state.read(cx).value().parse::<usize>() {
+                        this.iterations = v;
+                    }
+                }
+            },
+        )
+        .detach();
+
         let input_circle_radius = cx.new(|cx| {
-            let mut s = InputState::new(window, cx);
+            let mut s = InputState::new(window, cx).validate(|s, _| s.parse::<f32>().is_ok());
             s.replace_text_in_range(None, &format!("{:.1}", cfg.circle_radius), window, cx);
             s
         });
+
+        cx.subscribe_in(
+            &input_circle_radius,
+            window,
+            |this, state, event, _window, cx| {
+                if let InputEvent::Change = event {
+                    if let Ok(v) = state.read(cx).value().parse::<f32>() {
+                        this.circle_radius = v;
+                    }
+                }
+            },
+        )
+        .detach();
+
         let input_theta = cx.new(|cx| {
-            let mut s = InputState::new(window, cx);
+            let mut s = InputState::new(window, cx).validate(|s, _| s.parse::<f32>().is_ok());
             s.replace_text_in_range(None, &format!("{:.1}", cfg.theta), window, cx);
             s
         });
+
+        cx.subscribe_in(&input_theta, window, |this, state, event, _window, cx| {
+            if let InputEvent::Change = event {
+                if let Ok(v) = state.read(cx).value().parse::<f32>() {
+                    this.theta = v;
+                }
+            }
+        })
+        .detach();
+
         let input_layer_spacing = cx.new(|cx| {
-            let mut s = InputState::new(window, cx);
+            let mut s = InputState::new(window, cx).validate(|s, _| s.parse::<f32>().is_ok());
             s.replace_text_in_range(None, &format!("{:.1}", cfg.layer_spacing), window, cx);
             s
         });
+
+        cx.subscribe_in(
+            &input_layer_spacing,
+            window,
+            |this, state, event, _window, cx| {
+                if let InputEvent::Change = event {
+                    if let Ok(v) = state.read(cx).value().parse::<f32>() {
+                        this.layer_spacing = v;
+                    }
+                }
+            },
+        )
+        .detach();
+
         let input_node_spacing = cx.new(|cx| {
-            let mut s = InputState::new(window, cx);
+            let mut s = InputState::new(window, cx).validate(|s, _| s.parse::<f32>().is_ok());
             s.replace_text_in_range(None, &format!("{:.1}", cfg.node_spacing), window, cx);
             s
         });
+
+        cx.subscribe_in(
+            &input_node_spacing,
+            window,
+            |this, state, event, _window, cx| {
+                if let InputEvent::Change = event {
+                    if let Ok(v) = state.read(cx).value().parse::<f32>() {
+                        this.node_spacing = v;
+                    }
+                }
+            },
+        )
+        .detach();
+
         let input_mds_base_dist = cx.new(|cx| {
-            let mut s = InputState::new(window, cx);
+            let mut s = InputState::new(window, cx).validate(|s, _| s.parse::<f32>().is_ok());
             s.replace_text_in_range(None, &format!("{:.1}", cfg.mds_base_dist), window, cx);
             s
         });
+
+        cx.subscribe_in(
+            &input_mds_base_dist,
+            window,
+            |this, state, event, _window, cx| {
+                if let InputEvent::Change = event {
+                    if let Ok(v) = state.read(cx).value().parse::<f32>() {
+                        this.mds_base_dist = v;
+                    }
+                }
+            },
+        )
+        .detach();
+
         let input_bipartite_col_spacing = cx.new(|cx| {
-            let mut s = InputState::new(window, cx);
-            s.replace_text_in_range(None, &format!("{:.1}", cfg.bipartite_col_spacing), window, cx);
+            let mut s = InputState::new(window, cx).validate(|s, _| s.parse::<f32>().is_ok());
+            s.replace_text_in_range(
+                None,
+                &format!("{:.1}", cfg.bipartite_col_spacing),
+                window,
+                cx,
+            );
             s
         });
+
+        cx.subscribe_in(
+            &input_bipartite_col_spacing,
+            window,
+            |this, state, event, _window, cx| {
+                if let InputEvent::Change = event {
+                    if let Ok(v) = state.read(cx).value().parse::<f32>() {
+                        this.bipartite_col_spacing = v;
+                    }
+                }
+            },
+        )
+        .detach();
+
         let input_bipartite_vert_spacing = cx.new(|cx| {
-            let mut s = InputState::new(window, cx);
-            s.replace_text_in_range(None, &format!("{:.1}", cfg.bipartite_vert_spacing), window, cx);
+            let mut s = InputState::new(window, cx).validate(|s, _| s.parse::<f32>().is_ok());
+            s.replace_text_in_range(
+                None,
+                &format!("{:.1}", cfg.bipartite_vert_spacing),
+                window,
+                cx,
+            );
             s
         });
+
+        cx.subscribe_in(
+            &input_bipartite_vert_spacing,
+            window,
+            |this, state, event, _window, cx| {
+                if let InputEvent::Change = event {
+                    if let Ok(v) = state.read(cx).value().parse::<f32>() {
+                        this.bipartite_vert_spacing = v;
+                    }
+                }
+            },
+        )
+        .detach();
+
         let input_packer_spacing = cx.new(|cx| {
-            let mut s = InputState::new(window, cx);
+            let mut s = InputState::new(window, cx).validate(|s, _| s.parse::<f32>().is_ok());
             s.replace_text_in_range(None, &format!("{:.1}", cfg.packer_spacing), window, cx);
             s
         });
+
+        cx.subscribe_in(
+            &input_packer_spacing,
+            window,
+            |this, state, event, _window, cx| {
+                if let InputEvent::Change = event {
+                    if let Ok(v) = state.read(cx).value().parse::<f32>() {
+                        this.packer_spacing = v;
+                    }
+                }
+            },
+        )
+        .detach();
+
         let input_compound_padding = cx.new(|cx| {
-            let mut s = InputState::new(window, cx);
+            let mut s = InputState::new(window, cx).validate(|s, _| s.parse::<f32>().is_ok());
             s.replace_text_in_range(None, &format!("{:.1}", cfg.compound_padding), window, cx);
             s
         });
+
+        cx.subscribe_in(
+            &input_compound_padding,
+            window,
+            |this, state, event, _window, cx| {
+                if let InputEvent::Change = event {
+                    if let Ok(v) = state.read(cx).value().parse::<f32>() {
+                        this.compound_padding = v;
+                    }
+                }
+            },
+        )
+        .detach();
+
         let input_regional_columns = cx.new(|cx| {
-            let mut s = InputState::new(window, cx);
+            let mut s = InputState::new(window, cx).validate(|s, _| s.parse::<usize>().is_ok());
             s.replace_text_in_range(None, &format!("{}", cfg.regional_columns), window, cx);
             s
         });
+
+        cx.subscribe_in(
+            &input_regional_columns,
+            window,
+            |this, state, event, _window, cx| {
+                if let InputEvent::Change = event {
+                    if let Ok(v) = state.read(cx).value().parse::<usize>() {
+                        this.regional_columns = v;
+                    }
+                }
+            },
+        )
+        .detach();
+
         let input_regional_cell_size = cx.new(|cx| {
-            let mut s = InputState::new(window, cx);
+            let mut s = InputState::new(window, cx).validate(|s, _| s.parse::<f32>().is_ok());
             s.replace_text_in_range(None, &format!("{:.1}", cfg.regional_cell_size), window, cx);
             s
         });
 
+        cx.subscribe_in(
+            &input_regional_cell_size,
+            window,
+            |this, state, event, _window, cx| {
+                if let InputEvent::Change = event {
+                    if let Ok(v) = state.read(cx).value().parse::<f32>() {
+                        this.regional_cell_size = v;
+                    }
+                }
+            },
+        )
+        .detach();
+
         let input_grid_spacing = cx.new(|cx| {
-            let mut s = InputState::new(window, cx);
-            s.replace_text_in_range(None, &format!("{:.1}", default_canvas.grid_spacing), window, cx);
-            s
-        });
-        let input_arrow_length = cx.new(|cx| {
-            let mut s = InputState::new(window, cx);
-            s.replace_text_in_range(None, &format!("{:.1}", default_canvas.arrow_length), window, cx);
-            s
-        });
-        let input_arrow_width = cx.new(|cx| {
-            let mut s = InputState::new(window, cx);
-            s.replace_text_in_range(None, &format!("{:.1}", default_canvas.arrow_width), window, cx);
-            s
-        });
-        let input_edge_stroke = cx.new(|cx| {
-            let mut s = InputState::new(window, cx);
-            s.replace_text_in_range(None, &format!("{:.1}", default_canvas.edge_stroke_width), window, cx);
-            s
-        });
-        let input_edge_curvature = cx.new(|cx| {
-            let mut s = InputState::new(window, cx);
-            s.replace_text_in_range(None, &format!("{:.1}", default_canvas.edge_curvature), window, cx);
+            let mut s = InputState::new(window, cx).validate(|s, _| s.parse::<f32>().is_ok());
+            s.replace_text_in_range(
+                None,
+                &format!("{:.1}", default_canvas.grid_spacing),
+                window,
+                cx,
+            );
             s
         });
 
+        cx.subscribe_in(
+            &input_grid_spacing,
+            window,
+            |this, state, event, _window, cx| {
+                if let InputEvent::Change = event {
+                    if let Ok(v) = state.read(cx).value().parse::<f32>() {
+                        this.grid_spacing = v;
+                    }
+                }
+            },
+        )
+        .detach();
+
+        let input_arrow_length = cx.new(|cx| {
+            let mut s = InputState::new(window, cx).validate(|s, _| s.parse::<f32>().is_ok());
+            s.replace_text_in_range(
+                None,
+                &format!("{:.1}", default_canvas.arrow_length),
+                window,
+                cx,
+            );
+            s
+        });
+
+        cx.subscribe_in(
+            &input_arrow_length,
+            window,
+            |this, state, event, _window, cx| {
+                if let InputEvent::Change = event {
+                    if let Ok(v) = state.read(cx).value().parse::<f32>() {
+                        this.arrow_length = v;
+                    }
+                }
+            },
+        )
+        .detach();
+
+        let input_arrow_width = cx.new(|cx| {
+            let mut s = InputState::new(window, cx).validate(|s, _| s.parse::<f32>().is_ok());
+            s.replace_text_in_range(
+                None,
+                &format!("{:.1}", default_canvas.arrow_width),
+                window,
+                cx,
+            );
+            s
+        });
+
+        cx.subscribe_in(
+            &input_arrow_width,
+            window,
+            |this, state, event, _window, cx| {
+                if let InputEvent::Change = event {
+                    if let Ok(v) = state.read(cx).value().parse::<f32>() {
+                        this.arrow_width = v;
+                    }
+                }
+            },
+        )
+        .detach();
+
+        let input_edge_stroke = cx.new(|cx| {
+            let mut s = InputState::new(window, cx).validate(|s, _| s.parse::<f32>().is_ok());
+            s.replace_text_in_range(
+                None,
+                &format!("{:.1}", default_canvas.edge_stroke_width),
+                window,
+                cx,
+            );
+            s
+        });
+
+        cx.subscribe_in(
+            &input_edge_stroke,
+            window,
+            |this, state, event, _window, cx| {
+                if let InputEvent::Change = event {
+                    if let Ok(v) = state.read(cx).value().parse::<f32>() {
+                        this.edge_stroke_width = v;
+                    }
+                }
+            },
+        )
+        .detach();
+
+        let input_edge_curvature = cx.new(|cx| {
+            let mut s = InputState::new(window, cx).validate(|s, _| s.parse::<f32>().is_ok());
+            s.replace_text_in_range(
+                None,
+                &format!("{:.1}", default_canvas.edge_curvature),
+                window,
+                cx,
+            );
+            s
+        });
+
+        cx.subscribe_in(
+            &input_edge_curvature,
+            window,
+            |this, state, event, _window, cx| {
+                if let InputEvent::Change = event {
+                    if let Ok(v) = state.read(cx).value().parse::<f32>() {
+                        this.edge_curvature = v;
+                    }
+                }
+            },
+        )
+        .detach();
+
         let node_name_state = cx.new(|cx| {
-            let mut s = InputState::new(window, cx);
+            let mut s = InputState::new(window, cx).validate(|s, _| s.parse::<f32>().is_ok());
             s.replace_text_in_range(None, "NodeX", window, cx);
             s
         });
+
         let edge_src_state = cx.new(|cx| {
-            let mut s = InputState::new(window, cx);
+            let mut s = InputState::new(window, cx).validate(|s, _| s.parse::<f32>().is_ok());
             s.replace_text_in_range(None, "", window, cx);
             s
         });
+
         let edge_tgt_state = cx.new(|cx| {
-            let mut s = InputState::new(window, cx);
+            let mut s = InputState::new(window, cx).validate(|s, _| s.parse::<f32>().is_ok());
             s.replace_text_in_range(None, "", window, cx);
             s
         });
+
         let edge_weight_state = cx.new(|cx| {
-            let mut s = InputState::new(window, cx);
+            let mut s = InputState::new(window, cx).validate(|s, _| s.parse::<f32>().is_ok());
             s.replace_text_in_range(None, "1.0", window, cx);
             s
         });
+
         let input_max_len = cx.new(|cx| {
-            let mut s = InputState::new(window, cx);
+            let mut s = InputState::new(window, cx).validate(|s, _| s.parse::<usize>().is_ok());
             s.replace_text_in_range(None, &format!("{}", cfg.max_label_len), window, cx);
             s
         });
 
+        cx.subscribe_in(&input_max_len, window, |this, state, event, _window, cx| {
+            if let InputEvent::Change = event {
+                if let Ok(v) = state.read(cx).value().parse::<usize>() {
+                    this.max_label_len = v;
+                }
+            }
+        })
+        .detach();
+
         let mut app = Self {
+            gravity: cfg.gravity,
+            k_rep: cfg.k_rep,
+            k_att: cfg.k_att,
+            iterations: cfg.iterations,
+            circle_radius: cfg.circle_radius,
+            theta: cfg.theta,
+            layer_spacing: cfg.layer_spacing,
+            node_spacing: cfg.node_spacing,
+            mds_base_dist: cfg.mds_base_dist,
+            bipartite_col_spacing: cfg.bipartite_col_spacing,
+            bipartite_vert_spacing: cfg.bipartite_vert_spacing,
+            packer_spacing: cfg.packer_spacing,
+            compound_padding: cfg.compound_padding,
+            regional_columns: cfg.regional_columns,
+            regional_cell_size: cfg.regional_cell_size,
+            max_label_len: cfg.max_label_len,
+            grid_spacing: default_canvas.grid_spacing,
+            arrow_length: default_canvas.arrow_length,
+            arrow_width: default_canvas.arrow_width,
+            edge_stroke_width: default_canvas.edge_stroke_width,
+            edge_curvature: default_canvas.edge_curvature,
+
             state: GraphState::new(),
             fixtures,
             selected_fixture_idx: 0,
@@ -309,13 +671,13 @@ impl DemoApp {
         app
     }
 
-    pub fn get_canvas_config(&self, cx: &Context<Self>) -> CanvasConfig {
+    pub fn get_canvas_config(&self) -> CanvasConfig {
         let mut cfg = CanvasConfig::default();
-        cfg.grid_spacing = self.input_grid_spacing.read(cx).text().to_string().parse().unwrap_or(45.0);
-        cfg.arrow_length = self.input_arrow_length.read(cx).text().to_string().parse().unwrap_or(10.0);
-        cfg.arrow_width = self.input_arrow_width.read(cx).text().to_string().parse().unwrap_or(8.0);
-        cfg.edge_stroke_width = self.input_edge_stroke.read(cx).text().to_string().parse().unwrap_or(2.0);
-        cfg.edge_curvature = self.input_edge_curvature.read(cx).text().to_string().parse().unwrap_or(35.0);
+        cfg.grid_spacing = self.grid_spacing;
+        cfg.arrow_length = self.arrow_length;
+        cfg.arrow_width = self.arrow_width;
+        cfg.edge_stroke_width = self.edge_stroke_width;
+        cfg.edge_curvature = self.edge_curvature;
         cfg
     }
 
@@ -420,7 +782,7 @@ impl DemoApp {
 
         let start_pos: Vec<Vec2> = self.state.positions.iter().copied().collect();
 
-        self.run_layout_internal(cx);
+        self.run_layout_internal();
         let target_pos: Vec<Vec2> = self.state.positions.iter().copied().collect();
 
         for (idx, &pos) in start_pos.iter().enumerate() {
@@ -444,117 +806,11 @@ impl DemoApp {
         cx.notify();
     }
 
-    pub fn run_layout_internal(&mut self, cx: &mut Context<Self>) {
-        let gravity = self
-            .input_gravity
-            .read(cx)
-            .text()
-            .to_string()
-            .parse::<f32>()
-            .unwrap_or(1.0);
-        let k_rep = self
-            .input_k_rep
-            .read(cx)
-            .text()
-            .to_string()
-            .parse::<f32>()
-            .unwrap_or(30.0);
-        let k_att = self
-            .input_k_att
-            .read(cx)
-            .text()
-            .to_string()
-            .parse::<f32>()
-            .unwrap_or(30.0);
-        let iterations = self
-            .input_iterations
-            .read(cx)
-            .text()
-            .to_string()
-            .parse::<usize>()
-            .unwrap_or(100);
-        let radius = self
-            .input_circle_radius
-            .read(cx)
-            .text()
-            .to_string()
-            .parse::<f32>()
-            .unwrap_or(150.0);
-        let theta = self
-            .input_theta
-            .read(cx)
-            .text()
-            .to_string()
-            .parse::<f32>()
-            .unwrap_or(0.5);
-        let layer_spacing = self
-            .input_layer_spacing
-            .read(cx)
-            .text()
-            .to_string()
-            .parse::<f32>()
-            .unwrap_or(80.0);
-        let node_spacing = self
-            .input_node_spacing
-            .read(cx)
-            .text()
-            .to_string()
-            .parse::<f32>()
-            .unwrap_or(60.0);
-        let mds_base_dist = self
-            .input_mds_base_dist
-            .read(cx)
-            .text()
-            .to_string()
-            .parse::<f32>()
-            .unwrap_or(50.0);
-        let bipartite_col_spacing = self
-            .input_bipartite_col_spacing
-            .read(cx)
-            .text()
-            .to_string()
-            .parse::<f32>()
-            .unwrap_or(120.0);
-        let bipartite_vert_spacing = self
-            .input_bipartite_vert_spacing
-            .read(cx)
-            .text()
-            .to_string()
-            .parse::<f32>()
-            .unwrap_or(60.0);
-        let packer_spacing = self
-            .input_packer_spacing
-            .read(cx)
-            .text()
-            .to_string()
-            .parse::<f32>()
-            .unwrap_or(80.0);
-        let compound_padding = self
-            .input_compound_padding
-            .read(cx)
-            .text()
-            .to_string()
-            .parse::<f32>()
-            .unwrap_or(20.0);
-        let regional_columns = self
-            .input_regional_columns
-            .read(cx)
-            .text()
-            .to_string()
-            .parse::<usize>()
-            .unwrap_or(2);
-        let regional_cell_size = self
-            .input_regional_cell_size
-            .read(cx)
-            .text()
-            .to_string()
-            .parse::<f32>()
-            .unwrap_or(250.0);
-
+    pub fn run_layout_internal(&mut self) {
         match self.selected_layout.as_str() {
             "Circle" => {
                 let mut circle = CircleLayout {
-                    radius,
+                    radius: self.circle_radius,
                     center: Vec2::default(),
                     animate: false,
                 };
@@ -566,14 +822,14 @@ impl DemoApp {
             }
             "ForceDirected" => {
                 let mut force = ForceDirectedLayout {
-                    iterations,
+                    iterations: self.iterations,
                     ideal_length: 50.0,
-                    gravity,
-                    k_rep,
-                    k_att,
+                    gravity: self.gravity,
+                    k_rep: self.k_rep,
+                    k_att: self.k_att,
                     initial_temp: 10.0,
                     use_barnes_hut: self.use_barnes_hut,
-                    theta,
+                    theta: self.theta,
                 };
                 graphene_layout::compute_flat_layout(
                     &mut force,
@@ -581,19 +837,20 @@ impl DemoApp {
                     &self.collapsed_parents,
                 );
             }
+
             "CoSE" => {
                 let mut cose = CompoundLayout {
                     sub_layout: ForceDirectedLayout {
-                        iterations,
+                        iterations: self.iterations,
                         ideal_length: 50.0,
-                        gravity,
-                        k_rep,
-                        k_att,
+                        gravity: self.gravity,
+                        k_rep: self.k_rep,
+                        k_att: self.k_att,
                         initial_temp: 10.0,
                         use_barnes_hut: self.use_barnes_hut,
-                        theta,
+                        theta: self.theta,
                     },
-                    padding: compound_padding,
+                    padding: self.compound_padding,
                 };
                 graphene_layout::compute_flat_layout(
                     &mut cose,
@@ -603,7 +860,7 @@ impl DemoApp {
             }
             "KamadaKawai" => {
                 let mut kk = KamadaKawaiLayout {
-                    iterations,
+                    iterations: self.iterations,
                     k: 1.0,
                     l_0: 50.0,
                 };
@@ -615,8 +872,8 @@ impl DemoApp {
             }
             "Sugiyama" => {
                 let mut sugi = SugiyamaLayout {
-                    layer_spacing,
-                    node_spacing,
+                    layer_spacing: self.layer_spacing,
+                    node_spacing: self.node_spacing,
                 };
                 graphene_layout::compute_flat_layout(
                     &mut sugi,
@@ -634,8 +891,8 @@ impl DemoApp {
             }
             "MDS" => {
                 let mut mds = MdsLayout {
-                    iterations,
-                    base_dist: mds_base_dist,
+                    iterations: self.iterations,
+                    base_dist: self.mds_base_dist,
                 };
                 graphene_layout::compute_flat_layout(
                     &mut mds,
@@ -667,8 +924,8 @@ impl DemoApp {
                         let idx = *node_keys_map.get(id).unwrap_or(&0);
                         node_partitions[idx % 4]
                     },
-                    column_spacing: bipartite_col_spacing,
-                    vertical_spacing: bipartite_vert_spacing,
+                    column_spacing: self.bipartite_col_spacing,
+                    vertical_spacing: self.bipartite_vert_spacing,
                 };
                 graphene_layout::compute_flat_layout(
                     &mut bipartite,
@@ -680,10 +937,10 @@ impl DemoApp {
                 let weights = self.fixtures[self.selected_fixture_idx].weights.clone();
                 let edge_keys = self.state.edge_keys.clone();
                 let mut weighted = WeightedForceDirectedLayout {
-                    iterations,
-                    gravity,
-                    k_rep,
-                    k_att,
+                    iterations: self.iterations,
+                    gravity: self.gravity,
+                    k_rep: self.k_rep,
+                    k_att: self.k_att,
                     weight_fn: move |edge| {
                         if let Some(&idx) = edge_keys.get(edge) {
                             *weights.get(&idx).unwrap_or(&1.0)
@@ -700,8 +957,8 @@ impl DemoApp {
             }
             "CollisionForce" => {
                 let mut collision = CollisionForceDirectedLayout {
-                    iterations,
-                    gravity,
+                    iterations: self.iterations,
+                    gravity: self.gravity,
                     ideal_length: 50.0,
                 };
                 graphene_layout::compute_flat_layout(
@@ -713,16 +970,16 @@ impl DemoApp {
             "DisconnectedPack" => {
                 let mut packer = DisconnectedPacker {
                     sub_layout: ForceDirectedLayout {
-                        iterations,
+                        iterations: self.iterations,
                         ideal_length: 50.0,
-                        gravity,
-                        k_rep,
-                        k_att,
+                        gravity: self.gravity,
+                        k_rep: self.k_rep,
+                        k_att: self.k_att,
                         initial_temp: 10.0,
                         use_barnes_hut: self.use_barnes_hut,
-                        theta,
+                        theta: self.theta,
                     },
-                    spacing: packer_spacing,
+                    spacing: self.packer_spacing,
                 };
                 graphene_layout::compute_flat_layout(
                     &mut packer,
@@ -733,16 +990,16 @@ impl DemoApp {
             "Compound" => {
                 let mut comp = CompoundLayout {
                     sub_layout: ForceDirectedLayout {
-                        iterations,
+                        iterations: self.iterations,
                         ideal_length: 50.0,
-                        gravity,
-                        k_rep,
-                        k_att,
+                        gravity: self.gravity,
+                        k_rep: self.k_rep,
+                        k_att: self.k_att,
                         initial_temp: 10.0,
                         use_barnes_hut: self.use_barnes_hut,
-                        theta,
+                        theta: self.theta,
                     },
-                    padding: compound_padding,
+                    padding: self.compound_padding,
                 };
                 graphene_layout::compute_flat_layout(
                     &mut comp,
@@ -758,17 +1015,17 @@ impl DemoApp {
                 let mut regional = RegionalPartitionLayout {
                     cluster_fn: move |id| *clusters.get(&id).unwrap_or(&0),
                     sub_layout: ForceDirectedLayout {
-                        iterations,
+                        iterations: self.iterations,
                         ideal_length: 50.0,
-                        gravity,
-                        k_rep,
-                        k_att,
+                        gravity: self.gravity,
+                        k_rep: self.k_rep,
+                        k_att: self.k_att,
                         initial_temp: 10.0,
                         use_barnes_hut: self.use_barnes_hut,
-                        theta,
+                        theta: self.theta,
                     },
-                    columns: regional_columns,
-                    cell_size: regional_cell_size,
+                    columns: self.regional_columns,
+                    cell_size: self.regional_cell_size,
                 };
                 graphene_layout::compute_flat_layout(
                     &mut regional,
@@ -883,13 +1140,8 @@ impl DemoApp {
         }
     }
 
-    pub fn get_max_untruncated_len(&self, cx: &Context<Self>) -> usize {
-        self.input_max_len
-            .read(cx)
-            .text()
-            .to_string()
-            .parse::<usize>()
-            .unwrap_or(10)
+    pub fn get_max_untruncated_len(&self) -> usize {
+        self.max_label_len
     }
 }
 

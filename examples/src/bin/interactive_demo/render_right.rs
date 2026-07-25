@@ -263,13 +263,23 @@ impl DemoApp {
                             .child(
                                 gpui::div()
                                     .flex_1()
-                                    .child(gpui::div().text_color(theme.text_dim).text_size(px(10.0)).child("Grid Spacing"))
+                                    .child(
+                                        gpui::div()
+                                            .text_color(theme.text_dim)
+                                            .text_size(px(10.0))
+                                            .child("Grid Spacing"),
+                                    )
                                     .child(Input::new(&self.input_grid_spacing)),
                             )
                             .child(
                                 gpui::div()
                                     .flex_1()
-                                    .child(gpui::div().text_color(theme.text_dim).text_size(px(10.0)).child("Arrow Len"))
+                                    .child(
+                                        gpui::div()
+                                            .text_color(theme.text_dim)
+                                            .text_size(px(10.0))
+                                            .child("Arrow Len"),
+                                    )
                                     .child(Input::new(&self.input_arrow_length)),
                             ),
                     )
@@ -280,26 +290,38 @@ impl DemoApp {
                             .child(
                                 gpui::div()
                                     .flex_1()
-                                    .child(gpui::div().text_color(theme.text_dim).text_size(px(10.0)).child("Arrow Width"))
+                                    .child(
+                                        gpui::div()
+                                            .text_color(theme.text_dim)
+                                            .text_size(px(10.0))
+                                            .child("Arrow Width"),
+                                    )
                                     .child(Input::new(&self.input_arrow_width)),
                             )
                             .child(
                                 gpui::div()
                                     .flex_1()
-                                    .child(gpui::div().text_color(theme.text_dim).text_size(px(10.0)).child("Edge Stroke"))
+                                    .child(
+                                        gpui::div()
+                                            .text_color(theme.text_dim)
+                                            .text_size(px(10.0))
+                                            .child("Edge Stroke"),
+                                    )
                                     .child(Input::new(&self.input_edge_stroke)),
                             ),
                     )
                     .child(
-                        gpui::div()
-                            .flex()
-                            .gap_2()
-                            .child(
-                                gpui::div()
-                                    .flex_1()
-                                    .child(gpui::div().text_color(theme.text_dim).text_size(px(10.0)).child("Edge Curvature"))
-                                    .child(Input::new(&self.input_edge_curvature)),
-                            ),
+                        gpui::div().flex().gap_2().child(
+                            gpui::div()
+                                .flex_1()
+                                .child(
+                                    gpui::div()
+                                        .text_color(theme.text_dim)
+                                        .text_size(px(10.0))
+                                        .child("Edge Curvature"),
+                                )
+                                .child(Input::new(&self.input_edge_curvature)),
+                        ),
                     ),
             )
             .child(
@@ -347,53 +369,49 @@ impl DemoApp {
                                             .child("Shape"),
                                     )
                                     .child(
-                                        gpui::div()
-                                            .flex()
-                                            .flex_wrap()
-                                            .gap_1()
-                                            .children(
-                                                vec![
-                                                    NodeShape::Ellipse,
-                                                    NodeShape::Rectangle,
-                                                    NodeShape::Square,
-                                                    NodeShape::Triangle,
-                                                    NodeShape::Diamond,
-                                                    NodeShape::Pentagon,
-                                                    NodeShape::Hexagon,
-                                                    NodeShape::Octagon,
-                                                    NodeShape::Star,
-                                                    NodeShape::Ribbon,
-                                                ]
-                                                .into_iter()
-                                                .map(
-                                                    |shape| {
-                                                        let label = format!("{:?}", shape);
-                                                        Button::new(SharedString::from(format!(
-                                                            "shape-btn-{}",
-                                                            label
-                                                        )))
-                                                        .label(label)
-                                                        .on_click(cx.listener(move |this, _, _, _| {
-                                                            if let Some(id) = this.selected_node {
-                                                                if let Some(&idx) =
-                                                                    this.state.node_keys.get(id)
+                                        gpui::div().flex().flex_col().gap_1().children(
+                                            vec![
+                                                NodeShape::Ellipse,
+                                                NodeShape::Rectangle,
+                                                NodeShape::Square,
+                                                NodeShape::Triangle,
+                                                NodeShape::Diamond,
+                                                NodeShape::Pentagon,
+                                                NodeShape::Hexagon,
+                                                NodeShape::Octagon,
+                                                NodeShape::Star,
+                                                NodeShape::Ribbon,
+                                            ]
+                                            .into_iter()
+                                            .map(
+                                                |shape| {
+                                                    let label = format!("{:?}", shape);
+                                                    Button::new(SharedString::from(format!(
+                                                        "shape-btn-{}",
+                                                        label
+                                                    )))
+                                                    .label(label)
+                                                    .on_click(cx.listener(move |this, _, _, _| {
+                                                        if let Some(id) = this.selected_node {
+                                                            if let Some(&idx) =
+                                                                this.state.node_keys.get(id)
+                                                            {
+                                                                let style = this
+                                                                    .state
+                                                                    .computed_styles
+                                                                    .get_mut(idx);
+                                                                if let StylingTarget::Node(
+                                                                    ref mut node_style,
+                                                                ) = style.target
                                                                 {
-                                                                    let style = this
-                                                                        .state
-                                                                        .computed_styles
-                                                                        .get_mut(idx);
-                                                                    if let StylingTarget::Node(
-                                                                        ref mut node_style,
-                                                                    ) = style.target
-                                                                    {
-                                                                        node_style.shape = shape;
-                                                                    }
+                                                                    node_style.shape = shape;
                                                                 }
                                                             }
-                                                        }))
-                                                    },
-                                                ),
+                                                        }
+                                                    }))
+                                                },
                                             ),
+                                        ),
                                     ),
                             )
                             .child(
@@ -710,7 +728,9 @@ impl DemoApp {
                                     if let Ok(json) =
                                         std::fs::read_to_string("workspace_graph.json")
                                     {
-                                        if let Ok(new_state) = graphene_core::GraphState::from_json(&json) {
+                                        if let Ok(new_state) =
+                                            graphene_core::GraphState::from_json(&json)
+                                        {
                                             this.undo_redo.record_state(&this.state);
                                             this.state = new_state;
                                             this.selected_node = None;

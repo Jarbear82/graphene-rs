@@ -6,7 +6,7 @@ edition = "2021"
 [dependencies]
 graphene_core = { path = "../crates/graphene_core" }
 graphene_style = { path = "../crates/graphene_style" }
-graphene_algo = { path = "../crates/graphene_algo" }
+graphene_algorithms = { path = "../crates/graphene_algorithms" }
 graphene_analysis = { path = "../crates/graphene_analysis" }
 graphene_layout = { path = "../crates/graphene_layout" }
 graphene_gpui = { path = "../crates/graphene_gpui" }

@@ -2466,7 +2466,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "graphene_algo"
+name = "graphene_algorithms"
 version = "0.1.0"
 dependencies = [
  "graphene_core",
@@ -2478,7 +2478,7 @@ dependencies = [
 name = "graphene_analysis"
 version = "0.1.0"
 dependencies = [
- "graphene_algo",
+ "graphene_algorithms",
  "graphene_core",
  "serde",
  "serde_json",
@@ -2490,7 +2490,7 @@ version = "0.1.0"
 dependencies = [
  "bitflags 2.13.1",
  "bitvec",
- "graphene_algo",
+ "graphene_algorithms",
  "serde",
  "serde_json",
  "slotmap",
@@ -2503,7 +2503,7 @@ version = "0.1.0"
 dependencies = [
  "gpui",
  "gpui-component",
- "graphene_algo",
+ "graphene_algorithms",
  "graphene_analysis",
  "graphene_core",
  "graphene_gpui",
@@ -2526,7 +2526,7 @@ dependencies = [
 name = "graphene_layout"
 version = "0.1.0"
 dependencies = [
- "graphene_algo",
+ "graphene_algorithms",
  "graphene_core",
 ]
 

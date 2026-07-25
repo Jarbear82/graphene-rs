@@ -5,6 +5,6 @@ edition = "2021"
 
 [dependencies]
 graphene_core = { path = "../graphene_core" }
-graphene_algo = { path = "../graphene_algo" }
+graphene_algorithms = { path = "../graphene_algorithms" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

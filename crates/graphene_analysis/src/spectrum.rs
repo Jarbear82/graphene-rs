@@ -1,4 +1,4 @@
-use graphene_algo::laplacian;
+use graphene_algorithms::laplacian;
 use graphene_core::GraphState;
 
 pub fn algebraic_connectivity<S: Copy>(state: &GraphState<S>) -> f64 {

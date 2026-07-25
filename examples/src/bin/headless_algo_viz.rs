@@ -1,4 +1,4 @@
-use graphene_algo::{bfs, dijkstra};
+use graphene_algorithms::{bfs, dijkstra};
 use graphene_core::{EdgeData, GraphState, NodeId, Size2, Vec2};
 use graphene_layout::{
     compute_hierarchical_edge_bundling, compute_multigraph_bezier_routing, BipartiteLayout,

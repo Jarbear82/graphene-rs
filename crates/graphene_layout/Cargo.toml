@@ -7,4 +7,4 @@ edition = "2021"
 graphene_core = { path = "../graphene_core" }
 
 [dev-dependencies]
-graphene_algo = { path = "../graphene_algo" }
+graphene_algorithms = { path = "../graphene_algorithms" }
