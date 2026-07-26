@@ -1,5 +1,6 @@
 pub mod advanced;
 pub mod basic;
+pub mod demos;
 
 use crate::{EdgeData, GraphState, NodeId, Size2, Vec2};
 use std::collections::HashMap;
@@ -93,5 +94,7 @@ pub fn get_all_fixtures<S: Copy + Default>() -> Vec<GraphFixture<S>> {
     let mut fixtures = Vec::new();
     basic::add_basic_fixtures(&mut fixtures);
     advanced::add_advanced_fixtures(&mut fixtures);
+    demos::add_cytoscape_demos(&mut fixtures);
     fixtures
 }
+

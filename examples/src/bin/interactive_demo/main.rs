@@ -1,10 +1,12 @@
 mod app;
 mod app_physics;
+mod demos;
 mod render;
 mod render_analysis;
 mod render_left;
 mod render_right;
 mod theme;
+
 
 use app::DemoApp;
 use gpui::{AppContext, Application, WindowBounds, WindowOptions};
