@@ -7,12 +7,15 @@ pub mod fcose;
 pub mod force;
 pub mod grid_sorted;
 pub mod hierarchical;
+pub mod geometry;
+pub mod livesim;
+pub mod multigraph;
 pub mod packers;
 pub mod quadtree;
 pub mod spectral;
 pub mod traits;
 pub mod tree;
-pub mod multigraph;
+
 
 pub use basic::{BreadthFirstLayout, CircleLayout, ConcentricLayout, GridLayout, RandomLayout};
 pub use bipartite::BipartiteLayout;
@@ -24,11 +27,16 @@ pub use fcose::{
     RelativePlacementConstraint,
 };
 pub use force::ForceDirectedLayout;
+pub use geometry::{
+    compute_curve_midpoint, compute_edge_clipping, compute_perpendicular_offset, compute_taxi_path,
+};
 pub use grid_sorted::GridSortedLayout;
 pub use hierarchical::{compute_hierarchical_edge_bundling, SugiyamaLayout};
 pub use multigraph::compute_multigraph_bezier_routing;
+pub use livesim::LiveForceSimulation;
 pub use packers::DisconnectedPacker;
 pub use quadtree::Quadtree;
 pub use spectral::{KamadaKawaiLayout, MdsLayout};
 pub use traits::{compute_flat_layout, resolve_compound_bounds, Layout};
 pub use tree::ReingoldTilfordLayout;
+

@@ -458,41 +458,24 @@ impl<'a> IntoElement for GraphCanvas<'a> {
             let tgt_x = f32::from(tgt_p.x);
             let tgt_y = f32::from(tgt_p.y);
 
-            let (mid_x, mid_y) = match curve_style {
-                EdgeCurveStyle::Straight | EdgeCurveStyle::Taxi => {
-                    ((src_x + tgt_x) / 2.0, (src_y + tgt_y) / 2.0)
-                }
+            let screen_curve = match curve_style {
                 EdgeCurveStyle::UnbundledBezier(cp1, cp2) => {
-                    let s_cp1 = viewport.model_to_screen(cp1);
-                    let s_cp2 = viewport.model_to_screen(cp2);
-                    (
-                        0.125 * src_x + 0.375 * s_cp1.x + 0.375 * s_cp2.x + 0.125 * tgt_x,
-                        0.125 * src_y + 0.375 * s_cp1.y + 0.375 * s_cp2.y + 0.125 * tgt_y,
+                    let p1 = viewport.model_to_screen(cp1);
+                    let p2 = viewport.model_to_screen(cp2);
+                    EdgeCurveStyle::UnbundledBezier(
+                        graphene_core::Vec2::new(p1.x, p1.y),
+                        graphene_core::Vec2::new(p2.x, p2.y),
                     )
                 }
-                _ => {
-                    let mid_x = (src_x + tgt_x) / 2.0;
-                    let mid_y = (src_y + tgt_y) / 2.0;
-                    let dx = tgt_x - src_x;
-                    let dy = tgt_y - src_y;
-                    let len = (dx * dx + dy * dy).sqrt();
-                    let curvature = cfg.edge_curvature;
-                    let ctrl_x = if len > 0.0 {
-                        mid_x - (dy / len) * curvature
-                    } else {
-                        mid_x
-                    };
-                    let ctrl_y = if len > 0.0 {
-                        mid_y + (dx / len) * curvature
-                    } else {
-                        mid_y
-                    };
-                    (
-                        0.25 * src_x + 0.5 * ctrl_x + 0.25 * tgt_x,
-                        0.25 * src_y + 0.5 * ctrl_y + 0.25 * tgt_y,
-                    )
-                }
+                other => other,
             };
+            let mid = graphene_layout::compute_curve_midpoint(
+                graphene_core::Vec2::new(src_x, src_y),
+                graphene_core::Vec2::new(tgt_x, tgt_y),
+                screen_curve,
+                cfg.edge_curvature,
+            );
+            let (mid_x, mid_y) = (mid.x, mid.y);
 
             let font_size = match state.edge_computed_styles.get(i).target {
                 StylingTarget::Edge(edge_style) => edge_style.label_font_size,
@@ -568,9 +551,12 @@ impl<'a> IntoElement for GraphCanvas<'a> {
                                     builder.line_to(gpui::point(px(tgt_p.x), px(tgt_p.y)));
                                 }
                                 EdgeCurveStyle::Taxi => {
-                                    let mid_x = (src_p.x + tgt_p.x) / 2.0;
-                                    builder.line_to(gpui::point(px(mid_x), px(src_p.y)));
-                                    builder.line_to(gpui::point(px(mid_x), px(tgt_p.y)));
+                                    let (wp1, wp2) = graphene_layout::compute_taxi_path(
+                                        graphene_core::Vec2::new(src_p.x, src_p.y),
+                                        graphene_core::Vec2::new(tgt_p.x, tgt_p.y),
+                                    );
+                                    builder.line_to(gpui::point(px(wp1.x), px(wp1.y)));
+                                    builder.line_to(gpui::point(px(wp2.x), px(wp2.y)));
                                     builder.line_to(gpui::point(px(tgt_p.x), px(tgt_p.y)));
                                 }
                                 EdgeCurveStyle::UnbundledBezier(cp1, cp2) => {

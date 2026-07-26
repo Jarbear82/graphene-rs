@@ -4,6 +4,7 @@ use gpui::{
     px, Context, EntityInputHandler, InteractiveElement, IntoElement, MouseDownEvent,
     ParentElement, Render, Styled, Window,
 };
+use graphene_core::HierarchyExt;
 use graphene_gpui::render::graph_canvas::GraphCanvas;
 
 impl Render for DemoApp {
@@ -13,29 +14,16 @@ impl Render for DemoApp {
         let max_len = self.get_max_untruncated_len();
         let fixture = &self.fixtures[self.selected_fixture_idx];
 
-        let nodes_count = self.state.node_index_to_id.len();
-        let mut is_parent = vec![false; nodes_count];
-        for idx in 0..nodes_count {
-            let id = self.state.node_index_to_id[idx];
-            for j in 0..nodes_count {
-                if let Some(p_id) = *self.state.hierarchy.parent.get(j) {
-                    if p_id == id {
-                        is_parent[idx] = true;
-                        break;
-                    }
-                }
-            }
-        }
-
         for (idx, &id) in self.state.node_index_to_id.iter().enumerate() {
+            let is_parent_node = self.state.is_parent(idx);
             let is_collapsed = self.collapsed_parents.contains(&id);
 
-            if is_parent[idx] && !is_collapsed {
+            if is_parent_node && !is_collapsed {
                 continue;
             }
 
             let mut label = fixture.node_labels.get(&id).cloned().unwrap_or_default();
-            if is_parent[idx] && is_collapsed {
+            if is_parent_node && is_collapsed {
                 label = format!("[+] {}", label);
             }
             let label_len = label.chars().count();
@@ -232,17 +220,13 @@ impl DemoApp {
                     let now = std::time::Instant::now();
                     if let Some(node_id) = hit_node {
                         if let Some((prev_id, prev_time)) = this.last_node_click {
-                            if prev_id == node_id && now.duration_since(prev_time).as_millis() < 300
-                            {
-                                let mut is_parent = false;
-                                for j in 0..this.state.node_index_to_id.len() {
-                                    if let Some(p_id) = *this.state.hierarchy.parent.get(j) {
-                                        if p_id == node_id {
-                                            is_parent = true;
-                                            break;
-                                        }
-                                    }
-                                }
+                            if prev_id == node_id && now.duration_since(prev_time).as_millis() < 300 {
+                                let is_parent = this
+                                    .state
+                                    .node_keys
+                                    .get(node_id)
+                                    .map(|&idx| this.state.is_parent(idx))
+                                    .unwrap_or(false);
                                 if is_parent {
                                     this.undo_redo.record_state(&this.state);
                                     if this.collapsed_parents.contains(&node_id) {

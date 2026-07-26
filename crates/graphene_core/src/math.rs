@@ -28,6 +28,50 @@ impl Vec2 {
             Self::default()
         }
     }
+
+    /// Compute distance from this point to a line segment defined by end points `a` and `b`.
+    pub fn distance_to_segment(&self, a: Vec2, b: Vec2) -> f32 {
+        let dx = b.x - a.x;
+        let dy = b.y - a.y;
+        let len_sq = dx * dx + dy * dy;
+        if len_sq == 0.0 {
+            let rx = self.x - a.x;
+            let ry = self.y - a.y;
+            return (rx * rx + ry * ry).sqrt();
+        }
+
+        let t = ((self.x - a.x) * dx + (self.y - a.y) * dy) / len_sq;
+        let t = t.clamp(0.0, 1.0);
+
+        let proj_x = a.x + t * dx;
+        let proj_y = a.y + t * dy;
+
+        let rx = self.x - proj_x;
+        let ry = self.y - proj_y;
+        (rx * rx + ry * ry).sqrt()
+    }
+
+    /// Compute perpendicular vector (rotated 90 degrees counter-clockwise).
+    pub fn perpendicular(self) -> Self {
+        Self {
+            x: -self.y,
+            y: self.x,
+        }
+    }
+
+    /// Project this vector onto another vector `other`.
+    pub fn project_onto(self, other: Self) -> Self {
+        let dot = self.x * other.x + self.y * other.y;
+        let len_sq = other.len_sq();
+        if len_sq == 0.0 {
+            return Self::default();
+        }
+        let scale = dot / len_sq;
+        Self {
+            x: other.x * scale,
+            y: other.y * scale,
+        }
+    }
 }
 
 impl std::ops::Add for Vec2 {
@@ -94,4 +138,57 @@ impl Size2 {
     pub fn new(w: f32, h: f32) -> Self {
         Self { w, h }
     }
+
+    /// Compute the 4 corners of a rectangle of this size centered at the origin.
+    pub fn corners(&self) -> [Vec2; 4] {
+        let half_w = self.w / 2.0;
+        let half_h = self.h / 2.0;
+        [
+            Vec2::new(-half_w, -half_h),
+            Vec2::new(half_w, -half_h),
+            Vec2::new(half_w, half_h),
+            Vec2::new(-half_w, half_h),
+        ]
+    }
+
+    /// Check if a point is contained inside a rectangle of this size centered at origin.
+    pub fn contains_point(&self, point: Vec2) -> bool {
+        let half_w = self.w / 2.0;
+        let half_h = self.h / 2.0;
+        point.x >= -half_w && point.x <= half_w && point.y >= -half_h && point.y <= half_h
+    }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_distance_to_segment() {
+        let p = Vec2::new(5.0, 5.0);
+        let a = Vec2::new(0.0, 0.0);
+        let b = Vec2::new(10.0, 0.0);
+        assert_eq!(p.distance_to_segment(a, b), 5.0);
+
+        let p2 = Vec2::new(15.0, 0.0);
+        assert_eq!(p2.distance_to_segment(a, b), 5.0);
+    }
+
+    #[test]
+    fn test_perpendicular_and_project() {
+        let v = Vec2::new(3.0, 4.0);
+        assert_eq!(v.perpendicular(), Vec2::new(-4.0, 3.0));
+
+        let onto = Vec2::new(1.0, 0.0);
+        assert_eq!(v.project_onto(onto), Vec2::new(3.0, 0.0));
+    }
+
+    #[test]
+    fn test_size2_helpers() {
+        let s = Size2::new(10.0, 20.0);
+        assert!(s.contains_point(Vec2::new(0.0, 0.0)));
+        assert!(s.contains_point(Vec2::new(5.0, 10.0)));
+        assert!(!s.contains_point(Vec2::new(6.0, 0.0)));
+    }
+}
+

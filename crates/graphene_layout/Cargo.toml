@@ -5,6 +5,8 @@ edition = "2021"
 
 [dependencies]
 graphene_core = { path = "../graphene_core" }
+graphene_style = { path = "../graphene_style" }
+
 
 [dev-dependencies]
 graphene_algorithms = { path = "../graphene_algorithms" }

@@ -1,8 +1,10 @@
 pub mod animation;
+pub mod hierarchy;
 pub mod topology;
 pub mod visuals;
 
 pub use animation::GraphAnimation;
+pub use hierarchy::HierarchyExt;
 pub use topology::GraphTopology;
 pub use visuals::GraphVisuals;
 

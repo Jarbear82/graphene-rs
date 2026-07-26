@@ -13,5 +13,6 @@ pub use math::{Size2, Vec2};
 #[cfg(feature = "serde")]
 pub use serde_impl::{SerializedEdge, SerializedGraph, SerializedNode};
 pub use state::GraphState;
+pub use state::HierarchyExt;
 pub use types::*;
 pub use view::{GraphView, PropertyIndex};
