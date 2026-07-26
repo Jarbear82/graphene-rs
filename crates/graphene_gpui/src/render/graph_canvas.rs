@@ -336,10 +336,15 @@ impl<'a> IntoElement for GraphCanvas<'a> {
             }
         }
 
-        let render_node = |idx: usize| {
+        let render_node = |idx: usize| -> Option<gpui::AnyElement> {
             let id = state.node_index_to_id[idx];
             let pos = *state.positions.get(idx);
             let size_val = *state.sizes.get(idx);
+
+            // Frustum Culling: Skip building and rendering nodes outside active viewport
+            if !viewport.is_visible(pos, size_val) {
+                return None;
+            }
 
             let mut label = node_labels.get(&id)
                 .cloned()
@@ -436,7 +441,7 @@ impl<'a> IntoElement for GraphCanvas<'a> {
                 border_color = accent_color;
             }
 
-            GraphNodeElement {
+            Some(GraphNodeElement {
                 id: SharedString::from(format!("canvas-node-{}", idx)),
                 screen_x,
                 screen_y,
@@ -449,7 +454,7 @@ impl<'a> IntoElement for GraphCanvas<'a> {
                 text_color,
                 font_size: cfg.node_font_size * viewport.zoom * scale,
                 label,
-            }
+            }.into_any_element())
         };
 
         let render_edge_label = |(i, src_p, tgt_p, curve_style, label): (usize, Point<f32>, Point<f32>, EdgeCurveStyle, String)| {
@@ -509,6 +514,7 @@ impl<'a> IntoElement for GraphCanvas<'a> {
             .flex_1()
             .h_full()
             .relative()
+            .overflow_hidden()
             .child(
                 gpui::canvas(
                     move |_, _, _| {},
@@ -646,8 +652,8 @@ impl<'a> IntoElement for GraphCanvas<'a> {
                     .font_weight(gpui::FontWeight::BOLD)
                     .child(graph_type_badge),
             )
-            .children(parent_indices.into_iter().map(render_node))
-            .children(leaf_indices.into_iter().map(render_node))
+            .children(parent_indices.into_iter().filter_map(render_node))
+            .children(leaf_indices.into_iter().filter_map(render_node))
             .children(edge_labels_to_render.into_iter().map(render_edge_label))
             .into_any_element()
     }

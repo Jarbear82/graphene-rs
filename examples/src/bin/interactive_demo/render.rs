@@ -168,6 +168,7 @@ impl DemoApp {
             .flex_1()
             .h_full()
             .relative()
+            .overflow_hidden()
             .bg(theme.bg)
             .child(
                 gpui::canvas(
