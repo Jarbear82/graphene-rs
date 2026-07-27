@@ -763,7 +763,6 @@ impl DemoApp {
         self.state.dirty_flags |=
             graphene_core::DirtyFlags::POSITION_DIRTY | graphene_core::DirtyFlags::TOPOLOGY_DIRTY;
         self.interaction_state.rebuild_grid(&self.state);
-        self.run_analysis();
     }
 
     pub fn fit_view(&mut self) {

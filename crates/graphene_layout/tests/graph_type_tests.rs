@@ -1047,3 +1047,104 @@ fn test_fcose_containment_collapsed_parents() {
         }
     }
 }
+
+#[test]
+fn test_cose_and_fcose_barnes_hut_large_graph() {
+    use graphene_core::{GraphState, math::Vec2, Size2};
+    use graphene_layout::cose::CoseLayout;
+    use graphene_layout::fcose::FCoseLayout;
+
+    let mut state = GraphState::<()>::default();
+    let n = 150; // N > 100 triggers Barnes-Hut spatial acceleration
+    for i in 0..n {
+        let pos = Vec2::new((i % 15) as f32 * 20.0, (i / 15) as f32 * 20.0);
+        let size = Size2::new(10.0, 10.0);
+        state.add_node(pos, size);
+    }
+
+    for i in 0..(n - 1) {
+        let u = state.node_index_to_id[i];
+        let v = state.node_index_to_id[i + 1];
+        state.add_edge(u, v, graphene_core::EdgeData::default());
+    }
+
+    let mut cose = CoseLayout { iterations: 10, ..Default::default() };
+    cose.compute(&mut state);
+    assert_valid_positions(&state);
+
+    let mut fcose = FCoseLayout { iterations: 10, ..Default::default() };
+    fcose.compute(&mut state);
+    assert_valid_positions(&state);
+}
+
+#[test]
+fn test_async_live_simulation_handle_background_thread() {
+    use graphene_core::{GraphState, math::Vec2, Size2};
+    use graphene_layout::livesim::{LiveForceSimulation, AsyncLiveSimulationHandle};
+
+    let mut state = GraphState::<()>::default();
+    let n = 50;
+    for i in 0..n {
+        let pos = Vec2::new((i % 10) as f32 * 30.0, (i / 10) as f32 * 30.0);
+        let size = Size2::new(10.0, 10.0);
+        state.add_node(pos, size);
+    }
+
+    for i in 0..(n - 1) {
+        let u = state.node_index_to_id[i];
+        let v = state.node_index_to_id[i + 1];
+        state.add_edge(u, v, graphene_core::EdgeData::default());
+    }
+
+    let sim = LiveForceSimulation::new();
+    let handle = AsyncLiveSimulationHandle::spawn(sim, state.clone(), 20);
+
+    std::thread::sleep(std::time::Duration::from_millis(50));
+
+    let snap = handle.latest_snapshot();
+    assert_eq!(snap.positions.len(), n);
+    assert!(snap.version > 0);
+
+    handle.apply_to_graph_state(&mut state);
+    assert_valid_positions(&state);
+}
+
+#[test]
+fn test_graph_engine_decoupled_thread_actor() {
+    use graphene_core::{GraphState, math::Vec2, Size2};
+    use graphene_layout::engine::{GraphEngineHandle, GraphCommand, LayoutCommand};
+    use graphene_layout::cose::CoseLayout;
+
+    let initial_state = GraphState::<()>::default();
+    let engine = GraphEngineHandle::spawn(initial_state);
+
+    engine.send_command(GraphCommand::AddNode {
+        pos: Vec2::new(0.0, 0.0),
+        size: Size2::new(10.0, 10.0),
+        data: (),
+    }).unwrap();
+
+    engine.send_command(GraphCommand::AddNode {
+        pos: Vec2::new(50.0, 50.0),
+        size: Size2::new(10.0, 10.0),
+        data: (),
+    }).unwrap();
+
+    std::thread::sleep(std::time::Duration::from_millis(30));
+
+    let snap = engine.latest_snapshot();
+    assert_eq!(snap.positions.len(), 2);
+    assert!(snap.version > 0);
+
+    engine.send_command(GraphCommand::RunLayout(LayoutCommand::Cose(CoseLayout {
+        iterations: 10,
+        ..Default::default()
+    }))).unwrap();
+
+    std::thread::sleep(std::time::Duration::from_millis(30));
+
+    let snap_after = engine.latest_snapshot();
+    assert_eq!(snap_after.positions.len(), 2);
+
+    engine.shutdown();
+}

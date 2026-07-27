@@ -120,61 +120,72 @@ impl<S: Copy> Layout<S> for CoseLayout {
             let mut displacements_x = vec![0.0f32; n];
             let mut displacements_y = vec![0.0f32; n];
 
-            for i in 0..n {
-                let pos_i = *state.positions.get(i);
-                let size_i = *state.sizes.get(i);
-                let min_x_i = pos_i.x - size_i.w / 2.0;
-                let max_x_i = pos_i.x + size_i.w / 2.0;
-                let min_y_i = pos_i.y - size_i.h / 2.0;
-                let max_y_i = pos_i.y + size_i.h / 2.0;
+            if n > 100 {
+                let positions: Vec<Vec2> = (0..n).map(|i| *state.positions.get(i)).collect();
+                let quadtree = crate::quadtree::Quadtree::build(&positions);
+                for i in 0..n {
+                    let pos_i = positions[i];
+                    let force = quadtree.accumulate_repulsion(i, pos_i, &positions, self.node_repulsion, 0.5);
+                    displacements_x[i] += force.x;
+                    displacements_y[i] += force.y;
+                }
+            } else {
+                for i in 0..n {
+                    let pos_i = *state.positions.get(i);
+                    let size_i = *state.sizes.get(i);
+                    let min_x_i = pos_i.x - size_i.w / 2.0;
+                    let max_x_i = pos_i.x + size_i.w / 2.0;
+                    let min_y_i = pos_i.y - size_i.h / 2.0;
+                    let max_y_i = pos_i.y + size_i.h / 2.0;
 
-                for j in (i + 1)..n {
-                    let pos_j = *state.positions.get(j);
-                    let size_j = *state.sizes.get(j);
-                    let min_x_j = pos_j.x - size_j.w / 2.0;
-                    let max_x_j = pos_j.x + size_j.w / 2.0;
-                    let min_y_j = pos_j.y - size_j.h / 2.0;
-                    let max_y_j = pos_j.y + size_j.h / 2.0;
+                    for j in (i + 1)..n {
+                        let pos_j = *state.positions.get(j);
+                        let size_j = *state.sizes.get(j);
+                        let min_x_j = pos_j.x - size_j.w / 2.0;
+                        let max_x_j = pos_j.x + size_j.w / 2.0;
+                        let min_y_j = pos_j.y - size_j.h / 2.0;
+                        let max_y_j = pos_j.y + size_j.h / 2.0;
 
-                    let mut dir_x = pos_j.x - pos_i.x;
-                    let mut dir_y = pos_j.y - pos_i.y;
+                        let mut dir_x = pos_j.x - pos_i.x;
+                        let mut dir_y = pos_j.y - pos_i.y;
 
-                    if dir_x == 0.0 && dir_y == 0.0 {
-                        dir_x = random_distance();
-                        dir_y = random_distance();
-                    }
+                        if dir_x == 0.0 && dir_y == 0.0 {
+                            dir_x = random_distance();
+                            dir_y = random_distance();
+                        }
 
-                    let overlap_x = if dir_x > 0.0 { max_x_i - min_x_j } else { max_x_j - min_x_i };
-                    let overlap_y = if dir_y > 0.0 { max_y_i - min_y_j } else { max_y_j - min_y_i };
+                        let overlap_x = if dir_x > 0.0 { max_x_i - min_x_j } else { max_x_j - min_x_i };
+                        let overlap_y = if dir_y > 0.0 { max_y_i - min_y_j } else { max_y_j - min_y_i };
 
-                    if overlap_x >= 0.0 && overlap_y >= 0.0 {
-                        let overlap = (overlap_x * overlap_x + overlap_y * overlap_y).sqrt();
-                        let force = self.node_overlap * overlap;
-                        let dist = (dir_x * dir_x + dir_y * dir_y).sqrt().max(0.01);
-                        let fx = force * dir_x / dist;
-                        let fy = force * dir_y / dist;
+                        if overlap_x >= 0.0 && overlap_y >= 0.0 {
+                            let overlap = (overlap_x * overlap_x + overlap_y * overlap_y).sqrt();
+                            let force = self.node_overlap * overlap;
+                            let dist = (dir_x * dir_x + dir_y * dir_y).sqrt().max(0.01);
+                            let fx = force * dir_x / dist;
+                            let fy = force * dir_y / dist;
 
-                        displacements_x[i] -= fx;
-                        displacements_y[i] -= fy;
-                        displacements_x[j] += fx;
-                        displacements_y[j] += fy;
-                    } else {
-                        let p1 = find_clipping_point(pos_i, size_i, dir_x, dir_y);
-                        let p2 = find_clipping_point(pos_j, size_j, -dir_x, -dir_y);
+                            displacements_x[i] -= fx;
+                            displacements_y[i] -= fy;
+                            displacements_x[j] += fx;
+                            displacements_y[j] += fy;
+                        } else {
+                            let p1 = find_clipping_point(pos_i, size_i, dir_x, dir_y);
+                            let p2 = find_clipping_point(pos_j, size_j, -dir_x, -dir_y);
 
-                        let dx = p2.x - p1.x;
-                        let dy = p2.y - p1.y;
-                        let dist_sqr = (dx * dx + dy * dy).max(0.01);
-                        let dist = dist_sqr.sqrt();
+                            let dx = p2.x - p1.x;
+                            let dy = p2.y - p1.y;
+                            let dist_sqr = (dx * dx + dy * dy).max(0.01);
+                            let dist = dist_sqr.sqrt();
 
-                        let force = (self.node_repulsion + self.node_repulsion) / dist_sqr;
-                        let fx = force * dx / dist;
-                        let fy = force * dy / dist;
+                            let force = (self.node_repulsion + self.node_repulsion) / dist_sqr;
+                            let fx = force * dx / dist;
+                            let fy = force * dy / dist;
 
-                        displacements_x[i] -= fx;
-                        displacements_y[i] -= fy;
-                        displacements_x[j] += fx;
-                        displacements_y[j] += fy;
+                            displacements_x[i] -= fx;
+                            displacements_y[i] -= fy;
+                            displacements_x[j] += fx;
+                            displacements_y[j] += fy;
+                        }
                     }
                 }
             }

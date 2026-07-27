@@ -216,3 +216,107 @@ impl Default for LiveForceSimulation {
         Self::new()
     }
 }
+
+/// Thread-safe immutable frame snapshot containing position and sizing data for UI frame rendering.
+#[derive(Debug, Clone, Default)]
+pub struct RenderSnapshot {
+    pub positions: Vec<Vec2>,
+    pub sizes: Vec<graphene_core::Size2>,
+    pub version: u64,
+}
+
+/// Handle managing a background simulation worker thread.
+/// Communicates via `Arc<RwLock<RenderSnapshot>>` for zero-lock-contention UI frame rendering.
+pub struct AsyncLiveSimulationHandle {
+    snapshot: std::sync::Arc<std::sync::RwLock<RenderSnapshot>>,
+    stop_signal: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    thread_handle: Option<std::thread::JoinHandle<()>>,
+}
+
+impl AsyncLiveSimulationHandle {
+    /// Spawn a background worker thread that executes `LiveForceSimulation::tick` iterations asynchronously.
+    pub fn spawn<S: Copy + Default + Send + Sync + 'static>(
+        mut sim: LiveForceSimulation,
+        mut state: GraphState<S>,
+        max_iterations: usize,
+    ) -> Self {
+        let n = state.node_index_to_id.len();
+        let initial_positions: Vec<Vec2> = (0..n).map(|i| *state.positions.get(i)).collect();
+        let initial_sizes: Vec<graphene_core::Size2> = (0..n).map(|i| *state.sizes.get(i)).collect();
+
+        let snapshot = std::sync::Arc::new(std::sync::RwLock::new(RenderSnapshot {
+            positions: initial_positions,
+            sizes: initial_sizes,
+            version: 0,
+        }));
+        let stop_signal = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+
+        let snapshot_clone = std::sync::Arc::clone(&snapshot);
+        let stop_clone = std::sync::Arc::clone(&stop_signal);
+
+        let thread_handle = std::thread::spawn(move || {
+            for step in 1..=max_iterations {
+                if stop_clone.load(std::sync::atomic::Ordering::Relaxed) {
+                    break;
+                }
+
+                sim.tick(&mut state);
+
+                let n_curr = state.node_index_to_id.len();
+                let current_positions: Vec<Vec2> = (0..n_curr).map(|i| *state.positions.get(i)).collect();
+                let current_sizes: Vec<graphene_core::Size2> = (0..n_curr).map(|i| *state.sizes.get(i)).collect();
+
+                if let Ok(mut lock) = snapshot_clone.write() {
+                    lock.positions = current_positions;
+                    lock.sizes = current_sizes;
+                    lock.version = step as u64;
+                }
+            }
+        });
+
+        Self {
+            snapshot,
+            stop_signal,
+            thread_handle: Some(thread_handle),
+        }
+    }
+
+    /// Read the latest snapshot frame buffer using Arc read-lock.
+    /// Fast and non-blocking for UI frame rendering.
+    pub fn latest_snapshot(&self) -> RenderSnapshot {
+        self.snapshot
+            .read()
+            .map(|guard| guard.clone())
+            .unwrap_or_default()
+    }
+
+    /// Signal the background simulation worker to stop.
+    pub fn stop(&self) {
+        self.stop_signal.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// Wait for the background simulation thread to finish.
+    pub fn join(mut self) {
+        self.stop();
+        if let Some(handle) = self.thread_handle.take() {
+            let _ = handle.join();
+        }
+    }
+
+    /// Synchronize the latest background positions back into a GraphState instance on the main thread.
+    pub fn apply_to_graph_state<S: Copy + Default>(&self, state: &mut GraphState<S>) {
+        let snap = self.latest_snapshot();
+        for (i, &pos) in snap.positions.iter().enumerate() {
+            if i < state.node_index_to_id.len() {
+                state.positions.set(i, pos);
+            }
+        }
+        state.dirty_flags |= graphene_core::DirtyFlags::POSITION_DIRTY;
+    }
+}
+
+impl Drop for AsyncLiveSimulationHandle {
+    fn drop(&mut self) {
+        self.stop_signal.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+}

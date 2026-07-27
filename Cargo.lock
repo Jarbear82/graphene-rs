@@ -2542,6 +2542,7 @@ name = "graphene_layout"
 version = "0.1.0"
 dependencies = [
  "graphene_algorithms",
+ "graphene_analysis",
  "graphene_core",
  "graphene_fixtures",
  "graphene_style",

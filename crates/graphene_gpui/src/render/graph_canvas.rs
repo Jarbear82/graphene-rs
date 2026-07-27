@@ -39,7 +39,7 @@ impl Default for CanvasConfig {
             edge_label_height: 16.0,
             compound_fill_alpha: 0.08,
             compound_border_alpha: 0.4,
-            hide_edges_during_pan: true,
+            hide_edges_during_pan: false,
             min_visible_font_size: 4.0,
         }
     }
@@ -244,6 +244,24 @@ impl<'a> IntoElement for GraphCanvas<'a> {
             rep
         };
 
+        let mut connected_nodes = std::collections::HashSet::new();
+        let mut connected_edge_indices = std::collections::HashSet::new();
+
+        if let Some(sel_id) = selected_node {
+            connected_nodes.insert(sel_id);
+            for i in 0..state.edges.len() {
+                let src = *state.edge_sources.get(i);
+                let tgt = *state.edge_targets.get(i);
+                let src_rep = get_visible_rep(src);
+                let tgt_rep = get_visible_rep(tgt);
+                if src_rep == sel_id || tgt_rep == sel_id {
+                    connected_edge_indices.insert(i);
+                    connected_nodes.insert(src_rep);
+                    connected_nodes.insert(tgt_rep);
+                }
+            }
+        }
+
         // Precompute edge paths for drawing
         let mut edge_paths = Vec::new();
         let mut edge_labels_to_render = Vec::new();
@@ -307,7 +325,19 @@ impl<'a> IntoElement for GraphCanvas<'a> {
                 other => other,
             };
 
-            edge_paths.push((src_screen, tgt_screen, screen_curve_style));
+            let (cur_edge_color, stroke_width) = if let Some(_sel_id) = selected_node {
+                if connected_edge_indices.contains(&i) {
+                    (accent_color, cfg.edge_stroke_width * 1.5)
+                } else {
+                    let mut faded = edge_color;
+                    faded.a = 0.12;
+                    (faded, cfg.edge_stroke_width)
+                }
+            } else {
+                (edge_color, cfg.edge_stroke_width)
+            };
+
+            edge_paths.push((src_screen, tgt_screen, screen_curve_style, cur_edge_color, stroke_width));
 
             if let Some(lbl) = label_text {
                 if !lbl.is_empty() {
@@ -377,6 +407,9 @@ impl<'a> IntoElement for GraphCanvas<'a> {
             }
 
             let is_selected = selected_node == Some(id);
+            let is_neighbor = selected_node.is_some() && connected_nodes.contains(&id);
+            let is_faded = selected_node.is_some() && !is_selected && !is_neighbor;
+
             let effective_font_size = cfg.node_font_size * viewport.zoom;
             if effective_font_size < cfg.min_visible_font_size {
                 label = String::new();
@@ -391,7 +424,7 @@ impl<'a> IntoElement for GraphCanvas<'a> {
             let mut node_h = size_val.h * viewport.zoom;
 
             if let Some(score) = score_opt {
-                scale = 0.8 + 0.5 * score;
+                scale = 0.8 + score * 0.8;
                 node_w *= scale;
                 node_h *= scale;
             }
@@ -417,7 +450,7 @@ impl<'a> IntoElement for GraphCanvas<'a> {
                 node_fill_color
             };
 
-            let mut border_color = if is_selected {
+            let mut border_color = if is_selected || is_neighbor {
                 accent_color
             } else if is_compound {
                 let mut col = accent_color;
@@ -437,8 +470,16 @@ impl<'a> IntoElement for GraphCanvas<'a> {
                 }
             }
 
-            if is_selected {
+            if is_selected || is_neighbor {
                 border_color = accent_color;
+            }
+
+            let mut cur_text_color = text_color;
+
+            if is_faded {
+                fill_color.a *= 0.20;
+                border_color.a *= 0.20;
+                cur_text_color.a *= 0.20;
             }
 
             Some(GraphNodeElement {
@@ -451,7 +492,7 @@ impl<'a> IntoElement for GraphCanvas<'a> {
                 border_color,
                 fill_color,
                 shape,
-                text_color,
+                text_color: cur_text_color,
                 font_size: cfg.node_font_size * viewport.zoom * scale,
                 label,
             }.into_any_element())
@@ -548,8 +589,8 @@ impl<'a> IntoElement for GraphCanvas<'a> {
                         }
 
                         // Draw Edges and Arrowheads
-                        for (src_p, tgt_p, curve_style) in &edge_paths {
-                            let mut builder = PathBuilder::stroke(px(cfg.edge_stroke_width));
+                        for (src_p, tgt_p, curve_style, cur_edge_color, stroke_width) in &edge_paths {
+                            let mut builder = PathBuilder::stroke(px(*stroke_width));
                             builder.move_to(gpui::point(px(src_p.x), px(src_p.y)));
 
                             match curve_style {
@@ -591,7 +632,7 @@ impl<'a> IntoElement for GraphCanvas<'a> {
                                 }
                             }
                             if let Ok(path) = builder.build() {
-                                window.paint_path(path, edge_color);
+                                window.paint_path(path, *cur_edge_color);
                             }
 
                             // Render Directed Arrowhead
@@ -755,7 +796,7 @@ mod tests {
     #[test]
     fn test_canvas_config_performance_mode_defaults() {
         let cfg = CanvasConfig::default();
-        assert!(cfg.hide_edges_during_pan);
+        assert!(!cfg.hide_edges_during_pan);
         assert_eq!(cfg.min_visible_font_size, 4.0);
     }
 

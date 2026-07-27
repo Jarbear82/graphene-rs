@@ -48,9 +48,9 @@ pub struct FCoseLayout {
 
     pub constraints: FCoseConstraints,
 
-    pub node_repulsion_fn: Option<Box<dyn Fn(NodeId) -> f32>>,
-    pub ideal_edge_length_fn: Option<Box<dyn Fn(EdgeId) -> f32>>,
-    pub edge_elasticity_fn: Option<Box<dyn Fn(EdgeId) -> f32>>,
+    pub node_repulsion_fn: Option<Box<dyn Fn(NodeId) -> f32 + Send + Sync>>,
+    pub ideal_edge_length_fn: Option<Box<dyn Fn(EdgeId) -> f32 + Send + Sync>>,
+    pub edge_elasticity_fn: Option<Box<dyn Fn(EdgeId) -> f32 + Send + Sync>>,
 }
 
 impl Default for FCoseLayout {
@@ -78,17 +78,17 @@ impl FCoseLayout {
         self
     }
 
-    pub fn with_node_repulsion_fn<F: Fn(NodeId) -> f32 + 'static>(mut self, f: F) -> Self {
+    pub fn with_node_repulsion_fn<F: Fn(NodeId) -> f32 + Send + Sync + 'static>(mut self, f: F) -> Self {
         self.node_repulsion_fn = Some(Box::new(f));
         self
     }
 
-    pub fn with_ideal_edge_length_fn<F: Fn(EdgeId) -> f32 + 'static>(mut self, f: F) -> Self {
+    pub fn with_ideal_edge_length_fn<F: Fn(EdgeId) -> f32 + Send + Sync + 'static>(mut self, f: F) -> Self {
         self.ideal_edge_length_fn = Some(Box::new(f));
         self
     }
 
-    pub fn with_edge_elasticity_fn<F: Fn(EdgeId) -> f32 + 'static>(mut self, f: F) -> Self {
+    pub fn with_edge_elasticity_fn<F: Fn(EdgeId) -> f32 + Send + Sync + 'static>(mut self, f: F) -> Self {
         self.edge_elasticity_fn = Some(Box::new(f));
         self
     }
@@ -249,27 +249,28 @@ impl<S: Copy + Default> Layout<S> for FCoseLayout {
             }
 
             let total_nodes = ext_adj.len();
-            let mut dists = vec![vec![f32::INFINITY; total_nodes]; total_nodes];
+            let total_nodes = ext_adj.len();
+            let mut dists = vec![f32::INFINITY; total_nodes * total_nodes];
             for start in 0..total_nodes {
-                dists[start][start] = 0.0;
+                dists[start * total_nodes + start] = 0.0;
                 let mut q = std::collections::VecDeque::new();
                 q.push_back(start);
                 while let Some(curr) = q.pop_front() {
-                    let d_curr = dists[start][curr];
+                    let d_curr = dists[start * total_nodes + curr];
                     for &next in &ext_adj[curr] {
-                        if dists[start][next] == f32::INFINITY {
-                            dists[start][next] = d_curr + 1.0;
+                        if dists[start * total_nodes + next] == f32::INFINITY {
+                            dists[start * total_nodes + next] = d_curr + 1.0;
                             q.push_back(next);
                         }
                     }
                 }
             }
 
-            let mut d_matrix = vec![vec![0.0f32; n]; n];
+            let mut d_matrix = vec![0.0f32; n * n];
             for i in 0..n {
                 for j in 0..n {
-                    let val = dists[i][j];
-                    d_matrix[i][j] = if val.is_finite() { val * val } else { 16.0 };
+                    let val = dists[i * total_nodes + j];
+                    d_matrix[i * n + j] = if val.is_finite() { val * val } else { 16.0 };
                 }
             }
 
@@ -278,17 +279,17 @@ impl<S: Copy + Default> Layout<S> for FCoseLayout {
             for i in 0..n {
                 let mut r_sum = 0.0f32;
                 for j in 0..n {
-                    r_sum += d_matrix[i][j];
+                    r_sum += d_matrix[i * n + j];
                 }
                 row_sums[i] = r_sum;
                 total_sum += r_sum;
             }
 
-            let mut b_matrix = vec![vec![0.0f32; n]; n];
+            let mut b_matrix = vec![0.0f32; n * n];
             let l_f = n as f32;
             for i in 0..n {
                 for j in 0..n {
-                    b_matrix[i][j] = -0.5 * (d_matrix[i][j] - row_sums[i] / l_f - row_sums[j] / l_f + total_sum / (l_f * l_f));
+                    b_matrix[i * n + j] = -0.5 * (d_matrix[i * n + j] - row_sums[i] / l_f - row_sums[j] / l_f + total_sum / (l_f * l_f));
                 }
             }
 
@@ -298,8 +299,7 @@ impl<S: Copy + Default> Layout<S> for FCoseLayout {
                 (seed >> 32) as f32 / u32::MAX as f32
             };
 
-            let power_iteration = |matrix: &[Vec<f32>], rand_fn: &mut dyn FnMut() -> f32| -> (f32, Vec<f32>) {
-                let sz = matrix.len();
+            let power_iteration = |matrix: &[f32], sz: usize, rand_fn: &mut dyn FnMut() -> f32| -> (f32, Vec<f32>) {
                 let mut u_vec = vec![0.0f32; sz];
                 for val in u_vec.iter_mut() {
                     *val = rand_fn() - 0.5;
@@ -313,7 +313,7 @@ impl<S: Copy + Default> Layout<S> for FCoseLayout {
                     let mut w_vec = vec![0.0f32; sz];
                     for row in 0..sz {
                         for col in 0..sz {
-                            w_vec[row] += matrix[row][col] * u_vec[col];
+                            w_vec[row] += matrix[row * sz + col] * u_vec[col];
                         }
                     }
                     let w_norm = w_vec.iter().map(|&x| x * x).sum::<f32>().sqrt();
@@ -329,7 +329,7 @@ impl<S: Copy + Default> Layout<S> for FCoseLayout {
                 let mut mu_vec = vec![0.0f32; sz];
                 for row in 0..sz {
                     for col in 0..sz {
-                        mu_vec[row] += matrix[row][col] * u_vec[col];
+                        mu_vec[row] += matrix[row * sz + col] * u_vec[col];
                     }
                     lamb += u_vec[row] * mu_vec[row];
                 }
@@ -337,16 +337,16 @@ impl<S: Copy + Default> Layout<S> for FCoseLayout {
                 (lamb, u_vec)
             };
 
-            let (lambda_1, v_1) = power_iteration(&b_matrix, &mut lcg_rand);
+            let (lambda_1, v_1) = power_iteration(&b_matrix, n, &mut lcg_rand);
             let mut b_deflated = b_matrix.clone();
             if lambda_1 > 0.0 {
                 for i in 0..n {
                     for j in 0..n {
-                        b_deflated[i][j] -= lambda_1 * v_1[i] * v_1[j];
+                        b_deflated[i * n + j] -= lambda_1 * v_1[i] * v_1[j];
                     }
                 }
             }
-            let (lambda_2, v_2) = power_iteration(&b_deflated, &mut lcg_rand);
+            let (lambda_2, v_2) = power_iteration(&b_deflated, n, &mut lcg_rand);
 
             let l1 = lambda_1.max(0.0).sqrt();
             let l2 = lambda_2.max(0.0).sqrt();
@@ -524,58 +524,69 @@ impl<S: Copy + Default> Layout<S> for FCoseLayout {
             let mut displacements_x = vec![0.0f32; n];
             let mut displacements_y = vec![0.0f32; n];
 
-            for i in 0..n {
-                for j in (i + 1)..n {
-                    if is_ancestor(i, j, state) || is_ancestor(j, i, state) {
-                        continue;
-                    }
+            if n > 100 && !is_parent.iter().any(|&p| p) {
+                let positions: Vec<Vec2> = (0..n).map(|i| *state.positions.get(i)).collect();
+                let quadtree = crate::quadtree::Quadtree::build(&positions);
+                for i in 0..n {
+                    let pos_i = positions[i];
+                    let force = quadtree.accumulate_repulsion(i, pos_i, &positions, self.node_repulsion, 0.5);
+                    displacements_x[i] += force.x;
+                    displacements_y[i] += force.y;
+                }
+            } else {
+                for i in 0..n {
+                    for j in (i + 1)..n {
+                        if is_ancestor(i, j, state) || is_ancestor(j, i, state) {
+                            continue;
+                        }
 
-                    let pos_i = *state.positions.get(i);
-                    let pos_j = *state.positions.get(j);
-                    let size_i = *state.sizes.get(i);
-                    let size_j = *state.sizes.get(j);
+                        let pos_i = *state.positions.get(i);
+                        let pos_j = *state.positions.get(j);
+                        let size_i = *state.sizes.get(i);
+                        let size_j = *state.sizes.get(j);
 
-                    let dx = pos_j.x - pos_i.x;
-                    let dy = pos_j.y - pos_i.y;
-                    let dist = (dx * dx + dy * dy + 0.01).sqrt();
+                        let dx = pos_j.x - pos_i.x;
+                        let dy = pos_j.y - pos_i.y;
+                        let dist = (dx * dx + dy * dy + 0.01).sqrt();
 
-                    let p1 = find_clipping_point(pos_i, size_i, dx, dy);
-                    let p2 = find_clipping_point(pos_j, size_j, -dx, -dy);
-                    let border_dx = p2.x - p1.x;
-                    let border_dy = p2.y - p1.y;
-                    let border_dist = (border_dx * border_dx + border_dy * border_dy).sqrt().max(1.0);
+                        let p1 = find_clipping_point(pos_i, size_i, dx, dy);
+                        let p2 = find_clipping_point(pos_j, size_j, -dx, -dy);
+                        let border_dx = p2.x - p1.x;
+                        let border_dy = p2.y - p1.y;
+                        let border_dist = (border_dx * border_dx + border_dy * border_dy).sqrt().max(1.0);
 
-                    let k_rep = self.node_repulsion;
-                    let force = k_rep / (border_dist * border_dist);
-                    let fx = -force * dx / dist;
-                    let fy = -force * dy / dist;
+                        let k_rep = self.node_repulsion;
+                        let force = k_rep / (border_dist * border_dist);
+                        let fx = -force * dx / dist;
+                        let fy = -force * dy / dist;
 
-                    if !is_parent[i] {
-                        displacements_x[i] += fx;
-                        displacements_y[i] += fy;
-                    } else {
-                        let leaves = get_leaf_descendants(i, state, &is_parent);
-                        if !leaves.is_empty() {
-                            let f_each_x = fx / leaves.len() as f32;
-                            let f_each_y = fy / leaves.len() as f32;
-                            for &leaf_idx in &leaves {
-                                displacements_x[leaf_idx] += f_each_x;
-                                displacements_y[leaf_idx] += f_each_y;
+                        if !is_parent[i] {
+                            displacements_x[i] += fx;
+                            displacements_y[i] += fy;
+                        } else {
+                            let leaves = get_leaf_descendants(i, state, &is_parent);
+                            if !leaves.is_empty() {
+                                let f_each_x = fx / leaves.len() as f32;
+                                let f_each_y = fy / leaves.len() as f32;
+                                for &leaf_idx in &leaves {
+                                    displacements_x[leaf_idx] += f_each_x;
+                                    displacements_y[leaf_idx] += f_each_y;
+                                }
                             }
                         }
-                    }
 
-                    if !is_parent[j] {
-                        displacements_x[j] -= fx;
-                        displacements_y[j] -= fy;
-                    } else {
-                        let leaves = get_leaf_descendants(j, state, &is_parent);
-                        if !leaves.is_empty() {
-                            let f_each_x = -fx / leaves.len() as f32;
-                            let f_each_y = -fy / leaves.len() as f32;
-                            for &leaf_idx in &leaves {
-                                displacements_x[leaf_idx] += f_each_x;
-                                displacements_y[leaf_idx] += f_each_y;
+                        if !is_parent[j] {
+                            displacements_x[j] -= fx;
+                            displacements_y[j] -= fy;
+                        } else {
+                            let leaves = get_leaf_descendants(j, state, &is_parent);
+                            if !leaves.is_empty() {
+                                let f_each_x = -fx / leaves.len() as f32;
+                                let f_each_y = -fy / leaves.len() as f32;
+                                for &leaf_idx in &leaves {
+                                    displacements_x[leaf_idx] += f_each_x;
+                                    displacements_y[leaf_idx] += f_each_y;
+                                }
                             }
                         }
                     }

@@ -15,13 +15,14 @@ pub mod quadtree;
 pub mod spectral;
 pub mod traits;
 pub mod tree;
-
+pub mod engine;
 
 pub use basic::{BreadthFirstLayout, CircleLayout, ConcentricLayout, GridLayout, RandomLayout};
 pub use bipartite::BipartiteLayout;
 pub use collision::{CollisionForceDirectedLayout, WeightedForceDirectedLayout};
 pub use compound::{CompoundLayout, ConcentricHubLayout, RegionalPartitionLayout, star_expand_hypergraph};
 pub use cose::{find_clipping_point, CoseLayout};
+pub use engine::{GraphCommand, GraphEngineHandle, LayoutCommand};
 pub use fcose::{
     AlignmentConstraint, FCoseConstraints, FCoseLayout, FixedNodeConstraint,
     RelativePlacementConstraint,
@@ -33,7 +34,7 @@ pub use geometry::{
 pub use grid_sorted::GridSortedLayout;
 pub use hierarchical::{compute_hierarchical_edge_bundling, SugiyamaLayout};
 pub use multigraph::compute_multigraph_bezier_routing;
-pub use livesim::LiveForceSimulation;
+pub use livesim::{AsyncLiveSimulationHandle, LiveForceSimulation, RenderSnapshot};
 pub use packers::DisconnectedPacker;
 pub use quadtree::Quadtree;
 pub use spectral::{KamadaKawaiLayout, MdsLayout};
