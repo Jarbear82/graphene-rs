@@ -7,7 +7,6 @@ mod render_left;
 mod render_right;
 mod theme;
 
-
 use app::DemoApp;
 use gpui::{AppContext, Application, WindowBounds, WindowOptions};
 

@@ -36,6 +36,9 @@ pub enum GraphCommand<S: Copy + Send + 'static> {
     StartLiveSim(LiveForceSimulation),
     StopLiveSim,
     StepLiveSim,
+    SetUiMode(bool),
+    SetNodeLabel { id: NodeId, label: String },
+    UpdateCachedNodeSize { id: NodeId, size: Size2 },
     QueryState(Sender<GraphState<S>>),
     Shutdown,
 }
@@ -62,6 +65,7 @@ impl<S: Copy + Default + Send + Sync + 'static> GraphEngineHandle<S> {
             positions: initial_positions,
             sizes: initial_sizes,
             version: 0,
+            is_ui_mode: initial_state.is_ui_mode,
         }));
         let analysis_report = Arc::new(RwLock::new(None));
 
@@ -169,7 +173,8 @@ impl<S: Copy + Default + Send + Sync + 'static> GraphEngineHandle<S> {
             }
             GraphCommand::RunAnalysis { is_directed } => {
                 // Spawn a sub-thread off the Engine thread to analyze a state snapshot asynchronously
-                let state_snapshot = state.clone();
+                let mut state_snapshot = state.clone();
+                state_snapshot.set_ui_mode(false);
                 let report_arc = Arc::clone(analysis_report);
                 spawn(move || {
                     let report = GraphAnalysisReport::analyze(&state_snapshot, is_directed);
@@ -190,6 +195,21 @@ impl<S: Copy + Default + Send + Sync + 'static> GraphEngineHandle<S> {
                     *version += 1;
                     Self::publish_snapshot(state, snapshot, *version);
                 }
+            }
+            GraphCommand::SetUiMode(is_ui) => {
+                state.set_ui_mode(is_ui);
+                *version += 1;
+                Self::publish_snapshot(state, snapshot, *version);
+            }
+            GraphCommand::SetNodeLabel { id, label } => {
+                state.set_node_label(id, &label);
+                *version += 1;
+                Self::publish_snapshot(state, snapshot, *version);
+            }
+            GraphCommand::UpdateCachedNodeSize { id, size } => {
+                state.update_cached_node_size(id, size);
+                *version += 1;
+                Self::publish_snapshot(state, snapshot, *version);
             }
             GraphCommand::QueryState(tx) => {
                 let _ = tx.send(state.clone());
@@ -212,6 +232,7 @@ impl<S: Copy + Default + Send + Sync + 'static> GraphEngineHandle<S> {
             lock.positions = positions;
             lock.sizes = sizes;
             lock.version = version;
+            lock.is_ui_mode = state.is_ui_mode;
         }
     }
 

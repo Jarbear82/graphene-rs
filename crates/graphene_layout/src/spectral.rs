@@ -1,3 +1,4 @@
+use crate::collision::resolve_overlaps;
 use crate::traits::Layout;
 use graphene_core::{math::Vec2, GraphState};
 
@@ -14,6 +15,23 @@ impl Default for KamadaKawaiLayout {
             k: 1.0,
             l_0: 50.0,
         }
+    }
+}
+
+impl KamadaKawaiLayout {
+    pub fn with_iterations(mut self, iterations: usize) -> Self {
+        self.iterations = iterations;
+        self
+    }
+
+    pub fn with_k(mut self, k: f32) -> Self {
+        self.k = k;
+        self
+    }
+
+    pub fn with_ideal_length(mut self, length: f32) -> Self {
+        self.l_0 = length;
+        self
     }
 }
 
@@ -104,6 +122,7 @@ impl<S: Copy> Layout<S> for KamadaKawaiLayout {
             }
         }
 
+        resolve_overlaps(state, 20.0);
         state.dirty_flags |= graphene_core::DirtyFlags::POSITION_DIRTY;
     }
 }
@@ -119,6 +138,18 @@ impl Default for MdsLayout {
             iterations: 150,
             base_dist: 50.0,
         }
+    }
+}
+
+impl MdsLayout {
+    pub fn with_iterations(mut self, iterations: usize) -> Self {
+        self.iterations = iterations;
+        self
+    }
+
+    pub fn with_base_dist(mut self, dist: f32) -> Self {
+        self.base_dist = dist;
+        self
     }
 }
 
@@ -202,6 +233,7 @@ impl<S: Copy> Layout<S> for MdsLayout {
             }
         }
 
+        resolve_overlaps(state, 20.0);
         state.dirty_flags |= graphene_core::DirtyFlags::POSITION_DIRTY;
     }
 }

@@ -1,3 +1,4 @@
+use crate::collision::resolve_overlaps;
 use crate::quadtree::Quadtree;
 use crate::traits::Layout;
 use graphene_core::{math::Vec2, GraphState};
@@ -25,6 +26,48 @@ impl Default for ForceDirectedLayout {
             use_barnes_hut: true,
             theta: 0.5,
         }
+    }
+}
+
+impl ForceDirectedLayout {
+    pub fn with_iterations(mut self, iterations: usize) -> Self {
+        self.iterations = iterations;
+        self
+    }
+
+    pub fn with_ideal_length(mut self, length: f32) -> Self {
+        self.ideal_length = length;
+        self
+    }
+
+    pub fn with_gravity(mut self, gravity: f32) -> Self {
+        self.gravity = gravity;
+        self
+    }
+
+    pub fn with_k_rep(mut self, k_rep: f32) -> Self {
+        self.k_rep = k_rep;
+        self
+    }
+
+    pub fn with_k_att(mut self, k_att: f32) -> Self {
+        self.k_att = k_att;
+        self
+    }
+
+    pub fn with_initial_temp(mut self, temp: f32) -> Self {
+        self.initial_temp = temp;
+        self
+    }
+
+    pub fn with_use_barnes_hut(mut self, use_bh: bool) -> Self {
+        self.use_barnes_hut = use_bh;
+        self
+    }
+
+    pub fn with_theta(mut self, theta: f32) -> Self {
+        self.theta = theta;
+        self
     }
 }
 
@@ -110,6 +153,7 @@ impl<S: Copy + Default> Layout<S> for ForceDirectedLayout {
             temp *= 0.95;
         }
 
+        resolve_overlaps(state, 10.0);
         state.dirty_flags |= graphene_core::DirtyFlags::POSITION_DIRTY;
     }
 }

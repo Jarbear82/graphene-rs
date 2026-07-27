@@ -1,4 +1,4 @@
-use graphene_core::{math::Size2, math::Vec2, GraphState, NodeId};
+use graphene_core::{math::Size2, math::Vec2, GraphState, HierarchyExt, NodeId};
 use std::collections::{HashMap, HashSet};
 
 pub trait Layout<S: Copy = ()> {
@@ -158,6 +158,8 @@ pub fn compute_flat_layout<S: Copy + Default, L: Layout<S>>(
         }
     }
 
+    resolve_compound_bounds(state, collapsed_parents, 20.0);
+    crate::collision::resolve_overlaps(state, 10.0);
     resolve_compound_bounds(state, collapsed_parents, 20.0);
     state.dirty_flags |= graphene_core::DirtyFlags::POSITION_DIRTY;
 }

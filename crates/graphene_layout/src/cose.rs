@@ -31,6 +31,58 @@ impl Default for CoseLayout {
     }
 }
 
+impl CoseLayout {
+    pub fn with_iterations(mut self, iterations: usize) -> Self {
+        self.iterations = iterations;
+        self
+    }
+
+    pub fn with_ideal_edge_length(mut self, length: f32) -> Self {
+        self.ideal_edge_length = length;
+        self
+    }
+
+    pub fn with_edge_elasticity(mut self, elasticity: f32) -> Self {
+        self.edge_elasticity = elasticity;
+        self
+    }
+
+    pub fn with_nesting_factor(mut self, factor: f32) -> Self {
+        self.nesting_factor = factor;
+        self
+    }
+
+    pub fn with_gravity(mut self, gravity: f32) -> Self {
+        self.gravity = gravity;
+        self
+    }
+
+    pub fn with_node_repulsion(mut self, repulsion: f32) -> Self {
+        self.node_repulsion = repulsion;
+        self
+    }
+
+    pub fn with_node_overlap(mut self, overlap: f32) -> Self {
+        self.node_overlap = overlap;
+        self
+    }
+
+    pub fn with_initial_temp(mut self, temp: f32) -> Self {
+        self.initial_temp = temp;
+        self
+    }
+
+    pub fn with_cooling_factor(mut self, factor: f32) -> Self {
+        self.cooling_factor = factor;
+        self
+    }
+
+    pub fn with_min_temp(mut self, temp: f32) -> Self {
+        self.min_temp = temp;
+        self
+    }
+}
+
 pub fn find_clipping_point(pos: Vec2, size: graphene_core::Size2, dx: f32, dy: f32) -> Vec2 {
     let w = size.w;
     let h = size.h;
@@ -267,6 +319,7 @@ impl<S: Copy> Layout<S> for CoseLayout {
             temp *= self.cooling_factor;
         }
 
+        crate::collision::resolve_overlaps(state, 10.0);
         state.dirty_flags |= graphene_core::DirtyFlags::POSITION_DIRTY;
     }
 }

@@ -1,3 +1,4 @@
+use crate::collision::resolve_overlaps;
 use crate::traits::Layout;
 use graphene_core::{math::Vec2, AnimationTrack, GraphState, NodeId};
 use std::time::Duration;
@@ -9,6 +10,33 @@ pub struct RandomLayout {
     pub width: f32,
     pub height: f32,
     pub animate: bool,
+}
+
+impl Default for RandomLayout {
+    fn default() -> Self {
+        Self {
+            width: 800.0,
+            height: 600.0,
+            animate: false,
+        }
+    }
+}
+
+impl RandomLayout {
+    pub fn with_width(mut self, width: f32) -> Self {
+        self.width = width;
+        self
+    }
+
+    pub fn with_height(mut self, height: f32) -> Self {
+        self.height = height;
+        self
+    }
+
+    pub fn with_animate(mut self, animate: bool) -> Self {
+        self.animate = animate;
+        self
+    }
 }
 
 impl<S: Copy + Default> Layout<S> for RandomLayout {
@@ -36,6 +64,7 @@ impl<S: Copy + Default> Layout<S> for RandomLayout {
                 state.positions.set(idx, target);
             }
         }
+        resolve_overlaps(state, 10.0);
         state.dirty_flags |= graphene_core::DirtyFlags::POSITION_DIRTY;
     }
 }
@@ -45,6 +74,39 @@ pub struct GridLayout {
     pub spacing_x: f32,
     pub spacing_y: f32,
     pub animate: bool,
+}
+
+impl Default for GridLayout {
+    fn default() -> Self {
+        Self {
+            columns: 5,
+            spacing_x: 120.0,
+            spacing_y: 100.0,
+            animate: false,
+        }
+    }
+}
+
+impl GridLayout {
+    pub fn with_columns(mut self, columns: usize) -> Self {
+        self.columns = columns;
+        self
+    }
+
+    pub fn with_spacing_x(mut self, spacing_x: f32) -> Self {
+        self.spacing_x = spacing_x;
+        self
+    }
+
+    pub fn with_spacing_y(mut self, spacing_y: f32) -> Self {
+        self.spacing_y = spacing_y;
+        self
+    }
+
+    pub fn with_animate(mut self, animate: bool) -> Self {
+        self.animate = animate;
+        self
+    }
 }
 
 impl<S: Copy + Default> Layout<S> for GridLayout {
@@ -75,6 +137,7 @@ impl<S: Copy + Default> Layout<S> for GridLayout {
                 state.positions.set(idx, target);
             }
         }
+        resolve_overlaps(state, 10.0);
         state.dirty_flags |= graphene_core::DirtyFlags::POSITION_DIRTY;
     }
 }
@@ -83,6 +146,33 @@ pub struct CircleLayout {
     pub radius: f32,
     pub center: Vec2,
     pub animate: bool,
+}
+
+impl Default for CircleLayout {
+    fn default() -> Self {
+        Self {
+            radius: 300.0,
+            center: Vec2::default(),
+            animate: false,
+        }
+    }
+}
+
+impl CircleLayout {
+    pub fn with_radius(mut self, radius: f32) -> Self {
+        self.radius = radius;
+        self
+    }
+
+    pub fn with_center(mut self, center: Vec2) -> Self {
+        self.center = center;
+        self
+    }
+
+    pub fn with_animate(mut self, animate: bool) -> Self {
+        self.animate = animate;
+        self
+    }
 }
 
 impl<S: Copy + Default> Layout<S> for CircleLayout {
@@ -114,6 +204,7 @@ impl<S: Copy + Default> Layout<S> for CircleLayout {
                 state.positions.set(idx, target);
             }
         }
+        resolve_overlaps(state, 10.0);
         state.dirty_flags |= graphene_core::DirtyFlags::POSITION_DIRTY;
     }
 }
@@ -124,6 +215,33 @@ pub struct ConcentricLayout {
     pub animate: bool,
 }
 
+impl Default for ConcentricLayout {
+    fn default() -> Self {
+        Self {
+            level_radius_step: 150.0,
+            center: Vec2::default(),
+            animate: false,
+        }
+    }
+}
+
+impl ConcentricLayout {
+    pub fn with_level_radius_step(mut self, step: f32) -> Self {
+        self.level_radius_step = step;
+        self
+    }
+
+    pub fn with_center(mut self, center: Vec2) -> Self {
+        self.center = center;
+        self
+    }
+
+    pub fn with_animate(mut self, animate: bool) -> Self {
+        self.animate = animate;
+        self
+    }
+}
+
 impl<S: Copy + Default> Layout<S> for ConcentricLayout {
     fn compute(&mut self, state: &mut GraphState<S>) {
         let num_nodes = state.node_index_to_id.len();
@@ -131,7 +249,7 @@ impl<S: Copy + Default> Layout<S> for ConcentricLayout {
             return;
         }
 
-        let mut level = 0;
+        let mut _level = 0;
         let mut max_in_level = 5;
         let mut level_count = 0;
         let mut level_radius = self.level_radius_step;
@@ -165,11 +283,12 @@ impl<S: Copy + Default> Layout<S> for ConcentricLayout {
                 }
                 level_nodes.clear();
                 level_count = 0;
-                level += 1;
+                _level += 1;
                 max_in_level *= 2;
                 level_radius += self.level_radius_step;
             }
         }
+        resolve_overlaps(state, 10.0);
         state.dirty_flags |= graphene_core::DirtyFlags::POSITION_DIRTY;
     }
 }
@@ -179,6 +298,39 @@ pub struct BreadthFirstLayout {
     pub sibling_spacing: f32,
     pub level_spacing: f32,
     pub animate: bool,
+}
+
+impl Default for BreadthFirstLayout {
+    fn default() -> Self {
+        Self {
+            root: graphene_core::NodeId::default(),
+            sibling_spacing: 100.0,
+            level_spacing: 120.0,
+            animate: false,
+        }
+    }
+}
+
+impl BreadthFirstLayout {
+    pub fn with_root(mut self, root: NodeId) -> Self {
+        self.root = root;
+        self
+    }
+
+    pub fn with_sibling_spacing(mut self, spacing: f32) -> Self {
+        self.sibling_spacing = spacing;
+        self
+    }
+
+    pub fn with_level_spacing(mut self, spacing: f32) -> Self {
+        self.level_spacing = spacing;
+        self
+    }
+
+    pub fn with_animate(mut self, animate: bool) -> Self {
+        self.animate = animate;
+        self
+    }
 }
 
 impl<S: Copy + Default> Layout<S> for BreadthFirstLayout {
@@ -240,6 +392,7 @@ impl<S: Copy + Default> Layout<S> for BreadthFirstLayout {
                 }
             }
         }
+        resolve_overlaps(state, 10.0);
         state.dirty_flags |= graphene_core::DirtyFlags::POSITION_DIRTY;
     }
 }

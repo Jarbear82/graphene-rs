@@ -380,6 +380,8 @@ bitflags! {
         const POSITION_DIRTY  = 1 << 0;
         const TOPOLOGY_DIRTY  = 1 << 1;
         const STYLE_DIRTY     = 1 << 2;
+        const SIZE_DIRTY      = 1 << 3;
+        const CONTENT_DIRTY   = 1 << 4;
     }
 }
 

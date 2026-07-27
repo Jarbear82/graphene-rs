@@ -223,6 +223,7 @@ pub struct RenderSnapshot {
     pub positions: Vec<Vec2>,
     pub sizes: Vec<graphene_core::Size2>,
     pub version: u64,
+    pub is_ui_mode: bool,
 }
 
 /// Handle managing a background simulation worker thread.
@@ -248,6 +249,7 @@ impl AsyncLiveSimulationHandle {
             positions: initial_positions,
             sizes: initial_sizes,
             version: 0,
+            is_ui_mode: state.is_ui_mode,
         }));
         let stop_signal = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
 
@@ -270,6 +272,7 @@ impl AsyncLiveSimulationHandle {
                     lock.positions = current_positions;
                     lock.sizes = current_sizes;
                     lock.version = step as u64;
+                    lock.is_ui_mode = state.is_ui_mode;
                 }
             }
         });

@@ -1,3 +1,4 @@
+use crate::collision::resolve_overlaps;
 use crate::traits::Layout;
 use graphene_core::{math::Vec2, GraphState};
 use std::collections::HashMap;
@@ -15,6 +16,23 @@ impl Default for GridSortedLayout {
             node_spacing: 80.0,
             sort_by_degree: true,
         }
+    }
+}
+
+impl GridSortedLayout {
+    pub fn with_columns(mut self, columns: usize) -> Self {
+        self.columns = columns;
+        self
+    }
+
+    pub fn with_node_spacing(mut self, spacing: f32) -> Self {
+        self.node_spacing = spacing;
+        self
+    }
+
+    pub fn with_sort_by_degree(mut self, sort: bool) -> Self {
+        self.sort_by_degree = sort;
+        self
     }
 }
 
@@ -51,6 +69,7 @@ impl<S: Copy> Layout<S> for GridSortedLayout {
             }
         }
 
+        resolve_overlaps(state, 10.0);
         state.dirty_flags |= graphene_core::DirtyFlags::POSITION_DIRTY;
     }
 }

@@ -16,6 +16,18 @@ impl Default for SugiyamaLayout {
     }
 }
 
+impl SugiyamaLayout {
+    pub fn with_layer_spacing(mut self, spacing: f32) -> Self {
+        self.layer_spacing = spacing;
+        self
+    }
+
+    pub fn with_node_spacing(mut self, spacing: f32) -> Self {
+        self.node_spacing = spacing;
+        self
+    }
+}
+
 impl<S: Copy> Layout<S> for SugiyamaLayout {
     fn compute(&mut self, state: &mut GraphState<S>) {
         let n = state.node_index_to_id.len();
@@ -165,6 +177,7 @@ impl<S: Copy> Layout<S> for SugiyamaLayout {
             }
         }
 
+        crate::collision::resolve_overlaps(state, 10.0);
         state.dirty_flags |= graphene_core::DirtyFlags::POSITION_DIRTY;
     }
 }

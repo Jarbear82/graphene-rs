@@ -139,12 +139,20 @@ impl DemoApp {
                     .flex()
                     .items_center()
                     .gap_4()
-                    .child(
+                    .child({
+                        let zoom_percent = self.viewport.zoom * 100.0;
+                        let zoom_str = if zoom_percent >= 10.0 {
+                            format!("{:.0}%", zoom_percent)
+                        } else if zoom_percent >= 0.01 {
+                            format!("{:.2}%", zoom_percent)
+                        } else {
+                            format!("{:.5}%", zoom_percent)
+                        };
                         gpui::div()
                             .text_color(theme.text_dim)
                             .text_size(px(12.0))
-                            .child(format!("Zoom: {:.0}%", self.viewport.zoom * 100.0)),
-                    )
+                            .child(format!("Zoom: {}", zoom_str))
+                    })
                     .child(
                         gpui::div()
                             .text_color(theme.text_dim)
@@ -353,9 +361,11 @@ impl DemoApp {
                     gpui::ScrollDelta::Pixels(p) => f32::from(p.y),
                     gpui::ScrollDelta::Lines(p) => p.y * 20.0,
                 };
-                let zoom_factor = if amount > 0.0 { 1.05 } else { 0.95 };
-                this.viewport.zoom *= zoom_factor;
-                this.viewport.zoom = this.viewport.zoom.clamp(0.15, 8.0);
+                let zoom_factor = if amount > 0.0 { 1.15 } else { 1.0 / 1.15 };
+                this.viewport.zoom = (this.viewport.zoom * zoom_factor).clamp(
+                    graphene_gpui::render::draw_pipeline::MIN_ZOOM,
+                    graphene_gpui::render::draw_pipeline::MAX_ZOOM,
+                );
                 cx.notify();
             }))
     }

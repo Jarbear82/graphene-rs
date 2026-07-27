@@ -19,7 +19,7 @@ pub mod engine;
 
 pub use basic::{BreadthFirstLayout, CircleLayout, ConcentricLayout, GridLayout, RandomLayout};
 pub use bipartite::BipartiteLayout;
-pub use collision::{CollisionForceDirectedLayout, WeightedForceDirectedLayout};
+pub use collision::{resolve_overlaps, CollisionForceDirectedLayout, WeightedForceDirectedLayout};
 pub use compound::{CompoundLayout, ConcentricHubLayout, RegionalPartitionLayout, star_expand_hypergraph};
 pub use cose::{find_clipping_point, CoseLayout};
 pub use engine::{GraphCommand, GraphEngineHandle, LayoutCommand};

@@ -16,6 +16,18 @@ impl Default for ReingoldTilfordLayout {
     }
 }
 
+impl ReingoldTilfordLayout {
+    pub fn with_sibling_spacing(mut self, spacing: f32) -> Self {
+        self.sibling_spacing = spacing;
+        self
+    }
+
+    pub fn with_level_spacing(mut self, spacing: f32) -> Self {
+        self.level_spacing = spacing;
+        self
+    }
+}
+
 struct TreeNode {
     id: NodeId,
     x: f32,
@@ -133,13 +145,16 @@ impl<S: Copy> Layout<S> for ReingoldTilfordLayout {
             }
         }
 
+        let mut tree_x_offset = 0.0f32;
         for &root in &roots {
             if let Some(&root_tree_idx) = node_to_tree_idx.get(&root) {
                 first_walk(root_tree_idx, 0, &mut nodes, self.sibling_spacing, self.level_spacing);
-                second_walk(root_tree_idx, 0, 0.0, &nodes, state, self.level_spacing);
+                second_walk(root_tree_idx, 0, tree_x_offset, &nodes, state, self.level_spacing);
+                tree_x_offset += self.sibling_spacing * 3.0;
             }
         }
 
+        crate::collision::resolve_overlaps(state, 10.0);
         state.dirty_flags |= graphene_core::DirtyFlags::POSITION_DIRTY;
     }
 }

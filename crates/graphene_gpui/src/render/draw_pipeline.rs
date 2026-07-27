@@ -8,6 +8,9 @@ pub struct Viewport {
     pub bounds: gpui::Bounds<f32>,
 }
 
+pub const MIN_ZOOM: f32 = 0.00001;
+pub const MAX_ZOOM: f32 = 100000.0;
+
 impl Viewport {
     pub fn new(bounds: gpui::Bounds<f32>) -> Self {
         Self {
@@ -74,7 +77,7 @@ impl Viewport {
         if w_canvas > 0.0 && h_canvas > 0.0 {
             let z_x = w_canvas / w_graph;
             let z_y = h_canvas / h_graph;
-            self.zoom = z_x.min(z_y).clamp(0.2, 3.0);
+            self.zoom = z_x.min(z_y).clamp(MIN_ZOOM, MAX_ZOOM);
         } else {
             self.zoom = 1.0;
         }
@@ -314,6 +317,38 @@ mod tests {
         // Far away node (-2000, -2000) should be frustum-culled
         let far_node_pos = Vec2::new(-2000.0, -2000.0);
         assert!(!viewport.is_visible(far_node_pos, node_size));
+    }
+
+    #[test]
+    fn test_viewport_zoom_100_percent_one_to_one_scale() {
+        let bounds = gpui::Bounds {
+            origin: gpui::Point { x: 10.0, y: 20.0 },
+            size: gpui::Size {
+                width: 1000.0,
+                height: 800.0,
+            },
+        };
+        let mut viewport = Viewport::new(bounds);
+        viewport.zoom = 1.0; // 100% Zoom
+
+        let p1_graph = Vec2::new(0.0, 0.0);
+        let p2_graph = Vec2::new(150.0, 75.0);
+        let size_graph = Size2::new(80.0, 40.0);
+
+        let p1_screen = viewport.model_to_screen(p1_graph);
+        let p2_screen = viewport.model_to_screen(p2_graph);
+
+        let dx_screen = p2_screen.x - p1_screen.x;
+        let dy_screen = p2_screen.y - p1_screen.y;
+
+        // At zoom = 1.0 (100%), graph coordinates and UI pixels must have a 1:1 scale ratio
+        assert_eq!(dx_screen, 150.0);
+        assert_eq!(dy_screen, 75.0);
+
+        let screen_w = size_graph.w * viewport.zoom;
+        let screen_h = size_graph.h * viewport.zoom;
+        assert_eq!(screen_w, 80.0);
+        assert_eq!(screen_h, 40.0);
     }
 }
 

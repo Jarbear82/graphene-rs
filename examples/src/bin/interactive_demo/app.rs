@@ -54,6 +54,7 @@ pub struct DemoApp {
     pub fixtures: Vec<GraphFixture<ComputedStyle>>,
     pub selected_fixture_idx: usize,
     pub selected_layout: String,
+    pub expanded_layout: Option<String>,
 
     pub viewport: Viewport,
     pub interaction_state: InteractionState,
@@ -621,6 +622,7 @@ impl DemoApp {
             fixtures,
             selected_fixture_idx: 0,
             selected_layout: "Circle".to_string(),
+            expanded_layout: Some("Circle".to_string()),
             viewport: Viewport::new(gpui::Bounds::default()),
             interaction_state: InteractionState::new(64.0),
             selected_node: None,

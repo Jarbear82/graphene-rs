@@ -45,6 +45,9 @@ pub struct GraphState<S: Copy = ()> {
     pub event_log: VecDeque<GraphEvent<S>>,
     pub string_arena: StringArena,
     pub is_batching: bool,
+    pub is_ui_mode: bool,
+    pub node_labels: DenseStorage<Option<StringId>>,
+    pub cached_node_sizes: DenseStorage<Option<Size2>>,
 }
 
 impl<S: Copy + Default> GraphState<S> {
@@ -73,6 +76,9 @@ impl<S: Copy + Default> GraphState<S> {
             event_log: VecDeque::new(),
             string_arena: StringArena::new(),
             is_batching: false,
+            is_ui_mode: true,
+            node_labels: DenseStorage::new(),
+            cached_node_sizes: DenseStorage::new(),
         }
     }
 
@@ -116,6 +122,8 @@ impl<S: Copy + Default> GraphState<S> {
         self.visuals.selected.insert();
         self.computed_styles.insert(S::default());
         self.visuals.computed_styles.insert(S::default());
+        self.node_labels.insert(None);
+        self.cached_node_sizes.insert(None);
 
         self.push_event(GraphEvent::NodeAdded { id });
         if !self.is_batching {
@@ -234,6 +242,8 @@ impl<S: Copy + Default> GraphState<S> {
         self.visuals.selected.remove(idx);
         self.computed_styles.remove(idx);
         self.visuals.computed_styles.remove(idx);
+        self.node_labels.remove(idx);
+        self.cached_node_sizes.remove(idx);
 
         self.animations.tracks.remove(id);
         self.animation.animations.tracks.remove(id);
@@ -469,6 +479,43 @@ impl<S: Copy + Default> GraphState<S> {
         P::validate::<S>(self, source, target)?;
         Ok(self.add_edge(source, target, data))
     }
+
+    pub fn set_ui_mode(&mut self, is_ui: bool) {
+        self.is_ui_mode = is_ui;
+    }
+
+    pub fn is_ui_mode(&self) -> bool {
+        self.is_ui_mode
+    }
+
+    pub fn set_node_label(&mut self, id: NodeId, label: &str) {
+        let Some(&idx) = self.node_keys.get(id) else { return };
+        let string_id = self.string_arena.intern(label.to_string());
+        self.node_labels.set(idx, Some(string_id));
+        self.cached_node_sizes.set(idx, None);
+        self.dirty_flags |= DirtyFlags::CONTENT_DIRTY | DirtyFlags::SIZE_DIRTY;
+    }
+
+    pub fn get_node_label(&self, id: NodeId) -> Option<&str> {
+        let &idx = self.node_keys.get(id)?;
+        let string_id = (*self.node_labels.get(idx))?;
+        self.string_arena.get(string_id)
+    }
+
+    pub fn update_cached_node_size(&mut self, id: NodeId, measured_size: Size2) {
+        let Some(&idx) = self.node_keys.get(id) else { return };
+        self.cached_node_sizes.set(idx, Some(measured_size));
+        if self.is_ui_mode {
+            self.sizes.set(idx, measured_size);
+            self.visuals.sizes.set(idx, measured_size);
+            self.dirty_flags |= DirtyFlags::POSITION_DIRTY;
+        }
+    }
+
+    pub fn get_cached_node_size(&self, id: NodeId) -> Option<Size2> {
+        let &idx = self.node_keys.get(id)?;
+        *self.cached_node_sizes.get(idx)
+    }
 }
 
 impl<S: Copy + Default> Default for GraphState<S> {
@@ -532,6 +579,34 @@ mod tests {
         assert_eq!(created_nodes.len(), 100);
         assert_eq!(state.topology.node_count(), 100);
         assert!(state.dirty_flags.contains(DirtyFlags::TOPOLOGY_DIRTY));
+    }
+
+    #[test]
+    fn test_ui_mode_and_cached_node_sizes() {
+        let mut state = GraphState::<()>::new();
+        let id = state.add_node(Vec2::new(0.0, 0.0), Size2::new(50.0, 50.0));
+
+        assert!(state.is_ui_mode());
+        state.set_node_label(id, "Test Node Content");
+        assert_eq!(state.get_node_label(id), Some("Test Node Content"));
+        assert!(state.dirty_flags.contains(DirtyFlags::CONTENT_DIRTY));
+        assert!(state.dirty_flags.contains(DirtyFlags::SIZE_DIRTY));
+        assert_eq!(state.get_cached_node_size(id), None);
+
+        // Update cached size measured from UI
+        let measured = Size2::new(140.0, 45.0);
+        state.update_cached_node_size(id, measured);
+        assert_eq!(state.get_cached_node_size(id), Some(measured));
+        let idx = state.node_keys.get(id).copied().unwrap();
+        assert_eq!(*state.sizes.get(idx), measured);
+
+        // In headless mode, updating cache does not overwrite graph layout sizes unless in UI mode
+        state.set_ui_mode(false);
+        assert!(!state.is_ui_mode());
+        let new_measured = Size2::new(200.0, 60.0);
+        state.update_cached_node_size(id, new_measured);
+        assert_eq!(state.get_cached_node_size(id), Some(new_measured));
+        assert_eq!(*state.sizes.get(idx), measured);
     }
 }
 

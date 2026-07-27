@@ -45,6 +45,15 @@ pub struct FCoseLayout {
     pub initial_temp: f32,
     pub cooling_factor: f32,
     pub randomize: bool,
+    pub compound_padding: f32,
+    pub gravity_range: f32,
+    pub gravity_compound: f32,
+    pub gravity_range_compound: f32,
+    pub tile: bool,
+    pub tiling_padding_horizontal: f32,
+    pub tiling_padding_vertical: f32,
+    pub pack_components: bool,
+    pub node_dimensions_include_labels: bool,
 
     pub constraints: FCoseConstraints,
 
@@ -64,6 +73,15 @@ impl Default for FCoseLayout {
             initial_temp: 50.0,
             cooling_factor: 0.95,
             randomize: true,
+            compound_padding: 12.0,
+            gravity_range: 380.0,
+            gravity_compound: 1.0,
+            gravity_range_compound: 1.5,
+            tile: true,
+            tiling_padding_horizontal: 10.0,
+            tiling_padding_vertical: 10.0,
+            pack_components: true,
+            node_dimensions_include_labels: false,
             constraints: FCoseConstraints::default(),
             node_repulsion_fn: None,
             ideal_edge_length_fn: None,
@@ -73,8 +91,108 @@ impl Default for FCoseLayout {
 }
 
 impl FCoseLayout {
+    pub fn with_iterations(mut self, iterations: usize) -> Self {
+        self.iterations = iterations;
+        self
+    }
+
+    pub fn with_ideal_edge_length(mut self, length: f32) -> Self {
+        self.ideal_edge_length = length;
+        self
+    }
+
+    pub fn with_nesting_factor(mut self, factor: f32) -> Self {
+        self.nesting_factor = factor;
+        self
+    }
+
+    pub fn with_gravity(mut self, gravity: f32) -> Self {
+        self.gravity = gravity;
+        self
+    }
+
+    pub fn with_node_repulsion(mut self, repulsion: f32) -> Self {
+        self.node_repulsion = repulsion;
+        self
+    }
+
+    pub fn with_initial_temp(mut self, temp: f32) -> Self {
+        self.initial_temp = temp;
+        self
+    }
+
+    pub fn with_cooling_factor(mut self, factor: f32) -> Self {
+        self.cooling_factor = factor;
+        self
+    }
+
+    pub fn with_randomize(mut self, randomize: bool) -> Self {
+        self.randomize = randomize;
+        self
+    }
+
+    pub fn with_compound_padding(mut self, padding: f32) -> Self {
+        self.compound_padding = padding;
+        self
+    }
+
+    pub fn with_gravity_range(mut self, range: f32) -> Self {
+        self.gravity_range = range;
+        self
+    }
+
+    pub fn with_gravity_compound(mut self, g: f32) -> Self {
+        self.gravity_compound = g;
+        self
+    }
+
+    pub fn with_gravity_range_compound(mut self, r: f32) -> Self {
+        self.gravity_range_compound = r;
+        self
+    }
+
+    pub fn with_tile(mut self, tile: bool) -> Self {
+        self.tile = tile;
+        self
+    }
+
+    pub fn with_tiling_padding_horizontal(mut self, p: f32) -> Self {
+        self.tiling_padding_horizontal = p;
+        self
+    }
+
+    pub fn with_tiling_padding_vertical(mut self, p: f32) -> Self {
+        self.tiling_padding_vertical = p;
+        self
+    }
+
+    pub fn with_pack_components(mut self, pack: bool) -> Self {
+        self.pack_components = pack;
+        self
+    }
+
+    pub fn with_node_dimensions_include_labels(mut self, include: bool) -> Self {
+        self.node_dimensions_include_labels = include;
+        self
+    }
+
     pub fn with_constraints(mut self, constraints: FCoseConstraints) -> Self {
         self.constraints = constraints;
+        self
+    }
+
+    pub fn with_fixed_node_constraint(mut self, constraint: FixedNodeConstraint) -> Self {
+        self.constraints.fixed_nodes.push(constraint);
+        self
+    }
+
+    pub fn with_alignment_constraint(mut self, alignment: AlignmentConstraint) -> Self {
+        self.constraints.alignment = alignment;
+        self
+    }
+
+    pub fn with_relative_placement_constraint(mut self, relative: RelativePlacementConstraint) -> Self {
+        self.constraints.relative_placement.push(relative);
         self
     }
 
@@ -778,9 +896,81 @@ impl<S: Copy + Default> Layout<S> for FCoseLayout {
                 }
             }
             project_constraints(state, &self.constraints);
-            resolve_compound_bounds(state, &HashSet::new(), 12.0);
+            resolve_compound_bounds(state, &HashSet::new(), self.compound_padding);
         }
 
+        crate::collision::resolve_overlaps(state, 10.0);
         state.dirty_flags |= graphene_core::DirtyFlags::POSITION_DIRTY;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_fcose_layout_builder_configuration() {
+        let mut dummy_state = GraphState::<()>::new();
+        let n1 = dummy_state.add_node(Vec2::default(), graphene_core::Size2::default());
+        let n2 = dummy_state.add_node(Vec2::default(), graphene_core::Size2::default());
+
+        let layout = FCoseLayout::default()
+            .with_iterations(300)
+            .with_ideal_edge_length(75.0)
+            .with_nesting_factor(1.5)
+            .with_gravity(2.0)
+            .with_node_repulsion(5000.0)
+            .with_initial_temp(80.0)
+            .with_cooling_factor(0.9)
+            .with_randomize(false)
+            .with_compound_padding(18.0)
+            .with_gravity_range(400.0)
+            .with_gravity_compound(1.2)
+            .with_gravity_range_compound(1.8)
+            .with_tile(false)
+            .with_tiling_padding_horizontal(15.0)
+            .with_tiling_padding_vertical(15.0)
+            .with_pack_components(false)
+            .with_node_dimensions_include_labels(true)
+            .with_fixed_node_constraint(FixedNodeConstraint {
+                node_id: n1,
+                position: Vec2::new(10.0, 20.0),
+            })
+            .with_alignment_constraint(AlignmentConstraint {
+                horizontal: vec![vec![n1, n2]],
+                vertical: vec![],
+            })
+            .with_relative_placement_constraint(RelativePlacementConstraint::LeftRight {
+                left: n1,
+                right: n2,
+                gap: 30.0,
+            })
+            .with_node_repulsion_fn(|_id| 6000.0)
+            .with_ideal_edge_length_fn(|_id| 80.0)
+            .with_edge_elasticity_fn(|_id| 1.5);
+
+        assert_eq!(layout.iterations, 300);
+        assert_eq!(layout.ideal_edge_length, 75.0);
+        assert_eq!(layout.nesting_factor, 1.5);
+        assert_eq!(layout.gravity, 2.0);
+        assert_eq!(layout.node_repulsion, 5000.0);
+        assert_eq!(layout.initial_temp, 80.0);
+        assert_eq!(layout.cooling_factor, 0.9);
+        assert_eq!(layout.randomize, false);
+        assert_eq!(layout.compound_padding, 18.0);
+        assert_eq!(layout.gravity_range, 400.0);
+        assert_eq!(layout.gravity_compound, 1.2);
+        assert_eq!(layout.gravity_range_compound, 1.8);
+        assert_eq!(layout.tile, false);
+        assert_eq!(layout.tiling_padding_horizontal, 15.0);
+        assert_eq!(layout.tiling_padding_vertical, 15.0);
+        assert_eq!(layout.pack_components, false);
+        assert_eq!(layout.node_dimensions_include_labels, true);
+        assert_eq!(layout.constraints.fixed_nodes.len(), 1);
+        assert_eq!(layout.constraints.alignment.horizontal.len(), 1);
+        assert_eq!(layout.constraints.relative_placement.len(), 1);
+        assert!(layout.node_repulsion_fn.is_some());
+        assert!(layout.ideal_edge_length_fn.is_some());
+        assert!(layout.edge_elasticity_fn.is_some());
     }
 }
