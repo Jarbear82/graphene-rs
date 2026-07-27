@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 graphene_core = { path = "../graphene_core" }
+graphene_fixtures = { path = "../graphene_fixtures" }
 graphene_style = { path = "../graphene_style" }
 
 

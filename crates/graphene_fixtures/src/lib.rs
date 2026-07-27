@@ -2,7 +2,7 @@ pub mod advanced;
 pub mod basic;
 pub mod demos;
 
-use crate::{EdgeData, GraphState, NodeId, Size2, Vec2};
+use graphene_core::{EdgeData, GraphState, NodeId, Size2, Vec2};
 use std::collections::HashMap;
 
 #[derive(Clone, Debug)]
@@ -55,7 +55,9 @@ pub(crate) fn add_dir_to_fixture<S: Copy + Default>(
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_else(|| "Root".to_string());
 
-    let dir_node = f.state.add_node(Vec2::new(0.0, 0.0), Size2::new(50.0, 30.0));
+    let dir_node = f
+        .state
+        .add_node(Vec2::new(0.0, 0.0), Size2::new(50.0, 30.0));
     f.node_labels.insert(dir_node, dir_name);
 
     if let Some(pid) = parent_id {
@@ -81,7 +83,9 @@ pub(crate) fn add_dir_to_fixture<S: Copy + Default>(
                     add_dir_to_fixture(f, &path, Some(dir_node), depth_limit - 1);
                 }
             } else {
-                let file_node = f.state.add_node(Vec2::new(0.0, 0.0), Size2::new(40.0, 30.0));
+                let file_node = f
+                    .state
+                    .add_node(Vec2::new(0.0, 0.0), Size2::new(40.0, 30.0));
                 f.node_labels.insert(file_node, name);
                 f.state.reparent_node(file_node, Some(dir_node));
                 f.state.add_edge(dir_node, file_node, EdgeData::default());
@@ -97,4 +101,3 @@ pub fn get_all_fixtures<S: Copy + Default>() -> Vec<GraphFixture<S>> {
     demos::add_cytoscape_demos(&mut fixtures);
     fixtures
 }
-

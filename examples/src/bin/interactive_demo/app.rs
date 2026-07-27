@@ -2,10 +2,8 @@ use crate::theme::Theme;
 use gpui::{AppContext, Context, Entity, EntityInputHandler, Window};
 use gpui_component::input::{InputEvent, InputState};
 use graphene_analysis::GraphAnalysisReport;
-use graphene_core::{
-    fixtures::{get_all_fixtures, GraphFixture},
-    EdgeData, GraphState, NodeId, Size2, UndoRedoManager, Vec2,
-};
+use graphene_core::{EdgeData, GraphState, NodeId, Size2, UndoRedoManager, Vec2};
+use graphene_fixtures::{get_all_fixtures, GraphFixture};
 use graphene_gpui::{
     interaction::state::InteractionState, render::draw_pipeline::Viewport, CanvasConfig,
 };

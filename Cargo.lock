@@ -2506,9 +2506,24 @@ dependencies = [
  "graphene_algorithms",
  "graphene_analysis",
  "graphene_core",
+ "graphene_fixtures",
  "graphene_gpui",
  "graphene_layout",
  "graphene_style",
+]
+
+[[package]]
+name = "graphene_fixtures"
+version = "0.1.0"
+dependencies = [
+ "bitflags 2.13.1",
+ "bitvec",
+ "graphene_algorithms",
+ "graphene_core",
+ "serde",
+ "serde_json",
+ "slotmap",
+ "smallvec",
 ]
 
 [[package]]
@@ -2528,6 +2543,7 @@ version = "0.1.0"
 dependencies = [
  "graphene_algorithms",
  "graphene_core",
+ "graphene_fixtures",
  "graphene_style",
 ]
 

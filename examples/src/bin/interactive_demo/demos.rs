@@ -1,5 +1,5 @@
-pub use graphene_core::fixtures::demos::*;
-use graphene_core::fixtures::GraphFixture;
+pub use graphene_fixtures::demos::*;
+use graphene_fixtures::GraphFixture;
 use graphene_style::ComputedStyle;
 
 /// Load all converted Cytoscape Rust demo fixtures for the interactive application.

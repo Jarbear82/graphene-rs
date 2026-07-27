@@ -1,11 +1,10 @@
-use graphene_core::fixtures::get_all_fixtures;
 use graphene_core::{GraphState, Vec2};
+use graphene_fixtures::get_all_fixtures;
 use graphene_layout::{
     compute_multigraph_bezier_routing, star_expand_hypergraph, BipartiteLayout, CircleLayout,
     CollisionForceDirectedLayout, CompoundLayout, ConcentricHubLayout, DisconnectedPacker,
-    ForceDirectedLayout, GridSortedLayout, KamadaKawaiLayout, Layout, MdsLayout,
+    FCoseLayout, ForceDirectedLayout, GridSortedLayout, KamadaKawaiLayout, Layout, MdsLayout,
     RegionalPartitionLayout, ReingoldTilfordLayout, SugiyamaLayout, WeightedForceDirectedLayout,
-    FCoseLayout,
 };
 use std::collections::HashMap;
 
@@ -409,8 +408,14 @@ fn test_fcose_layout_and_file_tree_preset() {
         .find(|f| f.name.contains("Workspace File Tree"))
         .expect("Workspace File Tree preset should exist");
 
-    assert!(f_tree.state.node_index_to_id.len() > 0, "File tree should contain nodes");
-    assert!(f_tree.state.edges.len() > 0, "File tree should contain edges");
+    assert!(
+        f_tree.state.node_index_to_id.len() > 0,
+        "File tree should contain nodes"
+    );
+    assert!(
+        f_tree.state.edges.len() > 0,
+        "File tree should contain edges"
+    );
 
     // 2. Verify fCoSE layout computes successfully on the file tree graph
     let mut f_layout = f_tree.clone();
@@ -459,8 +464,14 @@ fn test_compound_flattening_on_circle_layout() {
 
         if is_parent {
             let size = *f_flat.state.sizes.get(idx);
-            assert!(size.w > 0.0, "Compound parent width should be greater than 0");
-            assert!(size.h > 0.0, "Compound parent height should be greater than 0");
+            assert!(
+                size.w > 0.0,
+                "Compound parent width should be greater than 0"
+            );
+            assert!(
+                size.h > 0.0,
+                "Compound parent height should be greater than 0"
+            );
         }
     }
 }
@@ -498,15 +509,19 @@ fn test_collapsed_compound_parent_filtering() {
     // Verify that the collapsed parent is sized correctly as a standard node
     let root_idx = f_collapsed.state.node_keys[root_id];
     let size = *f_collapsed.state.sizes.get(root_idx);
-    assert_eq!(size.w, f_tree.state.sizes.get(root_idx).w, "Collapsed parent size should match its initial standard size, not enclose children");
+    assert_eq!(
+        size.w,
+        f_tree.state.sizes.get(root_idx).w,
+        "Collapsed parent size should match its initial standard size, not enclose children"
+    );
 }
 
 // 20. FCOSE CONSTRAINTS & CALLBACKS INTEGRATION TESTS
 #[test]
 fn test_fcose_constraints_and_callbacks() {
-    use graphene_core::fixtures::get_all_fixtures;
+    use graphene_fixtures::get_all_fixtures;
     use graphene_layout::{
-        FixedNodeConstraint, AlignmentConstraint, RelativePlacementConstraint, FCoseConstraints,
+        AlignmentConstraint, FCoseConstraints, FixedNodeConstraint, RelativePlacementConstraint,
     };
 
     let fixtures = get_all_fixtures::<()>();
@@ -553,9 +568,7 @@ fn test_fcose_constraints_and_callbacks() {
     // Per-element callbacks
     let mut fcose = FCoseLayout::default()
         .with_constraints(constraints)
-        .with_node_repulsion_fn(move |id| {
-            if id == id_a { 10000.0 } else { 4500.0 }
-        })
+        .with_node_repulsion_fn(move |id| if id == id_a { 10000.0 } else { 4500.0 })
         .with_ideal_edge_length_fn(|_edge| 60.0)
         .with_edge_elasticity_fn(|_edge| 20.0);
 
@@ -574,10 +587,20 @@ fn test_fcose_constraints_and_callbacks() {
     let idx_c = state.node_keys[id_c];
     let pos_b = *state.positions.get(idx_b);
     let pos_c = *state.positions.get(idx_c);
-    assert!((pos_b.x - pos_c.x).abs() < 1e-3, "B and C should have the same X coordinate, got {} and {}", pos_b.x, pos_c.x);
+    assert!(
+        (pos_b.x - pos_c.x).abs() < 1e-3,
+        "B and C should have the same X coordinate, got {} and {}",
+        pos_b.x,
+        pos_c.x
+    );
 
     // 3. Verify relative placement constraint (B is to the left of A by at least 100)
-    assert!(pos_b.x <= pos_a.x - 100.0 + 1e-3, "B.x ({}) should be to the left of A.x ({}) by at least 100", pos_b.x, pos_a.x);
+    assert!(
+        pos_b.x <= pos_a.x - 100.0 + 1e-3,
+        "B.x ({}) should be to the left of A.x ({}) by at least 100",
+        pos_b.x,
+        pos_a.x
+    );
 }
 
 // Helper to assert all child nodes are physically located within their parent bounding boxes
@@ -586,7 +609,9 @@ fn assert_containment<S: Copy>(state: &GraphState<S>) {
     for idx in 0..n {
         let child_id = state.node_index_to_id[idx];
         if let Some(parent_id) = *state.hierarchy.parent.get(idx) {
-            let Some(&p_idx) = state.node_keys.get(parent_id) else { continue };
+            let Some(&p_idx) = state.node_keys.get(parent_id) else {
+                continue;
+            };
             let child_pos = *state.positions.get(idx);
             let child_size = *state.sizes.get(idx);
             let parent_pos = *state.positions.get(p_idx);
@@ -602,22 +627,42 @@ fn assert_containment<S: Copy>(state: &GraphState<S>) {
             assert!(
                 child_pos.x - half_cw >= parent_pos.x - half_pw - eps,
                 "Child node {:?} (x: {}, w: {}) extends left of parent {:?} (x: {}, w: {})",
-                child_id, child_pos.x, child_size.w, parent_id, parent_pos.x, parent_size.w
+                child_id,
+                child_pos.x,
+                child_size.w,
+                parent_id,
+                parent_pos.x,
+                parent_size.w
             );
             assert!(
                 child_pos.x + half_cw <= parent_pos.x + half_pw + eps,
                 "Child node {:?} (x: {}, w: {}) extends right of parent {:?} (x: {}, w: {})",
-                child_id, child_pos.x, child_size.w, parent_id, parent_pos.x, parent_size.w
+                child_id,
+                child_pos.x,
+                child_size.w,
+                parent_id,
+                parent_pos.x,
+                parent_size.w
             );
             assert!(
                 child_pos.y - half_ch >= parent_pos.y - half_ph - eps,
                 "Child node {:?} (y: {}, h: {}) extends top of parent {:?} (y: {}, h: {})",
-                child_id, child_pos.y, child_size.h, parent_id, parent_pos.y, parent_size.h
+                child_id,
+                child_pos.y,
+                child_size.h,
+                parent_id,
+                parent_pos.y,
+                parent_size.h
             );
             assert!(
                 child_pos.y + half_ch <= parent_pos.y + half_ph + eps,
                 "Child node {:?} (y: {}, h: {}) extends bottom of parent {:?} (y: {}, h: {})",
-                child_id, child_pos.y, child_size.h, parent_id, parent_pos.y, parent_size.h
+                child_id,
+                child_pos.y,
+                child_size.h,
+                parent_id,
+                parent_pos.y,
+                parent_size.h
             );
         }
     }
@@ -649,7 +694,7 @@ fn test_fcose_containment_after_physics_simulation() {
         .expect("Workspace File Tree preset should exist");
 
     let mut state = f_tree.state.clone();
-    
+
     // 1. Initial layout
     let mut fcose = FCoseLayout::default();
     fcose.compute(&mut state);
@@ -670,26 +715,27 @@ fn test_fcose_containment_after_physics_simulation() {
         }
     }
 
-    let get_leaf_descendants = |node_idx: usize, h_state: &GraphState<()>, is_p: &[bool]| -> Vec<usize> {
-        let mut leaves = Vec::new();
-        let mut stack = vec![node_idx];
-        while let Some(curr) = stack.pop() {
-            if !is_p[curr] {
-                leaves.push(curr);
-            } else {
-                let mut next_child = *h_state.hierarchy.first_child.get(curr);
-                while let Some(child_id) = next_child {
-                    if let Some(&child_idx) = h_state.node_keys.get(child_id) {
-                        stack.push(child_idx);
-                        next_child = *h_state.hierarchy.next_sibling.get(child_idx);
-                    } else {
-                        break;
+    let get_leaf_descendants =
+        |node_idx: usize, h_state: &GraphState<()>, is_p: &[bool]| -> Vec<usize> {
+            let mut leaves = Vec::new();
+            let mut stack = vec![node_idx];
+            while let Some(curr) = stack.pop() {
+                if !is_p[curr] {
+                    leaves.push(curr);
+                } else {
+                    let mut next_child = *h_state.hierarchy.first_child.get(curr);
+                    while let Some(child_id) = next_child {
+                        if let Some(&child_idx) = h_state.node_keys.get(child_id) {
+                            stack.push(child_idx);
+                            next_child = *h_state.hierarchy.next_sibling.get(child_idx);
+                        } else {
+                            break;
+                        }
                     }
                 }
             }
-        }
-        leaves
-    };
+            leaves
+        };
 
     let is_ancestor = |mut child_idx: usize, parent_idx: usize, h_state: &GraphState<()>| -> bool {
         let parent_id = h_state.node_index_to_id[parent_idx];
@@ -726,7 +772,9 @@ fn test_fcose_containment_after_physics_simulation() {
         for i in 0..edges_count {
             let src = *state.edge_sources.get(i);
             let tgt = *state.edge_targets.get(i);
-            if let (Some(&src_idx), Some(&tgt_idx)) = (state.node_keys.get(src), state.node_keys.get(tgt)) {
+            if let (Some(&src_idx), Some(&tgt_idx)) =
+                (state.node_keys.get(src), state.node_keys.get(tgt))
+            {
                 if src_idx != tgt_idx {
                     let pos_src = *state.positions.get(src_idx);
                     let pos_tgt = *state.positions.get(tgt_idx);
@@ -791,20 +839,22 @@ fn test_fcose_containment_after_physics_simulation() {
                             push_y = sign_y * overlap_y * 0.5;
                         }
 
-                        let apply_push = |node_idx: usize, push_x: f32, push_y: f32, s: &mut GraphState<()>| {
-                            if !is_parent[node_idx] {
-                                let p = s.positions.get_mut(node_idx);
-                                p.x += push_x;
-                                p.y += push_y;
-                            } else {
-                                let leaf_descendants = get_leaf_descendants(node_idx, s, &is_parent);
-                                for &leaf_idx in &leaf_descendants {
-                                    let p = s.positions.get_mut(leaf_idx);
+                        let apply_push =
+                            |node_idx: usize, push_x: f32, push_y: f32, s: &mut GraphState<()>| {
+                                if !is_parent[node_idx] {
+                                    let p = s.positions.get_mut(node_idx);
                                     p.x += push_x;
                                     p.y += push_y;
+                                } else {
+                                    let leaf_descendants =
+                                        get_leaf_descendants(node_idx, s, &is_parent);
+                                    for &leaf_idx in &leaf_descendants {
+                                        let p = s.positions.get_mut(leaf_idx);
+                                        p.x += push_x;
+                                        p.y += push_y;
+                                    }
                                 }
-                            }
-                        };
+                            };
 
                         apply_push(i, -push_x, -push_y, &mut state);
                         apply_push(j, push_x, push_y, &mut state);
@@ -814,7 +864,11 @@ fn test_fcose_containment_after_physics_simulation() {
         }
 
         // Dynamically resolve compound bounds
-        graphene_layout::resolve_compound_bounds(&mut state, &std::collections::HashSet::new(), 20.0);
+        graphene_layout::resolve_compound_bounds(
+            &mut state,
+            &std::collections::HashSet::new(),
+            20.0,
+        );
 
         temp *= 0.95;
     }
@@ -832,7 +886,7 @@ fn test_fcose_containment_after_drag() {
         .expect("Workspace File Tree preset should exist");
 
     let mut state = f_tree.state.clone();
-    
+
     // 1. Initial layout
     let mut fcose = FCoseLayout::default();
     fcose.compute(&mut state);
@@ -922,7 +976,7 @@ fn test_fcose_containment_collapsed_parents() {
         .expect("Workspace File Tree preset should exist");
 
     let mut state = f_tree.state.clone();
-    
+
     // Choose one parent node to collapse
     let n = state.node_index_to_id.len();
     let mut parent_id_to_collapse = None;
@@ -943,7 +997,7 @@ fn test_fcose_containment_collapsed_parents() {
     graphene_layout::compute_flat_layout(&mut fcose, &mut state, &collapsed);
 
     assert_valid_positions(&state);
-    
+
     // Verify that all non-collapsed parents contain their children.
     for idx in 0..n {
         let child_id = state.node_index_to_id[idx];
@@ -952,7 +1006,9 @@ fn test_fcose_containment_collapsed_parents() {
                 // If parent is collapsed, skip containment assertion since child is hidden
                 continue;
             }
-            let Some(&p_idx) = state.node_keys.get(parent_id) else { continue };
+            let Some(&p_idx) = state.node_keys.get(parent_id) else {
+                continue;
+            };
             let child_pos = *state.positions.get(idx);
             let child_size = *state.sizes.get(idx);
             let parent_pos = *state.positions.get(p_idx);
@@ -966,22 +1022,28 @@ fn test_fcose_containment_collapsed_parents() {
             let eps = 0.05;
             assert!(
                 child_pos.x - half_cw >= parent_pos.x - half_pw - eps,
-                "Child node {:?} extends left of parent {:?}", child_id, parent_id
+                "Child node {:?} extends left of parent {:?}",
+                child_id,
+                parent_id
             );
             assert!(
                 child_pos.x + half_cw <= parent_pos.x + half_pw + eps,
-                "Child node {:?} extends right of parent {:?}", child_id, parent_id
+                "Child node {:?} extends right of parent {:?}",
+                child_id,
+                parent_id
             );
             assert!(
                 child_pos.y - half_ch >= parent_pos.y - half_ph - eps,
-                "Child node {:?} extends top of parent {:?}", child_id, parent_id
+                "Child node {:?} extends top of parent {:?}",
+                child_id,
+                parent_id
             );
             assert!(
                 child_pos.y + half_ch <= parent_pos.y + half_ph + eps,
-                "Child node {:?} extends bottom of parent {:?}", child_id, parent_id
+                "Child node {:?} extends bottom of parent {:?}",
+                child_id,
+                parent_id
             );
         }
     }
 }
-
-
