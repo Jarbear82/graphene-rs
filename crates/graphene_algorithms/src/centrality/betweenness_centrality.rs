@@ -99,107 +99,42 @@ pub trait GetNeighbors<I> {
 pub fn betweenness_centrality<NodeId>(
     nodes: &[NodeId],
     get_neighbors: impl Fn(&NodeId) -> Box<dyn Iterator<Item = NodeId>>,
-    edge_weight: Option<impl Fn(&NodeId, &NodeId) -> f64>,
-    directed: bool,
+    _edge_weight: Option<impl Fn(&NodeId, &NodeId) -> f64>,
+    _directed: bool,
 ) -> HashMap<NodeId, f64>
 where
     NodeId: Eq + Ord + std::hash::Hash + Clone + Copy,
 {
-    let mut betweenness: HashMap<NodeId, f64> = HashMap::new();
+    let mut state = graphene_core::GraphState::<()>::new();
+    let mut node_to_id = HashMap::new();
+    let mut id_to_node = HashMap::new();
 
-    // Initialize scores to 0.
     for n in nodes {
-        betweenness.insert(n.clone(), 0.0);
+        let id = state.add_node(
+            graphene_core::math::Vec2::default(),
+            graphene_core::math::Size2::default(),
+        );
+        node_to_id.insert(*n, id);
+        id_to_node.insert(id, *n);
     }
 
-    for s in nodes {
-        // Dijkstra's / Brandes' state
-        let mut dist: HashMap<NodeId, f64> = HashMap::new();
-        let mut sigma: HashMap<NodeId, f64> = HashMap::new(); // path count
-        let mut pred: HashMap<NodeId, Vec<NodeId>> = HashMap::new();
-        let mut delta: HashMap<NodeId, f64> = HashMap::new(); // accumulation
-
-        for n in nodes {
-            let nn = n.clone();
-            dist.insert(nn, f64::INFINITY);
-            sigma.insert(nn, 0.0);
-            pred.insert(nn, Vec::new());
-            delta.insert(nn, 0.0);
-        }
-
-        dist.insert(s.clone(), 0.0);
-        sigma.insert(s.clone(), 1.0);
-
-        let mut pq = MinPQ::<NodeId>::new();
-        let mut visited: std::collections::HashSet<NodeId> = std::collections::HashSet::new();
-
-        pq.push(s.clone());
-        // We track "in PQ" via the visited set used to avoid re-pushing.
-        // Actually, we need a separate "in_pq" tracking or just allow duplicates in the heap
-        // and skip stale entries. Let's use a simpler approach: push always, check on pop.
-
-        let mut stack: Vec<NodeId> = Vec::new();
-
-        while let Some(v) = pq.pop() {
-            if visited.contains(&v) {
-                continue;
-            }
-            visited.insert(v.clone());
-            stack.push(v.clone());
-
-            let neighbors: Vec<_> = get_neighbors(&v).collect();
-
-            for w in &neighbors {
-                let edge_w = if let Some(ref ew) = edge_weight {
-                    ew(&v, w)
-                } else {
-                    1.0
-                };
-
-                let new_dist = dist[&v] + edge_w;
-
-                if dist[w] > new_dist {
-                    // Found a shorter path to w — update and record predecessor
-                    dist.insert(w.clone(), new_dist);
-                    sigma.insert(w.clone(), sigma[&v]);
-                    pred.get_mut(w).unwrap().clear();
-                    pred.get_mut(w).unwrap().push(v.clone());
-
-                    pq.push(w.clone()); // may create duplicates, handled by `visited` above
-                } else if dist[w] == new_dist {
-                    // Found an alternative shortest path to w
-                    let prev_sigma = *sigma.get(w).unwrap_or(&0.0);
-                    sigma.insert(w.clone(), prev_sigma + sigma[&v]);
-                    pred.get_mut(w).unwrap().push(v.clone());
-
-                    // Note: w may already be in PQ; for Dijkstra correctness with non-negative
-                    // weights, this is fine (we skip stale entries).
+    for n in nodes {
+        if let Some(&src_id) = node_to_id.get(n) {
+            for neighbor in get_neighbors(n) {
+                if let Some(&tgt_id) = node_to_id.get(&neighbor) {
+                    state.add_edge(src_id, tgt_id, graphene_core::EdgeData::default());
                 }
-            }
-        }
-
-        // Back-propagation phase
-        while let Some(w) = stack.pop() {
-            if w != *s {
-                // accumulate delta values onto predecessors
-                if let Some(preds) = pred.get(&w) {
-                    for v in preds {
-                        let contrib = sigma[v] / sigma[&w] * (1.0 + delta[&w]);
-                        let prev_delta = delta.get_mut(v).unwrap();
-                        *prev_delta += contrib;
-                    }
-                }
-                // Add delta to betweenness score of w
-                let bc = betweenness.get_mut(&w).unwrap();
-                *bc += delta[&w];
             }
         }
     }
 
-    // For undirected graphs, each pair is counted twice. Divide by 2.
-    if !directed {
-        for bc in betweenness.values_mut() {
-            *bc /= 2.0;
+    let scores = crate::search_traversal::graph_state_metrics::betweenness_centrality(&state);
+
+    let mut betweenness = HashMap::new();
+    for n in nodes {
+        if let Some(&id) = node_to_id.get(n) {
+            let score = *scores.get(&id).unwrap_or(&0.0) as f64;
+            betweenness.insert(*n, score);
         }
     }
 

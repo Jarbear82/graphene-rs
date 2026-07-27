@@ -32,112 +32,41 @@ where
     /// - `cut`: the subgraph remaining after removing every node/edge that
     ///   participates in a cycle (i.e. the acyclic "remainder")
     pub fn tarjan_strongly_connected_components(&self) -> TarjanResult<NodeId, EdgeId> {
-        let adj = self.build_adjacency_lists();
+        let mut state = graphene_core::GraphState::<()>::new();
+        let mut node_to_id = HashMap::new();
+        let mut id_to_node = HashMap::new();
 
-        // State carried across DFS iterations
-        let mut index_counter: usize = 0;
-        let mut index_map: HashMap<NodeId, usize> = HashMap::new();
-        let mut lowlink_map: HashMap<NodeId, usize> = HashMap::new();
-        let mut on_stack_set: HashSet<NodeId> = HashSet::new();
-        let mut stack: Vec<NodeId> = Vec::new();
-        let mut scc_components: Vec<Vec<NodeId>> = Vec::new();
-
-        // DFS stack frame
-        #[derive(Clone)]
-        enum Frame<N> {
-            Entry {
-                node: N,
-            },
-            NeighborIter {
-                node: N,
-                neighbors: Vec<N>,
-                neighbor_idx: usize,
-            },
+        for node in self.nodes.keys() {
+            let id = state.add_node(
+                graphene_core::math::Vec2::default(),
+                graphene_core::math::Size2::default(),
+            );
+            node_to_id.insert(node.clone(), id);
+            id_to_node.insert(id, node.clone());
         }
 
-        for start in &self.nodes.keys().collect::<Vec<_>>() {
-            if index_map.contains_key(start) {
-                continue; // already visited
-            }
-
-            let mut dfs_stack = VecDeque::new();
-            dfs_stack.push_back(Frame::Entry {
-                node: (*start).clone(),
-            });
-
-            while let Some(frame) = dfs_stack.pop_front() {
-                match frame {
-                    Frame::Entry { node: u_id } => {
-                        let idx = index_counter;
-                        index_counter += 1;
-
-                        index_map.insert(u_id.clone(), idx);
-                        lowlink_map.insert(u_id.clone(), idx);
-
-                        on_stack_set.insert(u_id.clone());
-                        stack.push(u_id.clone());
-
-                        let mut neighbors_iter = adj.get(&u_id).cloned().unwrap_or_default();
-
-                        // Re-push entry so we can resume after first neighbor finishes
-                        dfs_stack.push_front(Frame::NeighborIter {
-                            node: u_id,
-                            neighbors: neighbors_iter.into_iter().collect(),
-                            neighbor_idx: 0,
-                        });
-                    }
-
-                    Frame::NeighborIter {
-                        node: u_id,
-                        mut neighbors,
-                        neighbor_idx,
-                    } => {
-                        let lowlink_u = lowlink_map[&u_id];
-
-                        // Process remaining neighbors starting from the last saved index
-                        let start_idx = neighbor_idx.min(neighbors.len());
-                        for (i, v_id) in neighbors.drain(start_idx..).enumerate() {
-                            let global_i = i + start_idx;
-
-                            if !index_map.contains_key(&v_id) {
-                                // Tree edge — recurse (pushed back onto the front so it runs before remaining neighbors)
-                                lowlink_map.insert(u_id.clone(), lowlink_u); // save current lowlink
-                                dfs_stack.push_front(Frame::Entry { node: v_id.clone() });
-                                break; // restart outer while with the recursive call on top
-                            } else if on_stack_set.contains(&v_id) {
-                                // Back edge — update lowlink
-                                let ll_v = *lowlink_map.get(&v_id).unwrap();
-                                lowlink_map.insert(u_id.clone(), lowlink_u.min(ll_v));
-                            }
-                        }
-
-                        if neighbors.len() == 0 {
-                            // All neighbors processed — check if root of an SCC
-                            if index_map[&u_id] == *lowlink_map.get(&u_id).unwrap() {
-                                let mut component_nodes: Vec<NodeId> = Vec::new();
-                                loop {
-                                    let top_node = stack.pop().unwrap();
-                                    on_stack_set.remove(&top_node);
-                                    lowlink_map.insert(top_node.clone(), index_counter);
-                                    component_nodes.push(top_node.clone());
-                                    if top_node == u_id {
-                                        break;
-                                    }
-                                }
-                                scc_components.push(component_nodes);
-                            }
-                        } else {
-                            // Resume after children finish — save progress back on stack
-                            let n_len = neighbors.len();
-                            dfs_stack.push_front(Frame::NeighborIter {
-                                node: u_id,
-                                neighbors,
-                                neighbor_idx: start_idx
-                                    .min(neighbor_idx.max(start_idx) + n_len),
-                            });
-                        }
+        for (src, neighbors) in &self.build_adjacency_lists() {
+            if let Some(&src_id) = node_to_id.get(src) {
+                for tgt in neighbors {
+                    if let Some(&tgt_id) = node_to_id.get(tgt) {
+                        state.add_edge(src_id, tgt_id, graphene_core::EdgeData::default());
                     }
                 }
+            }
+        }
+
+        let raw_components = crate::pathfinding::graph_state_pathfinding::tarjan_scc(&state);
+
+        let mut scc_components = Vec::new();
+        for comp in raw_components {
+            let mut component = Vec::new();
+            for id in comp {
+                if let Some(node) = id_to_node.get(&id) {
+                    component.push(node.clone());
+                }
+            }
+            if !component.is_empty() {
+                scc_components.push(component);
             }
         }
 

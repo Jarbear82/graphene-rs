@@ -58,30 +58,46 @@ impl UnionFind {
 /// `edge_weight` is a closure that extracts the weight from an edge.
 /// Defaults to a uniform weight of 1.0 if `None`.
 pub fn kruskal(
-    mut edges: Vec<Edge>,
+    edges: Vec<Edge>,
     num_nodes: usize,
     edge_weight: Option<fn(&Edge) -> f64>,
 ) -> Vec<Edge> {
     let weight_fn = edge_weight.unwrap_or(|_| 1.0);
+    let mut state = graphene_core::GraphState::<()>::new();
+    let mut node_ids = Vec::with_capacity(num_nodes);
 
-    // Sort edges by weight in non-decreasing order (equivalent to JS `S = edges.sort(...)`)
-    edges.sort_by(|a, b| {
-        weight_fn(a)
-            .partial_cmp(&weight_fn(b))
-            .unwrap_or(Ordering::Equal)
+    for _ in 0..num_nodes {
+        let id = state.add_node(
+            graphene_core::math::Vec2::default(),
+            graphene_core::math::Size2::default(),
+        );
+        node_ids.push(id);
+    }
+
+    let mut edge_map = std::collections::HashMap::new();
+    for edge in &edges {
+        if edge.source < num_nodes && edge.target < num_nodes {
+            let e_id = state.add_edge(
+                node_ids[edge.source],
+                node_ids[edge.target],
+                graphene_core::EdgeData::default(),
+            );
+            edge_map.insert(e_id, edge.clone());
+        }
+    }
+
+    let mst_edge_ids = crate::pathfinding::graph_state_pathfinding::kruskal(&state, |e| {
+        if let Some(edge) = edge_map.get(&e) {
+            weight_fn(edge) as f32
+        } else {
+            1.0
+        }
     });
 
-    // Initialize one set per node (equivalent to JS forest initialization loop)
-    let mut uf = UnionFind::new(num_nodes);
-    let mut mst_edges: Vec<Edge> = Vec::with_capacity(num_nodes.saturating_sub(1));
-
-    for edge in edges {
-        let root_u = uf.find(edge.source);
-        let root_v = uf.find(edge.target);
-
-        // If nodes are in different sets, add edge to MST and merge sets (equivalent to JS `if setUIndex !== setVIndex`)
-        if uf.union(root_u, root_v) {
-            mst_edges.push(edge);
+    let mut mst_edges = Vec::new();
+    for e_id in mst_edge_ids {
+        if let Some(edge) = edge_map.get(&e_id) {
+            mst_edges.push(edge.clone());
         }
     }
 

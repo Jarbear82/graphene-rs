@@ -1,4 +1,4 @@
-use crate::traits::Layout;
+use crate::traits::{get_nesting_depth, Layout};
 use graphene_core::{math::Vec2, GraphState, NodeId};
 
 pub struct CoseLayout {
@@ -111,43 +111,7 @@ pub fn find_clipping_point(pos: Vec2, size: graphene_core::Size2, dx: f32, dy: f
     pos
 }
 
-fn get_nesting_depth<S: Copy>(state: &GraphState<S>, u: NodeId, v: NodeId) -> usize {
-    let Some(&u_idx) = state.node_keys.get(u) else { return 0 };
-    let Some(&v_idx) = state.node_keys.get(v) else { return 0 };
 
-    let mut u_path = Vec::new();
-    let mut curr_u = *state.hierarchy.parent.get(u_idx);
-    while let Some(parent_id) = curr_u {
-        u_path.push(parent_id);
-        if let Some(&p_idx) = state.node_keys.get(parent_id) {
-            curr_u = *state.hierarchy.parent.get(p_idx);
-        } else {
-            break;
-        }
-    }
-
-    let mut v_path = Vec::new();
-    let mut curr_v = *state.hierarchy.parent.get(v_idx);
-    while let Some(parent_id) = curr_v {
-        v_path.push(parent_id);
-        if let Some(&p_idx) = state.node_keys.get(parent_id) {
-            curr_v = *state.hierarchy.parent.get(p_idx);
-        } else {
-            break;
-        }
-    }
-
-    let u_depth = u_path.len();
-    let v_depth = v_path.len();
-
-    for (i, &p_u) in u_path.iter().enumerate() {
-        if let Some(j) = v_path.iter().position(|&p_v| p_v == p_u) {
-            return i + j;
-        }
-    }
-
-    u_depth + v_depth
-}
 
 impl<S: Copy> Layout<S> for CoseLayout {
     fn compute(&mut self, state: &mut GraphState<S>) {

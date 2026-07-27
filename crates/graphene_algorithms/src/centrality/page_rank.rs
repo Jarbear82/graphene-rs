@@ -111,90 +111,42 @@ impl Graph {
 
     /// Compute PageRank scores for all nodes in the graph.
     pub fn page_rank(&self, config: &PageRankConfig) -> PageRankResult {
-        let n = self.nodes.len();
+        let mut state = graphene_core::GraphState::<()>::new();
+        let mut node_to_id = HashMap::new();
+        for name in &self.nodes {
+            let id = state.add_node(
+                graphene_core::math::Vec2::default(),
+                graphene_core::math::Size2::default(),
+            );
+            node_to_id.insert(name.clone(), id);
+        }
 
-        // Column-major matrix: index = target * n + source
-        let mut matrix: Vec<f64> = vec![0.0; n * n];
-        let mut column_sum: Vec<f64> = vec![0.0; n];
-        let additional_prob = (1.0 - config.damping_factor) / n as f64;
-
-        // Build adjacency matrix from edges
+        let mut edge_weight_map = HashMap::new();
         for edge in &self.edges {
-            let s_idx = self.node_index(&edge.source);
-            let t_idx = self.node_index(&edge.target);
-
-            let Some((s, t)) = s_idx.zip(t_idx) else {
-                continue;
-            };
-
-            if s == t {
-                continue; // skip self-loops
-            }
-
-            let w = config.weight(edge);
-            let idx = t * n + s;
-            matrix[idx] += w;
-            column_sum[s] += w;
-        }
-
-        // Finalize matrix: normalize columns and add teleportation probability
-        let p = 1.0 / n as f64 + additional_prob;
-
-        for j in 0..n {
-            if column_sum[j] == 0.0 {
-                // Dangling node: equal probability to all nodes
-                for i in 0..n {
-                    matrix[i * n + j] = p;
-                }
-            } else {
-                // Normal column: divide by column sum and add teleportation
-                let factor = additional_prob / column_sum[j];
-                for i in 0..n {
-                    matrix[i * n + j] = matrix[i * n + j] * factor + p - additional_prob;
-                }
+            if let (Some(&src), Some(&tgt)) =
+                (node_to_id.get(&edge.source), node_to_id.get(&edge.target))
+            {
+                let e_id = state.add_edge(src, tgt, graphene_core::EdgeData::default());
+                edge_weight_map.insert(e_id, config.weight(edge) as f32);
             }
         }
 
-        // Power iteration to find dominant eigenvector
-        let mut eigenvector: Vec<f64> = vec![1.0 / n as f64; n];
-        let mut temp: Vec<f64> = vec![0.0; n];
-        let mut converged = false;
+        let scores = crate::search_traversal::graph_state_metrics::page_rank(
+            &state,
+            config.damping_factor as f32,
+            config.precision as f32,
+            config.max_iterations,
+            |e| *edge_weight_map.get(&e).unwrap_or(&1.0),
+        );
 
-        for _ in 0..config.max_iterations {
-            // Zero out temp vector
-            for val in temp.iter_mut() {
-                *val = 0.0;
-            }
-
-            // Matrix-vector multiplication: temp[i] = sum_j(matrix[i][j] * eigenvector[j])
-            for i in 0..n {
-                let mut sum = 0.0;
-                for j in 0..n {
-                    sum += matrix[i * n + j] * eigenvector[j];
-                }
-                temp[i] = sum;
-            }
-
-            // Normalize to sum to 1
-            in_place_sum_normalize(&mut temp);
-
-            // Check convergence using squared difference
-            let mut diff_sq = 0.0;
-            for i in 0..n {
-                let delta = eigenvector[i] - temp[i];
-                diff_sq += delta * delta;
-            }
-
-            eigenvector = temp;
-            temp = vec![0.0; n]; // reset temp to avoid reuse
-
-            if diff_sq < config.precision {
-                converged = true;
-                break;
+        let mut eigenvector = vec![0.0; self.nodes.len()];
+        for (i, name) in self.nodes.iter().enumerate() {
+            if let Some(&id) = node_to_id.get(name) {
+                eigenvector[i] = *scores.get(&id).unwrap_or(&0.0) as f64;
             }
         }
 
-        PageRankResult::new(self.nodes.clone(), eigenvector, converged)
+        PageRankResult::new(self.nodes.clone(), eigenvector, true)
     }
 
     fn node_index(&self, id: &str) -> Option<usize> {

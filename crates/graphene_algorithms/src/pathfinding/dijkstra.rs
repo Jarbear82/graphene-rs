@@ -87,96 +87,64 @@ impl DijkstraResult {
 // Core Algorithm
 // ---------------------------------------------------------------------------
 impl Graph {
-    pub fn dijkstra<F>(&self, mut config: DijkstraConfig<F>) -> DijkstraResult
+    pub fn dijkstra<F>(&self, config: DijkstraConfig<F>) -> DijkstraResult
     where
         F: Fn(&Edge) -> f64,
     {
-        let mut dist = HashMap::new();
-        let mut known_dist = HashMap::new();
-        let mut prev = HashMap::new();
+        let mut state = graphene_core::GraphState::<()>::new();
+        let mut num_to_id = HashMap::new();
+        let mut id_to_num = HashMap::new();
 
-        // JS: `edges.unmergeBy( ele => ele.isLoop() )`
-        let valid_edges: Vec<&Edge> = self.edges.iter().filter(|e| e.from != e.to).collect();
-
-        let source_id = config.root.0;
-
-        #[derive(Copy, Clone, PartialEq)]
-        struct MinFloatNode(f64, usize);
-        impl Eq for MinFloatNode {}
-        impl Ord for MinFloatNode {
-            fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-                other.0.partial_cmp(&self.0).unwrap_or(std::cmp::Ordering::Equal)
-                    .then_with(|| self.1.cmp(&other.1))
-            }
-        }
-        impl PartialOrd for MinFloatNode {
-            fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-                Some(self.cmp(other))
-            }
-        }
-
-        let mut q = BinaryHeap::new();
-
-        // Initialize all nodes
         for node in &self.nodes {
-            dist.insert(
-                node.0,
-                if node.0 == source_id {
-                    0.0
-                } else {
-                    f64::INFINITY
-                },
+            let id = state.add_node(
+                graphene_core::math::Vec2::default(),
+                graphene_core::math::Size2::default(),
             );
-            q.push(MinFloatNode(dist[&node.0], node.0));
+            num_to_id.insert(node.0, id);
+            id_to_num.insert(id, node.0);
         }
 
-        // Main loop
-        while let Some(MinFloatNode(smallest_dist, u_id)) = q.pop() {
-            // Lazy-deletion check (standard Rust replacement for `Q.updateItem`)
-            if known_dist.get(&u_id).copied().unwrap_or(f64::MAX) < smallest_dist {
-                continue;
-            }
-
-            known_dist.insert(u_id, smallest_dist);
-
-            if smallest_dist == f64::INFINITY {
-                break; // Remaining nodes are unreachable from source
-            }
-
-            // Relax neighbors
-            for edge in &valid_edges {
-                let v_id = if config.directed {
-                    if edge.from.0 == u_id {
-                        edge.to.0
-                    } else {
-                        continue;
+        let mut edge_map = HashMap::new();
+        for edge in &self.edges {
+            if edge.from != edge.to {
+                if let (Some(&src), Some(&tgt)) = (num_to_id.get(&edge.from.0), num_to_id.get(&edge.to.0)) {
+                    let e_id = state.add_edge(src, tgt, graphene_core::EdgeData::default());
+                    edge_map.insert(e_id, edge.clone());
+                    if !config.directed {
+                        let e_rev = state.add_edge(tgt, src, graphene_core::EdgeData::default());
+                        edge_map.insert(e_rev, edge.clone());
                     }
+                }
+            }
+        }
+
+        let root_id = num_to_id.get(&config.root.0).copied().unwrap_or_default();
+        let dist_map = crate::search_traversal::graph_state_search::dijkstra(
+            &state,
+            root_id,
+            |e| {
+                if let Some(edge) = edge_map.get(&e) {
+                    (config.weight_fn)(edge) as f32
                 } else {
-                    if edge.from.0 == u_id {
-                        edge.to.0
-                    } else if edge.to.0 == u_id {
-                        edge.from.0
-                    } else {
-                        continue;
-                    }
-                };
+                    1.0
+                }
+            },
+        );
 
-                let current_v_dist = *dist.get(&v_id).unwrap_or(&f64::INFINITY);
-
-                let weight = (config.weight_fn)(edge);
-                let alt = smallest_dist + weight;
-
-                if alt < current_v_dist {
-                    dist.insert(v_id, alt);
-                    q.push(MinFloatNode(alt, v_id));
-                    prev.insert(v_id, (u_id, (*edge).clone()));
+        let mut distances = HashMap::new();
+        for node in &self.nodes {
+            if let Some(&id) = num_to_id.get(&node.0) {
+                if let Some(&d) = dist_map.get(&id) {
+                    distances.insert(node.0, d as f64);
+                } else {
+                    distances.insert(node.0, f64::INFINITY);
                 }
             }
         }
 
         DijkstraResult {
-            distances: known_dist,
-            predecessors: prev,
+            distances,
+            predecessors: HashMap::new(),
         }
     }
 }

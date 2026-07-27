@@ -78,71 +78,78 @@ pub fn run_floyd_warshall(
     config: &Config,
 ) -> FloydWarshallResult {
     let n = nodes_count;
+    let mut state = graphene_core::GraphState::<()>::new();
+    let mut node_ids = Vec::with_capacity(n);
 
-    // 1. Initialize distance matrix (flattened 2D array)
-    let mut dist = vec![f64::INFINITY; n * n];
-    for i in 0..n {
-        dist[i * n + i] = 0.0;
+    for _ in 0..n {
+        let id = state.add_node(
+            graphene_core::math::Vec2::default(),
+            graphene_core::math::Size2::default(),
+        );
+        node_ids.push(id);
     }
 
-    // 2. Initialize path reconstruction matrices
     let mut next = vec![None; n * n];
     let mut edge_next = vec![None; n * n];
+    let mut edge_weight_map = std::collections::HashMap::new();
 
-    // 3. Process edges
     for (edge_idx, edge) in edges.iter().enumerate() {
         let s = edge.source;
         let t = edge.target;
-
-        if s == t {
-            continue; // Exclude self-loops
+        if s == t || s >= n || t >= n {
+            continue;
         }
 
         let st = s * n + t;
         let w = (config.weight)(edge);
+        let e_id = state.add_edge(node_ids[s], node_ids[t], graphene_core::EdgeData::default());
+        edge_weight_map.insert(e_id, w as f32);
 
-        // Update direct edge weights if shorter
-        if dist[st] > w {
-            dist[st] = w;
-            next[st] = Some(t);
-            edge_next[st] = Some(edge_idx);
-        }
+        next[st] = Some(t);
+        edge_next[st] = Some(edge_idx);
 
-        // If undirected, process reversed direction
         if !config.directed {
             let ts = t * n + s;
-            if dist[ts] > w {
-                dist[ts] = w;
-                next[ts] = Some(s);
-                edge_next[ts] = Some(edge_idx);
+            let e_rev = state.add_edge(node_ids[t], node_ids[s], graphene_core::EdgeData::default());
+            edge_weight_map.insert(e_rev, w as f32);
+            next[ts] = Some(s);
+            edge_next[ts] = Some(edge_idx);
+        }
+    }
+
+    let raw_dist = crate::pathfinding::graph_state_pathfinding::floyd_warshall(&state, |e| {
+        *edge_weight_map.get(&e).unwrap_or(&1.0)
+    });
+
+    let mut dist = vec![f64::INFINITY; n * n];
+    for i in 0..n {
+        for j in 0..n {
+            if i < raw_dist.len() && j < raw_dist[i].len() {
+                dist[i * n + j] = raw_dist[i][j] as f64;
             }
         }
     }
 
-    // 4. Main Floyd-Warshall loop
+    // Reconstruction matrices update
     for k in 0..n {
         for i in 0..n {
-            let ik = i * n + k;
-            // Optimization: skip if path from i to k is already infinite
-            if dist[ik] == f64::INFINITY {
-                continue;
-            }
-
             for j in 0..n {
-                let ij = i * n + j;
+                let ik = i * n + k;
                 let kj = k * n + j;
-                let new_dist = dist[ik] + dist[kj];
-
-                if new_dist < dist[ij] {
-                    dist[ij] = new_dist;
-                    next[ij] = next[ik]; // Propagate the "next hop" on the shortest path
+                let ij = i * n + j;
+                if dist[ik] != f64::INFINITY && dist[kj] != f64::INFINITY {
+                    let alt = dist[ik] + dist[kj];
+                    if alt < dist[ij] {
+                        dist[ij] = alt;
+                        next[ij] = next[ik];
+                    }
                 }
             }
         }
     }
 
     FloydWarshallResult {
-        nodes_count: n,
+        nodes_count,
         dist,
         next,
         edge_next,

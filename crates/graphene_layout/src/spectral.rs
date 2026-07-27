@@ -69,12 +69,17 @@ impl<S: Copy> Layout<S> for KamadaKawaiLayout {
             }
         }
 
-        let max_finite_dist = d.iter()
+        let max_finite_dist = d
+            .iter()
             .flatten()
             .filter(|&&x| x != f32::INFINITY)
             .copied()
             .fold(0.0f32, |m, x| m.max(x));
-        let disconnect_dist = if max_finite_dist > 0.0 { max_finite_dist * 2.0 } else { 4.0 };
+        let disconnect_dist = if max_finite_dist > 0.0 {
+            max_finite_dist * 2.0
+        } else {
+            4.0
+        };
         for i in 0..n {
             for j in 0..n {
                 if d[i][j] == f32::INFINITY {
@@ -101,7 +106,9 @@ impl<S: Copy> Layout<S> for KamadaKawaiLayout {
             for i in 0..n {
                 let pos_i = *state.positions.get(i);
                 for j in 0..n {
-                    if i == j { continue; }
+                    if i == j {
+                        continue;
+                    }
                     let pos_j = *state.positions.get(j);
                     let dx = pos_i.x - pos_j.x;
                     let dy = pos_i.y - pos_j.y;
@@ -156,7 +163,9 @@ impl MdsLayout {
 impl<S: Copy> Layout<S> for MdsLayout {
     fn compute(&mut self, state: &mut GraphState<S>) {
         let n = state.node_index_to_id.len();
-        if n <= 1 { return; }
+        if n <= 1 {
+            return;
+        }
 
         let mut d = vec![vec![f32::INFINITY; n]; n];
         for i in 0..n {
@@ -184,12 +193,17 @@ impl<S: Copy> Layout<S> for MdsLayout {
             }
         }
 
-        let max_finite_dist = d.iter()
+        let max_finite_dist = d
+            .iter()
             .flatten()
             .filter(|&&x| x != f32::INFINITY)
             .copied()
             .fold(0.0f32, |m, x| m.max(x));
-        let disconnect_dist = if max_finite_dist > 0.0 { max_finite_dist * 2.0 } else { 4.0 };
+        let disconnect_dist = if max_finite_dist > 0.0 {
+            max_finite_dist * 2.0
+        } else {
+            4.0
+        };
         for i in 0..n {
             for j in 0..n {
                 if d[i][j] == f32::INFINITY {
@@ -213,7 +227,9 @@ impl<S: Copy> Layout<S> for MdsLayout {
             for i in 0..n {
                 let pos_i = *state.positions.get(i);
                 for j in 0..n {
-                    if i == j { continue; }
+                    if i == j {
+                        continue;
+                    }
                     let pos_j = *state.positions.get(j);
                     let dx = pos_i.x - pos_j.x;
                     let dy = pos_i.y - pos_j.y;
