@@ -173,11 +173,15 @@ impl Graph {
         allowed: &[String],
         weight_fn: fn(f64) -> f64,
     ) -> (f64, f64) {
+        let allowed_set: std::collections::HashSet<&str> = allowed.iter().map(|s| s.as_str()).collect();
         let mut k = 0.0;
         let mut s = 0.0;
         for (src, tgt, w) in &self.edges {
+            if src == root && tgt == root {
+                continue;
+            }
             let connects = src == root || tgt == root;
-            let within_allowed = allowed.contains(src) && allowed.contains(tgt);
+            let within_allowed = allowed_set.contains(src.as_str()) && allowed_set.contains(tgt.as_str());
             if connects && within_allowed {
                 k += 1.0;
                 s += weight_fn(*w);
@@ -192,11 +196,14 @@ impl Graph {
         allowed: &[String],
         weight_fn: fn(f64) -> f64,
     ) -> (f64, f64) {
+        let allowed_set: std::collections::HashSet<&str> = allowed.iter().map(|s| s.as_str()).collect();
         let mut k = 0.0;
         let mut s = 0.0;
         for (src, tgt, w) in &self.edges {
-            if tgt == root && src == root { /* invalid */
-            } else if tgt == root && allowed.contains(src) {
+            if src == root && tgt == root {
+                continue;
+            }
+            if tgt == root && allowed_set.contains(src.as_str()) {
                 k += 1.0;
                 s += weight_fn(*w);
             }
@@ -210,10 +217,14 @@ impl Graph {
         allowed: &[String],
         weight_fn: fn(f64) -> f64,
     ) -> (f64, f64) {
+        let allowed_set: std::collections::HashSet<&str> = allowed.iter().map(|s| s.as_str()).collect();
         let mut k = 0.0;
         let mut s = 0.0;
         for (src, tgt, w) in &self.edges {
-            if src == root && allowed.contains(tgt) {
+            if src == root && tgt == root {
+                continue;
+            }
+            if src == root && allowed_set.contains(tgt.as_str()) {
                 k += 1.0;
                 s += weight_fn(*w);
             }

@@ -90,7 +90,11 @@ pub fn closeness_centralities(
 
         // Harmonic closeness already uses reciprocals; for non-harmonic take reciprocal of total.
         if !options.harmonic {
-            curr_closeness = 1.0 / curr_closeness;
+            if curr_closeness == 0.0 {
+                curr_closeness = 0.0;
+            } else {
+                curr_closeness = 1.0 / curr_closeness;
+            }
         }
 
         max_closeness = max_closeness.max(curr_closeness);

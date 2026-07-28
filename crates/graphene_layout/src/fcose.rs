@@ -736,11 +736,23 @@ impl<S: Copy + Default> Layout<S> for FCoseLayout {
                 let dx = center.x - pos.x;
                 let dy = center.y - pos.y;
                 let d = (dx * dx + dy * dy).sqrt().max(0.01);
-                let fx = self.gravity * dx / d;
-                let fy = self.gravity * dy / d;
+                let g = if let Some(_p_id) = *state.hierarchy.parent.get(idx) {
+                    self.gravity_compound
+                } else {
+                    self.gravity
+                };
+                let range = if let Some(_p_id) = *state.hierarchy.parent.get(idx) {
+                    self.gravity_range_compound
+                } else {
+                    self.gravity_range
+                };
+                if d <= range || range == 0.0 {
+                    let fx = g * dx / d;
+                    let fy = g * dy / d;
 
-                displacements_x[idx] += fx;
-                displacements_y[idx] += fy;
+                    displacements_x[idx] += fx;
+                    displacements_y[idx] += fy;
+                }
             }
 
             for c in &self.constraints.fixed_nodes {

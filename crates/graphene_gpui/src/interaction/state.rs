@@ -106,46 +106,40 @@ impl InteractionState {
         let mut best_match = None;
         let mut max_depth = 0;
 
-        if physics_active {
-            // Linear scan over visible-only candidates during active simulation
-            for (idx, &id) in state.node_index_to_id.iter().enumerate() {
+        let grid_candidates = self.spatial_grid.query(model_pos);
+        let candidates: Vec<NodeId> = if physics_active && grid_candidates.is_empty() {
+            // Fallback to visible nodes linear scan if spatial grid is staler than position
+            state
+                .node_index_to_id
+                .iter()
+                .copied()
+                .filter(|&id| {
+                    if let Some(&idx) = state.node_keys.get(id) {
+                        viewport.is_visible(*state.positions.get(idx), *state.sizes.get(idx))
+                    } else {
+                        false
+                    }
+                })
+                .collect()
+        } else {
+            grid_candidates
+        };
+
+        for id in candidates {
+            if let Some(&idx) = state.node_keys.get(id) {
                 let pos = *state.positions.get(idx);
                 let size = *state.sizes.get(idx);
-                if viewport.is_visible(pos, size) {
-                    let half_w = size.w / 2.0;
-                    let half_h = size.h / 2.0;
-                    if model_pos.x >= pos.x - half_w
-                        && model_pos.x <= pos.x + half_w
-                        && model_pos.y >= pos.y - half_h
-                        && model_pos.y <= pos.y + half_h
-                    {
-                        let depth = get_nesting_depth(id, state);
-                        if best_match.is_none() || depth > max_depth {
-                            best_match = Some(id);
-                            max_depth = depth;
-                        }
-                    }
-                }
-            }
-        } else {
-            // Query hash grid
-            let candidates = self.spatial_grid.query(model_pos);
-            for id in candidates {
-                if let Some(&idx) = state.node_keys.get(id) {
-                    let pos = *state.positions.get(idx);
-                    let size = *state.sizes.get(idx);
-                    let half_w = size.w / 2.0;
-                    let half_h = size.h / 2.0;
-                    if model_pos.x >= pos.x - half_w
-                        && model_pos.x <= pos.x + half_w
-                        && model_pos.y >= pos.y - half_h
-                        && model_pos.y <= pos.y + half_h
-                    {
-                        let depth = get_nesting_depth(id, state);
-                        if best_match.is_none() || depth > max_depth {
-                            best_match = Some(id);
-                            max_depth = depth;
-                        }
+                let half_w = size.w / 2.0;
+                let half_h = size.h / 2.0;
+                if model_pos.x >= pos.x - half_w
+                    && model_pos.x <= pos.x + half_w
+                    && model_pos.y >= pos.y - half_h
+                    && model_pos.y <= pos.y + half_h
+                {
+                    let depth = get_nesting_depth(id, state);
+                    if best_match.is_none() || depth > max_depth {
+                        best_match = Some(id);
+                        max_depth = depth;
                     }
                 }
             }

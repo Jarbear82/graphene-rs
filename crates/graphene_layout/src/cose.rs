@@ -84,31 +84,7 @@ impl CoseLayout {
 }
 
 pub fn find_clipping_point(pos: Vec2, size: graphene_core::Size2, dx: f32, dy: f32) -> Vec2 {
-    let w = size.w;
-    let h = size.h;
-    if dx == 0.0 && dy > 0.0 {
-        return Vec2::new(pos.x, pos.y + h / 2.0);
-    }
-    if dx == 0.0 && dy < 0.0 {
-        return Vec2::new(pos.x, pos.y - h / 2.0);
-    }
-    let dir_slope = dy / dx;
-    let node_slope = h / w;
-
-    if dx > 0.0 && dir_slope >= -node_slope && dir_slope <= node_slope {
-        return Vec2::new(pos.x + w / 2.0, pos.y + (w * dy / (2.0 * dx)));
-    }
-    if dx < 0.0 && dir_slope >= -node_slope && dir_slope <= node_slope {
-        return Vec2::new(pos.x - w / 2.0, pos.y - (w * dy / (2.0 * dx)));
-    }
-    if dy > 0.0 && (dir_slope <= -node_slope || dir_slope >= node_slope) {
-        return Vec2::new(pos.x + (h * dx / (2.0 * dy)), pos.y + h / 2.0);
-    }
-    if dy < 0.0 && (dir_slope <= -node_slope || dir_slope >= node_slope) {
-        return Vec2::new(pos.x - (h * dx / (2.0 * dy)), pos.y - h / 2.0);
-    }
-
-    pos
+    crate::geometry::compute_edge_clipping(pos, size, Vec2::new(dx, dy))
 }
 
 

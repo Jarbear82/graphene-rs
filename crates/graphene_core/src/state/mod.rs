@@ -14,11 +14,6 @@ use std::collections::VecDeque;
 
 #[derive(Debug, Clone)]
 pub struct GraphState<S: Copy = ()> {
-    pub topology: GraphTopology,
-    pub visuals: GraphVisuals<S>,
-    pub animation: GraphAnimation,
-
-    // Public aliases for backward compatibility
     pub node_keys: SlotMap<NodeId, usize>,
     pub node_index_to_id: Vec<NodeId>,
 
@@ -53,9 +48,6 @@ pub struct GraphState<S: Copy = ()> {
 impl<S: Copy + Default> GraphState<S> {
     pub fn new() -> Self {
         Self {
-            topology: GraphTopology::new(),
-            visuals: GraphVisuals::new(),
-            animation: GraphAnimation::new(),
             node_keys: SlotMap::with_key(),
             node_index_to_id: Vec::new(),
             edge_keys: SlotMap::with_key(),
@@ -104,24 +96,15 @@ impl<S: Copy + Default> GraphState<S> {
         let idx = self.positions.len();
 
         let id = self.node_keys.insert(idx);
-        self.topology.node_keys.insert(idx);
         self.node_index_to_id.push(id);
-        self.topology.node_index_to_id.push(id);
 
         self.positions.insert(pos);
-        self.visuals.positions.insert(pos);
         self.sizes.insert(size);
-        self.visuals.sizes.insert(size);
         self.nodes.insert(NodeData::default());
-        self.topology.nodes.insert(NodeData::default());
         self.node_kinds.insert(kind);
-        self.topology.node_kinds.insert(kind);
         self.hierarchy.insert();
-        self.topology.hierarchy.insert();
         self.selected.insert();
-        self.visuals.selected.insert();
         self.computed_styles.insert(S::default());
-        self.visuals.computed_styles.insert(S::default());
         self.node_labels.insert(None);
         self.cached_node_sizes.insert(None);
 
@@ -150,7 +133,6 @@ impl<S: Copy + Default> GraphState<S> {
         }
 
         self.positions.set(idx, new_pos);
-        self.visuals.positions.set(idx, new_pos);
 
         self.push_event(GraphEvent::PositionChanged {
             id,
@@ -171,7 +153,6 @@ impl<S: Copy + Default> GraphState<S> {
                 let old_pos = *self.positions.get(idx);
                 let new_pos = old_pos + delta;
                 self.positions.set(idx, new_pos);
-                self.visuals.positions.set(idx, new_pos);
 
                 self.push_event(GraphEvent::PositionChanged {
                     id: curr_id,
@@ -195,7 +176,6 @@ impl<S: Copy + Default> GraphState<S> {
 
     pub fn remove_node(&mut self, id: NodeId) {
         let Some(idx) = self.node_keys.remove(id) else { return };
-        self.topology.node_keys.remove(id);
         let last_idx = self.node_index_to_id.len() - 1;
 
         let old_pos = *self.positions.get(idx);
@@ -205,11 +185,8 @@ impl<S: Copy + Default> GraphState<S> {
             if let Some(&child_idx) = self.node_keys.get(child_id) {
                 let next_child = *self.hierarchy.next_sibling.get(child_idx);
                 self.hierarchy.parent.set(child_idx, None);
-                self.topology.hierarchy.parent.set(child_idx, None);
                 self.hierarchy.next_sibling.set(child_idx, None);
-                self.topology.hierarchy.next_sibling.set(child_idx, None);
                 self.hierarchy.prev_sibling.set(child_idx, None);
-                self.topology.hierarchy.prev_sibling.set(child_idx, None);
                 curr_child = next_child;
             } else {
                 break;
@@ -221,32 +198,21 @@ impl<S: Copy + Default> GraphState<S> {
         if idx != last_idx {
             let displaced_id = self.node_index_to_id[last_idx];
             self.node_keys[displaced_id] = idx;
-            self.topology.node_keys[displaced_id] = idx;
             self.node_index_to_id[idx] = displaced_id;
-            self.topology.node_index_to_id[idx] = displaced_id;
         }
         self.node_index_to_id.pop();
-        self.topology.node_index_to_id.pop();
 
         self.positions.remove(idx);
-        self.visuals.positions.remove(idx);
         self.sizes.remove(idx);
-        self.visuals.sizes.remove(idx);
         self.nodes.remove(idx);
-        self.topology.nodes.remove(idx);
         self.node_kinds.remove(idx);
-        self.topology.node_kinds.remove(idx);
         self.hierarchy.remove(idx);
-        self.topology.hierarchy.remove(idx);
         self.selected.remove(idx);
-        self.visuals.selected.remove(idx);
         self.computed_styles.remove(idx);
-        self.visuals.computed_styles.remove(idx);
         self.node_labels.remove(idx);
         self.cached_node_sizes.remove(idx);
 
         self.animations.tracks.remove(id);
-        self.animation.animations.tracks.remove(id);
 
         let mut edges_to_remove = Vec::new();
         for (i, &src) in self.edge_sources.iter().enumerate() {
@@ -263,9 +229,7 @@ impl<S: Copy + Default> GraphState<S> {
         self.dirty_flags |= DirtyFlags::TOPOLOGY_DIRTY;
     }
 
-    fn unlink_from_hierarchy(&mut self, id: NodeId, idx: usize) {
-        self.topology.unlink_from_hierarchy(id, idx);
-
+    fn unlink_from_hierarchy(&mut self, _id: NodeId, idx: usize) {
         let parent = *self.hierarchy.parent.get(idx);
         let prev = *self.hierarchy.prev_sibling.get(idx);
         let next = *self.hierarchy.next_sibling.get(idx);
@@ -314,30 +278,22 @@ impl<S: Copy + Default> GraphState<S> {
             let Some(&p_idx) = self.node_keys.get(p_id) else { return };
 
             self.hierarchy.parent.set(child_idx, Some(p_id));
-            self.topology.hierarchy.parent.set(child_idx, Some(p_id));
             let old_first = *self.hierarchy.first_child.get(p_idx);
 
             self.hierarchy.next_sibling.set(child_idx, old_first);
-            self.topology.hierarchy.next_sibling.set(child_idx, old_first);
             self.hierarchy.prev_sibling.set(child_idx, None);
-            self.topology.hierarchy.prev_sibling.set(child_idx, None);
 
             if let Some(old_first_id) = old_first {
                 if let Some(&old_first_idx) = self.node_keys.get(old_first_id) {
                     self.hierarchy.prev_sibling.set(old_first_idx, Some(child_id));
-                    self.topology.hierarchy.prev_sibling.set(old_first_idx, Some(child_id));
                 }
             }
 
             self.hierarchy.first_child.set(p_idx, Some(child_id));
-            self.topology.hierarchy.first_child.set(p_idx, Some(child_id));
         } else {
             self.hierarchy.parent.set(child_idx, None);
-            self.topology.hierarchy.parent.set(child_idx, None);
             self.hierarchy.next_sibling.set(child_idx, None);
-            self.topology.hierarchy.next_sibling.set(child_idx, None);
             self.hierarchy.prev_sibling.set(child_idx, None);
-            self.topology.hierarchy.prev_sibling.set(child_idx, None);
         }
 
         self.dirty_flags |= DirtyFlags::TOPOLOGY_DIRTY;
@@ -346,18 +302,12 @@ impl<S: Copy + Default> GraphState<S> {
     pub fn add_edge(&mut self, source: NodeId, target: NodeId, data: EdgeData) -> EdgeId {
         let idx = self.edges.len();
         let id = self.edge_keys.insert(idx);
-        self.topology.edge_keys.insert(idx);
         self.edge_index_to_id.push(id);
-        self.topology.edge_index_to_id.push(id);
 
-        self.edges.insert(data.clone());
-        self.topology.edges.insert(data);
+        self.edges.insert(data);
         self.edge_sources.insert(source);
-        self.topology.edge_sources.insert(source);
         self.edge_targets.insert(target);
-        self.topology.edge_targets.insert(target);
         self.edge_computed_styles.insert(S::default());
-        self.visuals.edge_computed_styles.insert(S::default());
 
         self.push_event(GraphEvent::EdgeAdded { id, source, target });
         self.dirty_flags |= DirtyFlags::TOPOLOGY_DIRTY;
@@ -367,7 +317,6 @@ impl<S: Copy + Default> GraphState<S> {
 
     pub fn remove_edge(&mut self, id: EdgeId) {
         let Some(idx) = self.edge_keys.remove(id) else { return };
-        self.topology.edge_keys.remove(id);
         let last_idx = self.edge_index_to_id.len() - 1;
 
         let source = *self.edge_sources.get(idx);
@@ -376,21 +325,14 @@ impl<S: Copy + Default> GraphState<S> {
         if idx != last_idx {
             let displaced_id = self.edge_index_to_id[last_idx];
             self.edge_keys[displaced_id] = idx;
-            self.topology.edge_keys[displaced_id] = idx;
             self.edge_index_to_id[idx] = displaced_id;
-            self.topology.edge_index_to_id[idx] = displaced_id;
         }
         self.edge_index_to_id.pop();
-        self.topology.edge_index_to_id.pop();
 
         self.edges.remove(idx);
-        self.topology.edges.remove(idx);
         self.edge_sources.remove(idx);
-        self.topology.edge_sources.remove(idx);
         self.edge_targets.remove(idx);
-        self.topology.edge_targets.remove(idx);
         self.edge_computed_styles.remove(idx);
-        self.visuals.edge_computed_styles.remove(idx);
 
         self.push_event(GraphEvent::EdgeRemoved { id, source, target });
         self.dirty_flags |= DirtyFlags::TOPOLOGY_DIRTY;
@@ -428,7 +370,6 @@ impl<S: Copy + Default> GraphState<S> {
                     };
                     let current = *from * (1.0 - progress) + *to * progress;
                     self.positions.set(idx, current);
-                    self.visuals.positions.set(idx, current);
                     self.dirty_flags |= DirtyFlags::POSITION_DIRTY;
                     if progress >= 1.0 {
                         completed.push(node_id);
@@ -439,7 +380,6 @@ impl<S: Copy + Default> GraphState<S> {
         }
         for node_id in completed {
             self.animations.tracks.remove(node_id);
-            self.animation.animations.tracks.remove(node_id);
         }
     }
 
@@ -507,7 +447,6 @@ impl<S: Copy + Default> GraphState<S> {
         self.cached_node_sizes.set(idx, Some(measured_size));
         if self.is_ui_mode {
             self.sizes.set(idx, measured_size);
-            self.visuals.sizes.set(idx, measured_size);
             self.dirty_flags |= DirtyFlags::POSITION_DIRTY;
         }
     }
@@ -515,6 +454,14 @@ impl<S: Copy + Default> GraphState<S> {
     pub fn get_cached_node_size(&self, id: NodeId) -> Option<Size2> {
         let &idx = self.node_keys.get(id)?;
         *self.cached_node_sizes.get(idx)
+    }
+
+    pub fn node_count(&self) -> usize {
+        self.node_index_to_id.len()
+    }
+
+    pub fn edge_count(&self) -> usize {
+        self.edge_index_to_id.len()
     }
 }
 
@@ -529,22 +476,22 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_graph_state_submodule_synchronization() {
+    fn test_graph_state_basic_operations() {
         let mut state = GraphState::<()>::new();
         let n1 = state.add_node(Vec2::new(10.0, 20.0), Size2::new(50.0, 50.0));
         let n2 = state.add_node(Vec2::new(100.0, 200.0), Size2::new(50.0, 50.0));
-        let e1 = state.add_edge(n1, n2, EdgeData::default());
+        let _e1 = state.add_edge(n1, n2, EdgeData::default());
 
-        assert_eq!(state.topology.node_count(), 2);
-        assert_eq!(state.topology.edge_count(), 1);
-        assert_eq!(state.visuals.positions.len(), 2);
+        assert_eq!(state.node_count(), 2);
+        assert_eq!(state.edge_count(), 1);
+        assert_eq!(state.positions.len(), 2);
 
         state.reparent_node(n2, Some(n1));
-        assert_eq!(*state.topology.hierarchy.parent.get(1), Some(n1));
+        assert_eq!(*state.hierarchy.parent.get(1), Some(n1));
 
         state.remove_node(n1);
-        assert_eq!(state.topology.node_count(), 1);
-        assert_eq!(state.topology.edge_count(), 0);
+        assert_eq!(state.node_count(), 1);
+        assert_eq!(state.edge_count(), 0);
     }
 
     #[test]
@@ -556,8 +503,8 @@ mod tests {
 
         let json = state.to_json();
         let restored = GraphState::<()>::from_json(&json).expect("Deserialization failed");
-        assert_eq!(restored.topology.node_count(), 2);
-        assert_eq!(restored.topology.edge_count(), 1);
+        assert_eq!(restored.node_count(), 2);
+        assert_eq!(restored.edge_count(), 1);
     }
 
     #[test]
@@ -577,7 +524,7 @@ mod tests {
 
         assert!(!state.is_batching);
         assert_eq!(created_nodes.len(), 100);
-        assert_eq!(state.topology.node_count(), 100);
+        assert_eq!(state.node_count(), 100);
         assert!(state.dirty_flags.contains(DirtyFlags::TOPOLOGY_DIRTY));
     }
 

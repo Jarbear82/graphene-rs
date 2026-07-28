@@ -74,6 +74,7 @@ struct Cluster {
     key: Option<usize>,   // unique cluster identifier
     index: Option<usize>, // position in the clusters vector
     size: usize,          // number of leaf nodes this cluster represents
+    tree_node: Option<Box<DendrogramNode>>,
 }
 
 /// A binary tree used for building dendrograms.
@@ -185,12 +186,20 @@ fn merge_closest(
 
     match opts.mode {
         Mode::Dendrogram => {
+            let left_tree = clusters[c1_pos].tree_node.take();
+            let right_tree = clusters[c2_pos].tree_node.take();
+            let new_tree = match (left_tree, right_tree) {
+                (Some(left), Some(right)) => Some(Box::new(DendrogramNode::Internal { left, right })),
+                (Some(t), None) | (None, Some(t)) => Some(t),
+                (None, None) => None,
+            };
             clusters[c1_pos] = Cluster {
                 value: c1_val,
                 keys: vec![],
                 key: Some(new_key),
                 index: Some(c1_pos),
                 size: new_size,
+                tree_node: new_tree,
             };
         }
         Mode::Threshold => {
@@ -202,6 +211,7 @@ fn merge_closest(
                 key: Some(new_key),
                 index: Some(c1_pos),
                 size: new_size,
+                tree_node: None,
             };
         }
     }
@@ -290,12 +300,7 @@ fn get_all_children(node: &DendrogramNode, out: &mut Vec<usize>) {
 
 /// Build a dendrogram binary tree from the final cluster hierarchy.
 fn build_dendrogram(root: &Cluster) -> Option<DendrogramNode> {
-    if root.keys.is_empty() && root.value == 0 {
-        return None;
-    }
-    // In our simplified standalone version, clusters with keys represent merged groups.
-    // Leaf nodes are clusters where value corresponds directly to a single node id.
-    Some(DendrogramNode::Leaf { value: root.value })
+    root.tree_node.as_deref().cloned()
 }
 
 /// Cut the dendrogram at depth `k` to produce final cluster groups.
@@ -367,6 +372,7 @@ pub fn hierarchical_clustering(
             key: Some(i),
             index: Some(i),
             size: 1,
+            tree_node: Some(Box::new(DendrogramNode::Leaf { value: n.id })),
         })
         .collect();
 
@@ -481,6 +487,30 @@ mod tests {
         // With threshold 5.0 and Euclidean distances (1→2 = 1, 2→10 = 8), we expect
         // nodes 0 and 1 to cluster together, while node 2 stays separate.
         assert_eq!(result.0.len(), 2);
+    }
+
+    #[test]
+    fn test_dendrogram_mode() {
+        let nodes = vec![
+            Node { id: 0, data: 1.0 },
+            Node { id: 1, data: 1.1 },
+            Node { id: 2, data: 5.0 },
+            Node { id: 3, data: 5.2 },
+        ];
+
+        let opts = HierarchicalClusteringOptions {
+            distance: Distance::Euclidean,
+            linkage: Linkage::Min,
+            mode: Mode::Dendrogram,
+            dendrogram_depth: 1,
+            ..Default::default()
+        };
+
+        let result = hierarchical_clustering(&nodes, opts);
+        assert_eq!(result.0.len(), 2);
+        let mut all_nodes: Vec<usize> = result.0.into_iter().flatten().collect();
+        all_nodes.sort();
+        assert_eq!(all_nodes, vec![0, 1, 2, 3]);
     }
 
     #[test]

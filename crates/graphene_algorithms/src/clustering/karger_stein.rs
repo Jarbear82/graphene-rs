@@ -129,8 +129,6 @@ pub fn karger_stein(nodes: &[usize], edges: &[Edge]) -> Option<MinCutResult> {
         })
         .collect();
 
-    let num_edges = edge_list.len();
-
     // Number of outer iterations ≈ ln²(n)  (constant-factor choice).
     let num_iter = (num_nodes as f64).ln().powi(2) as usize + 1;
 
@@ -142,12 +140,25 @@ pub fn karger_stein(nodes: &[usize], edges: &[Edge]) -> Option<MinCutResult> {
     let mut best_cut_edges: Vec<Edge> = Vec::new();
     let mut best_partition_map: Vec<usize> = vec![0; num_nodes];
 
+    // Helper to evaluate cut weight and collect cut edges from partition map
+    let cut_from_map = |map: &[usize]| -> (f64, Vec<Edge>) {
+        let mut cut_weight = 0.0;
+        let mut cut_edges = Vec::new();
+        for e in edges {
+            if e.source < num_nodes && e.target < num_nodes && map[e.source] != map[e.target] {
+                cut_weight += e.weight;
+                cut_edges.push(e.clone());
+            }
+        }
+        (cut_weight, cut_edges)
+    };
+
     for _ in 0..=num_iter {
         // Reset every node to its own partition.
         let mut meta_map: Vec<usize> = (0..num_nodes).collect();
 
         // Phase 1 — contract down to `stop_size`.
-        let (mut edges_after_p1, _) = contract_until(
+        let (edges_after_p1, _) = contract_until(
             &mut meta_map,
             edge_list.clone(),
             num_nodes,
@@ -173,50 +184,17 @@ pub fn karger_stein(nodes: &[usize], edges: &[Edge]) -> Option<MinCutResult> {
             2,
         );
 
-        // Determine the cut weight from each recursion.
-        let compute_cut = |meta: &[usize]| -> (f64, Vec<Edge>) {
-            let mut seen_partitions: HashMap<usize, f64> = HashMap::new();
-            for e in edges_after_p1.iter() {
-                // Reconstruct the original edge from node indices to get its weight.
-                // This is a simplification; we assume edge weights are equal to count
-                // for the recursive calls. In practice we'd carry original Edge refs.
-                let w = 1.0;
-                *seen_partitions.entry(e.0).or_insert(w) += w;
-            }
-            (seen_partitions.values().copied().sum(), Vec::new())
-        };
-
-        // A simpler cut estimation from the final partition counts:
-        let cut_from_map = |map: &[usize], edges: &[(usize, usize, f64)]| -> (f64, Vec<Edge>) {
-            let mut partitions = vec![HashMap::new(); num_nodes];
-            for (node_idx, &part_id) in map.iter().enumerate() {
-                partitions[part_id].insert(node_idx, true);
-            }
-
-            // Find the cut edges — those connecting the two final partitions.
-            // We need the *original* edge list at the end; the contracted edges
-            // no longer carry original indices.  The simplest correct approach is
-            // to map back through `meta_map` using the last surviving partition ids.
-            let part_a = map[0]; // first meta node's partition id
-            let cut_weight: f64 = edges.iter().fold(0.0, |acc, e| {
-                if map[e.0] != map[e.1] {
-                    acc + e.2
-                } else {
-                    acc
-                }
-            });
-
-            (cut_weight, Vec::new())
-        };
-
-        let (w1, _) = cut_from_map(&meta_map, &edge_list);
+        let (w1, edges1) = cut_from_map(&meta_map);
         if w1 < best_cut_weight {
             best_cut_weight = w1;
+            best_cut_edges = edges1;
             best_partition_map = meta_map.clone();
         }
-        let (w2, _) = cut_from_map(&meta_map2, &edge_list);
+
+        let (w2, edges2) = cut_from_map(&meta_map2);
         if w2 < best_cut_weight {
             best_cut_weight = w2;
+            best_cut_edges = edges2;
             best_partition_map = meta_map2;
         }
     }

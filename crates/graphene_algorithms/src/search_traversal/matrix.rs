@@ -10,6 +10,13 @@ pub struct CsrMatrix {
 }
 
 pub fn to_csr<S: Copy>(state: &GraphState<S>) -> CsrMatrix {
+    to_csr_weighted(state, |_| 1.0)
+}
+
+pub fn to_csr_weighted<S: Copy>(
+    state: &GraphState<S>,
+    edge_weight: impl Fn(graphene_core::EdgeId) -> f64,
+) -> CsrMatrix {
     let n = state.node_index_to_id.len();
     let topo = EdgeTopology::rebuild(state);
     let mut row_offsets = vec![0; n + 1];
@@ -23,7 +30,7 @@ pub fn to_csr<S: Copy>(state: &GraphState<S>) -> CsrMatrix {
                 let target_id = state.edge_targets[edge_idx];
                 if let Some(&target_idx) = state.node_keys.get(target_id) {
                     column_indices.push(target_idx);
-                    values.push(1.0);
+                    values.push(edge_weight(edge_id));
                 }
             }
         }
@@ -39,7 +46,14 @@ pub fn to_csr<S: Copy>(state: &GraphState<S>) -> CsrMatrix {
 }
 
 pub fn laplacian<S: Copy>(state: &GraphState<S>) -> CsrMatrix {
-    let csr = to_csr(state);
+    laplacian_weighted(state, |_| 1.0)
+}
+
+pub fn laplacian_weighted<S: Copy>(
+    state: &GraphState<S>,
+    edge_weight: impl Fn(graphene_core::EdgeId) -> f64,
+) -> CsrMatrix {
+    let csr = to_csr_weighted(state, edge_weight);
     let n = csr.shape.0;
 
     let mut row_offsets = vec![0; n + 1];
@@ -48,15 +62,19 @@ pub fn laplacian<S: Copy>(state: &GraphState<S>) -> CsrMatrix {
 
     for i in 0..n {
         row_offsets[i] = column_indices.len();
-        let row_deg = (csr.row_offsets[i + 1] - csr.row_offsets[i]) as f64;
+        let mut row_deg = 0.0;
+        for ptr in csr.row_offsets[i]..csr.row_offsets[i + 1] {
+            row_deg += csr.values[ptr];
+        }
         column_indices.push(i);
         values.push(row_deg);
 
         for ptr in csr.row_offsets[i]..csr.row_offsets[i + 1] {
             let col = csr.column_indices[ptr];
+            let val = csr.values[ptr];
             if col != i {
                 column_indices.push(col);
-                values.push(-1.0);
+                values.push(-val);
             }
         }
     }
