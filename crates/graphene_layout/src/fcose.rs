@@ -274,6 +274,8 @@ impl<S: Copy + Default> Layout<S> for FCoseLayout {
             }
         }
 
+        let mut components: Vec<Vec<usize>> = Vec::new();
+
         if self.randomize || all_zero {
             let mut adj = vec![Vec::new(); n];
             let add_local_edge = |u_global: usize, v_global: usize, adj_list: &mut Vec<Vec<usize>>| {
@@ -300,7 +302,6 @@ impl<S: Copy + Default> Layout<S> for FCoseLayout {
             }
 
             let mut visited = vec![false; n];
-            let mut components = Vec::new();
             for start in 0..n {
                 if visited[start] { continue; }
                 let mut comp = Vec::new();
@@ -873,6 +874,50 @@ impl<S: Copy + Default> Layout<S> for FCoseLayout {
             }
             project_constraints(state, &self.constraints);
             resolve_compound_bounds(state, &HashSet::new(), self.compound_padding);
+        }
+
+        if (self.pack_components || self.tile) && components.len() > 1 {
+            let cols = (components.len() as f32).sqrt().ceil() as usize;
+            let mut cur_x = 0.0f32;
+            let mut cur_y = 0.0f32;
+            let mut max_row_h = 0.0f32;
+
+            for (idx, comp) in components.iter().enumerate() {
+                if idx > 0 && idx % cols == 0 {
+                    cur_x = 0.0;
+                    cur_y += max_row_h + self.tiling_padding_vertical;
+                    max_row_h = 0.0;
+                }
+
+                let mut min_x = f32::INFINITY;
+                let mut min_y = f32::INFINITY;
+                let mut max_x = f32::NEG_INFINITY;
+                let mut max_y = f32::NEG_INFINITY;
+
+                for &node_idx in comp {
+                    let p = *state.positions.get(node_idx);
+                    let s = *state.sizes.get(node_idx);
+                    min_x = min_x.min(p.x - s.w / 2.0);
+                    min_y = min_y.min(p.y - s.h / 2.0);
+                    max_x = max_x.max(p.x + s.w / 2.0);
+                    max_y = max_y.max(p.y + s.h / 2.0);
+                }
+
+                let comp_w = (max_x - min_x).max(10.0);
+                let comp_h = (max_y - min_y).max(10.0);
+                max_row_h = max_row_h.max(comp_h);
+
+                let shift_x = cur_x - min_x;
+                let shift_y = cur_y - min_y;
+
+                for &node_idx in comp {
+                    let p = state.positions.get_mut(node_idx);
+                    p.x += shift_x;
+                    p.y += shift_y;
+                }
+
+                cur_x += comp_w + self.tiling_padding_horizontal;
+            }
         }
 
         crate::collision::resolve_overlaps(state, 10.0);

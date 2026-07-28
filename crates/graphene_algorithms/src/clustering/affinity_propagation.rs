@@ -28,11 +28,13 @@ impl Default for ApConfig {
     }
 }
 
+use crate::clustering::ClusteringError;
+
 impl ApConfig {
     /// Validates configuration constraints
-    pub fn validate(&self) -> Result<(), String> {
+    pub fn validate(&self) -> Result<(), ClusteringError> {
         if !(0.5..1.0).contains(&self.damping) {
-            return Err(format!("Damping must be in [0.5, 1), got {}", self.damping));
+            return Err(ClusteringError::InvalidDamping(self.damping));
         }
         Ok(())
     }
@@ -82,7 +84,7 @@ pub fn affinity_propagation<F>(
     n: usize,
     mut similarity_fn: F,
     config: &ApConfig,
-) -> Result<Vec<Vec<usize>>, String>
+) -> Result<Vec<Vec<usize>>, ClusteringError>
 where
     F: FnMut(usize, usize) -> f64,
 {
@@ -218,12 +220,12 @@ where
 
 // --- Assignment Helpers ---
 
-fn assign_clusters(n: usize, s: &[f64], exemplars: &[usize]) -> Result<Vec<i32>, String> {
-    let mut clusters = vec![-1i32; n];
+fn assign_clusters(n: usize, s: &[f64], exemplars: &[usize]) -> Result<Vec<i32>, ClusteringError> {
+    let mut clusters = vec![-1_i32; n];
 
     for i in 0..n {
-        let mut index = -1;
         let mut max = f64::NEG_INFINITY;
+        let mut index = -1_i32;
 
         for &e in exemplars {
             let sim = s[i * n + e];
@@ -233,7 +235,6 @@ fn assign_clusters(n: usize, s: &[f64], exemplars: &[usize]) -> Result<Vec<i32>,
             }
         }
 
-        // Fixed original JS bug: `index > 0` would skip cluster 0. Using `!= -1`.
         if index != -1 {
             clusters[i] = index;
         }
@@ -247,8 +248,8 @@ fn assign_clusters(n: usize, s: &[f64], exemplars: &[usize]) -> Result<Vec<i32>,
     Ok(clusters)
 }
 
-fn refine_exemplars(n: usize, s: &[f64], exemplars: &mut Vec<usize>) -> Result<Vec<i32>, String> {
-    let mut clusters = assign_clusters(n, s, exemplars)?;
+fn refine_exemplars(n: usize, s: &[f64], exemplars: &mut Vec<usize>) -> Result<Vec<i32>, ClusteringError> {
+    let clusters = assign_clusters(n, s, exemplars)?;
 
     for ei in 0..exemplars.len() {
         let ii: Vec<usize> = (0..n)

@@ -106,9 +106,9 @@ impl InteractionState {
         let mut best_match = None;
         let mut max_depth = 0;
 
-        let grid_candidates = self.spatial_grid.query(model_pos);
-        let candidates: Vec<NodeId> = if physics_active && grid_candidates.is_empty() {
-            // Fallback to visible nodes linear scan if spatial grid is staler than position
+        let candidates: Vec<NodeId> = if physics_active {
+            // During active physics simulation positions update continuously;
+            // scan visible nodes to guarantee 100% accurate hit-testing without stale cell misses.
             state
                 .node_index_to_id
                 .iter()
@@ -122,7 +122,7 @@ impl InteractionState {
                 })
                 .collect()
         } else {
-            grid_candidates
+            self.spatial_grid.query(model_pos)
         };
 
         for id in candidates {

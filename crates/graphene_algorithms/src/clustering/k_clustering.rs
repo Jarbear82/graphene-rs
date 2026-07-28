@@ -68,17 +68,15 @@ fn argmin(vals: &[f64]) -> Option<usize> {
         .map(|(i, _)| i)
 }
 
+use crate::clustering::ClusteringError;
+
 /// K-Means Clustering
-pub fn k_means(data: &[Vec<f64>], opts: &ClusterOptions) -> Result<Vec<Vec<usize>>, String> {
+pub fn k_means(data: &[Vec<f64>], opts: &ClusterOptions) -> Result<Vec<Vec<usize>>, ClusteringError> {
     if data.is_empty() || data[0].is_empty() {
-        return Err("Data cannot be empty.".into());
+        return Err(ClusteringError::EmptyData);
     }
-    if opts.k > data.len() {
-        return Err(format!(
-            "k ({}) cannot exceed number of nodes ({})",
-            opts.k,
-            data.len()
-        ));
+    if opts.k > data.len() || opts.k == 0 {
+        return Err(ClusteringError::InvalidK(opts.k));
     }
 
     let mut assignments = vec![0usize; data.len()];
@@ -142,16 +140,12 @@ pub fn k_means(data: &[Vec<f64>], opts: &ClusterOptions) -> Result<Vec<Vec<usize
 }
 
 /// K-Medoids Clustering
-pub fn k_medoids(data: &[Vec<f64>], opts: &ClusterOptions) -> Result<Vec<Vec<usize>>, String> {
+pub fn k_medoids(data: &[Vec<f64>], opts: &ClusterOptions) -> Result<Vec<Vec<usize>>, ClusteringError> {
     if data.is_empty() || data[0].is_empty() {
-        return Err("Data cannot be empty.".into());
+        return Err(ClusteringError::EmptyData);
     }
-    if opts.k > data.len() {
-        return Err(format!(
-            "k ({}) cannot exceed number of nodes ({})",
-            opts.k,
-            data.len()
-        ));
+    if opts.k > data.len() || opts.k == 0 {
+        return Err(ClusteringError::InvalidK(opts.k));
     }
 
     let mut medoids = random_medoid_indices(data, opts.k)?;
@@ -201,8 +195,8 @@ pub fn k_medoids(data: &[Vec<f64>], opts: &ClusterOptions) -> Result<Vec<Vec<usi
             }
 
             if new_medoid_idx != medoids[m] {
-                is_moving = true;
                 medoids[m] = new_medoid_idx;
+                is_moving = true;
             }
         }
     }
@@ -218,16 +212,12 @@ pub fn k_medoids(data: &[Vec<f64>], opts: &ClusterOptions) -> Result<Vec<Vec<usi
 pub fn fuzzy_c_means(
     data: &[Vec<f64>],
     opts: &ClusterOptions,
-) -> Result<(Vec<Vec<usize>>, Vec<Vec<f64>>), String> {
+) -> Result<(Vec<Vec<usize>>, Vec<Vec<f64>>), ClusteringError> {
     if data.is_empty() || data[0].is_empty() {
-        return Err("Data cannot be empty.".into());
+        return Err(ClusteringError::EmptyData);
     }
-    if opts.k > data.len() {
-        return Err(format!(
-            "k ({}) cannot exceed number of nodes ({})",
-            opts.k,
-            data.len()
-        ));
+    if opts.k > data.len() || opts.k == 0 {
+        return Err(ClusteringError::InvalidK(opts.k));
     }
 
     let n = data.len();
@@ -243,41 +233,37 @@ pub fn fuzzy_c_means(
         }
     }
 
-    let mut centroids: Vec<Vec<f64>> = vec![vec![0.0; dim]; opts.k];
     let mut is_moving = true;
+    let mut iterations = 0;
 
-    for _ in 0..opts.max_iterations {
-        let mut prev_u = u.clone();
+    while is_moving && iterations < opts.max_iterations {
+        iterations += 1;
         is_moving = false;
 
-        // Step 2: Update centroids using weighted averages
-        let mut weights: Vec<Vec<f64>> = vec![vec![0.0; opts.k]; n];
-        for i in 0..n {
-            for c in 0..opts.k {
-                weights[i][c] = u[i][c].powf(opts.m);
-            }
-        }
+        let prev_u = u.clone();
 
+        // Step 2: Calculate cluster centers
+        let mut centroids = vec![vec![0.0; dim]; opts.k];
         for c in 0..opts.k {
-            let mut num_sum = vec![0.0; dim];
-            let mut den_sum = 0.0;
+            let mut sum_u_m = 0.0;
             for i in 0..n {
+                let u_m = u[i][c].powf(opts.m);
+                sum_u_m += u_m;
                 for d in 0..dim {
-                    num_sum[d] += weights[i][c] * data[i][d];
+                    centroids[c][d] += u_m * data[i][d];
                 }
-                den_sum += weights[i][c];
             }
-            if den_sum > 0.0 {
+            if sum_u_m > 0.0 {
                 for d in 0..dim {
-                    centroids[c][d] = num_sum[d] / den_sum;
+                    centroids[c][d] /= sum_u_m;
                 }
             }
         }
 
         // Step 3: Update membership matrix U
         let mut new_u = vec![vec![0.0; opts.k]; n];
-        for c in 0..opts.k {
-            for i in 0..n {
+        for i in 0..n {
+            for c in 0..opts.k {
                 let mut denom = 0.0;
                 for k in 0..opts.k {
                     let dist_n_c = compute_distance(&data[i], &centroids[c], &opts.distance);
@@ -317,8 +303,7 @@ pub fn fuzzy_c_means(
 }
 
 // --- Utilities ---
-fn init_centroids(data: &[Vec<f64>], k: usize) -> Result<Vec<Vec<f64>>, String> {
-    let dim = data[0].len();
+fn init_centroids(data: &[Vec<f64>], k: usize) -> Result<Vec<Vec<f64>>, ClusteringError> {
     let mut indices: Vec<usize> = (0..data.len()).collect();
     indices.shuffle(&mut thread_rng());
 
@@ -329,8 +314,7 @@ fn init_centroids(data: &[Vec<f64>], k: usize) -> Result<Vec<Vec<f64>>, String> 
         .collect())
 }
 
-fn random_medoid_indices(data: &[Vec<f64>], k: usize) -> Result<Vec<usize>, String> {
-    let dim = data[0].len();
+fn random_medoid_indices(data: &[Vec<f64>], k: usize) -> Result<Vec<usize>, ClusteringError> {
     let mut indices: Vec<usize> = (0..data.len()).collect();
     indices.shuffle(&mut thread_rng());
 
