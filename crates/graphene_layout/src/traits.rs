@@ -5,6 +5,29 @@ pub trait Layout<S: Copy = ()> {
     fn compute(&mut self, state: &mut GraphState<S>);
 }
 
+pub trait IterativeLayout<S: Copy = ()> {
+    /// Advance the layout simulation by one step.
+    /// Returns true if the layout is still actively moving, false if converged.
+    fn step(&mut self, state: &mut GraphState<S>) -> bool;
+
+    /// Check if the simulation has converged or reached minimum energy threshold.
+    fn is_converged(&self) -> bool;
+}
+
+pub trait PhaseSteppableLayout<S: Copy = ()> {
+    type Phase: std::fmt::Display + Clone;
+
+    /// List all algorithmic phases in execution order.
+    fn phases(&self) -> &[Self::Phase];
+
+    /// Returns the currently active phase, or None if layout is complete.
+    fn current_phase(&self) -> Option<Self::Phase>;
+
+    /// Executes the next single algorithmic phase.
+    /// Returns true if additional phases remain, or false when finished.
+    fn step_next_phase(&mut self, state: &mut GraphState<S>) -> bool;
+}
+
 pub fn resolve_compound_bounds<S: Copy>(
     state: &mut GraphState<S>,
     collapsed_parents: &HashSet<NodeId>,

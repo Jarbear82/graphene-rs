@@ -2,9 +2,36 @@ use crate::traits::Layout;
 use graphene_core::{math::Vec2, EdgeId, GraphState, NodeId};
 use std::collections::{HashMap, HashSet};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SugiyamaPhase {
+    CycleBreaking,
+    Layering,
+    Ordering,
+    Placement,
+}
+
+impl std::fmt::Display for SugiyamaPhase {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SugiyamaPhase::CycleBreaking => write!(f, "Cycle Breaking"),
+            SugiyamaPhase::Layering => write!(f, "Topological Layering"),
+            SugiyamaPhase::Ordering => write!(f, "Barycenter Node Ordering"),
+            SugiyamaPhase::Placement => write!(f, "Coordinate Placement"),
+        }
+    }
+}
+
+static SUGIYAMA_PHASES: [SugiyamaPhase; 4] = [
+    SugiyamaPhase::CycleBreaking,
+    SugiyamaPhase::Layering,
+    SugiyamaPhase::Ordering,
+    SugiyamaPhase::Placement,
+];
+
 pub struct SugiyamaLayout {
     pub layer_spacing: f32,
     pub node_spacing: f32,
+    pub current_phase_idx: usize,
 }
 
 impl Default for SugiyamaLayout {
@@ -12,6 +39,7 @@ impl Default for SugiyamaLayout {
         Self {
             layer_spacing: 80.0,
             node_spacing: 60.0,
+            current_phase_idx: 0,
         }
     }
 }
@@ -179,6 +207,32 @@ impl<S: Copy> Layout<S> for SugiyamaLayout {
 
         crate::collision::resolve_overlaps(state, 10.0);
         state.dirty_flags |= graphene_core::DirtyFlags::POSITION_DIRTY;
+        self.current_phase_idx = 4;
+    }
+}
+
+impl<S: Copy> crate::traits::PhaseSteppableLayout<S> for SugiyamaLayout {
+    type Phase = SugiyamaPhase;
+
+    fn phases(&self) -> &[Self::Phase] {
+        &SUGIYAMA_PHASES
+    }
+
+    fn current_phase(&self) -> Option<Self::Phase> {
+        if self.current_phase_idx < SUGIYAMA_PHASES.len() {
+            Some(SUGIYAMA_PHASES[self.current_phase_idx])
+        } else {
+            None
+        }
+    }
+
+    fn step_next_phase(&mut self, state: &mut GraphState<S>) -> bool {
+        if self.current_phase_idx >= SUGIYAMA_PHASES.len() {
+            return false;
+        }
+        self.current_phase_idx += 1;
+        self.compute(state);
+        self.current_phase_idx < SUGIYAMA_PHASES.len()
     }
 }
 

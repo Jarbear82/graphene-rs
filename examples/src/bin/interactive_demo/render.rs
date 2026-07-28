@@ -44,6 +44,13 @@ impl Render for DemoApp {
             size.w = target_w;
         }
 
+        let snap = self.engine.latest_snapshot();
+        if snap.version > 0 && snap.positions.len() == self.state.node_index_to_id.len() {
+            for (i, &pos) in snap.positions.iter().enumerate() {
+                self.state.positions.set(i, pos);
+            }
+        }
+
         let is_animating = !self.state.animations.tracks.is_empty();
         let needs_physics = self.physics_enabled
             && (self.physics_temperature > 0.05 || self.interaction_state.drag_start.is_some());
@@ -57,18 +64,8 @@ impl Render for DemoApp {
                     self.interaction_state.rebuild_grid(&self.state);
                 }
             } else if needs_physics {
-                self.run_physics_step();
-                if self.physics_temperature <= 0.05 {
-                    self.interaction_state.rebuild_grid(&self.state);
-                }
+                self.engine.send_command(graphene_layout::GraphCommand::StepLiveSim).ok();
             }
-
-            self.resolve_collisions();
-            graphene_layout::resolve_compound_bounds(
-                &mut self.state,
-                &self.collapsed_parents,
-                20.0,
-            );
 
             cx.spawn(async move |this, cx| {
                 cx.background_executor()

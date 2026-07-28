@@ -1,6 +1,32 @@
 use crate::traits::{get_nesting_depth, Layout};
 use graphene_core::{math::Vec2, GraphState, NodeId};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CosePhase {
+    Initialization,
+    IterativeForces,
+    CompoundBounds,
+    CoolingAndConvergence,
+}
+
+impl std::fmt::Display for CosePhase {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CosePhase::Initialization => write!(f, "Phase I: Initialization & Hierarchy Mapping"),
+            CosePhase::IterativeForces => write!(f, "Phase II: Iterative Force Calculation"),
+            CosePhase::CompoundBounds => write!(f, "Phase III: Compound Boundary Updates"),
+            CosePhase::CoolingAndConvergence => write!(f, "Phase IV: Cooling & Convergence"),
+        }
+    }
+}
+
+static COSE_PHASES: [CosePhase; 4] = [
+    CosePhase::Initialization,
+    CosePhase::IterativeForces,
+    CosePhase::CompoundBounds,
+    CosePhase::CoolingAndConvergence,
+];
+
 pub struct CoseLayout {
     pub iterations: usize,
     pub ideal_edge_length: f32,
@@ -12,6 +38,7 @@ pub struct CoseLayout {
     pub initial_temp: f32,
     pub cooling_factor: f32,
     pub min_temp: f32,
+    pub current_phase_idx: usize,
 }
 
 impl Default for CoseLayout {
@@ -27,6 +54,7 @@ impl Default for CoseLayout {
             initial_temp: 1000.0,
             cooling_factor: 0.99,
             min_temp: 1.0,
+            current_phase_idx: 0,
         }
     }
 }
@@ -261,5 +289,31 @@ impl<S: Copy> Layout<S> for CoseLayout {
 
         crate::collision::resolve_overlaps(state, 10.0);
         state.dirty_flags |= graphene_core::DirtyFlags::POSITION_DIRTY;
+        self.current_phase_idx = 4;
+    }
+}
+
+impl<S: Copy> crate::traits::PhaseSteppableLayout<S> for CoseLayout {
+    type Phase = CosePhase;
+
+    fn phases(&self) -> &[Self::Phase] {
+        &COSE_PHASES
+    }
+
+    fn current_phase(&self) -> Option<Self::Phase> {
+        if self.current_phase_idx < COSE_PHASES.len() {
+            Some(COSE_PHASES[self.current_phase_idx])
+        } else {
+            None
+        }
+    }
+
+    fn step_next_phase(&mut self, state: &mut GraphState<S>) -> bool {
+        if self.current_phase_idx >= COSE_PHASES.len() {
+            return false;
+        }
+        self.current_phase_idx += 1;
+        self.compute(state);
+        self.current_phase_idx < COSE_PHASES.len()
     }
 }

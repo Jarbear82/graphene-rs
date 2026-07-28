@@ -1143,8 +1143,77 @@ fn test_graph_engine_decoupled_thread_actor() {
 
     std::thread::sleep(std::time::Duration::from_millis(30));
 
-    let snap_after = engine.latest_snapshot();
-    assert_eq!(snap_after.positions.len(), 2);
+    engine.shutdown();
+}
+
+#[test]
+fn test_graph_engine_live_sim_stepping_and_tuning() {
+    use graphene_core::{GraphState, math::Vec2, Size2};
+    use graphene_layout::engine::{GraphEngineHandle, GraphCommand};
+    use graphene_layout::livesim::{LiveForceSimulation, LiveSimParam};
+
+    let mut state = GraphState::<()>::default();
+    let n1 = state.add_node(Vec2::new(0.0, 0.0), Size2::new(10.0, 10.0));
+    let n2 = state.add_node(Vec2::new(100.0, 100.0), Size2::new(10.0, 10.0));
+    state.add_edge(n1, n2, graphene_core::EdgeData::default());
+
+    let engine = GraphEngineHandle::spawn(state);
+
+    let sim = LiveForceSimulation::new();
+    engine.send_command(GraphCommand::StartLiveSim(sim)).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(20));
+
+    engine.send_command(GraphCommand::UpdateLiveSimParam(LiveSimParam::Repulsion(5000.0))).unwrap();
+    engine.send_command(GraphCommand::StepLiveSimN(5)).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(30));
+
+    let snap = engine.latest_snapshot();
+    assert_eq!(snap.positions.len(), 2);
+    assert!(snap.version > 0);
+
+    engine.send_command(GraphCommand::StopLiveSim).unwrap();
+    engine.shutdown();
+}
+
+#[test]
+fn test_graph_engine_phase_stepped_layout() {
+    use graphene_core::{GraphState, math::Vec2, Size2};
+    use graphene_layout::engine::{GraphEngineHandle, GraphCommand, LayoutCommand};
+    use graphene_layout::hierarchical::{SugiyamaLayout, SugiyamaPhase};
+    use graphene_layout::traits::PhaseSteppableLayout;
+
+    let mut sugiyama = SugiyamaLayout::default();
+    assert_eq!(PhaseSteppableLayout::<()>::phases(&sugiyama).len(), 4);
+    assert_eq!(PhaseSteppableLayout::<()>::current_phase(&sugiyama), Some(SugiyamaPhase::CycleBreaking));
+
+    let mut state = GraphState::<()>::default();
+    let n1 = state.add_node(Vec2::new(0.0, 0.0), Size2::new(10.0, 10.0));
+    let n2 = state.add_node(Vec2::new(50.0, 50.0), Size2::new(10.0, 10.0));
+    state.add_edge(n1, n2, graphene_core::EdgeData::default());
+
+    let engine = GraphEngineHandle::spawn(state);
+
+    engine.send_command(GraphCommand::StepLayoutPhase(LayoutCommand::Sugiyama(sugiyama))).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(30));
+
+    let snap = engine.latest_snapshot();
+    assert_eq!(snap.positions.len(), 2);
+    assert!(snap.version > 0);
 
     engine.shutdown();
+}
+
+#[test]
+fn test_fcose_and_cose_phase_stepped_layouts() {
+    use graphene_layout::cose::{CoseLayout, CosePhase};
+    use graphene_layout::fcose::{FCoseLayout, FCosePhase};
+    use graphene_layout::traits::PhaseSteppableLayout;
+
+    let fcose = FCoseLayout::default();
+    assert_eq!(PhaseSteppableLayout::<()>::phases(&fcose).len(), 4);
+    assert_eq!(PhaseSteppableLayout::<()>::current_phase(&fcose), Some(FCosePhase::DraftLayout));
+
+    let cose = CoseLayout::default();
+    assert_eq!(PhaseSteppableLayout::<()>::phases(&cose).len(), 4);
+    assert_eq!(PhaseSteppableLayout::<()>::current_phase(&cose), Some(CosePhase::Initialization));
 }

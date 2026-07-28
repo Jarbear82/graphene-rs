@@ -1,6 +1,18 @@
 use crate::quadtree::Quadtree;
 use graphene_core::{math::Vec2, GraphState, HierarchyExt};
 use std::cell::RefCell;
+/// Tunable parameters for live force-directed simulation
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum LiveSimParam {
+    Repulsion(f32),
+    Attraction(f32),
+    Gravity(f32),
+    IdealLength(f32),
+    Temperature(f32),
+    CoolingRate(f32),
+    BarnesHut { enabled: bool, theta: f32 },
+}
+
 /// Live force-directed simulation that can be advanced frame-by-frame
 ///
 /// This struct maintains internal state for the simulation and allows
@@ -30,6 +42,22 @@ impl LiveForceSimulation {
             cooling_rate: 0.95,
             use_barnes_hut: true,
             theta: 0.5,
+        }
+    }
+
+    /// Update a simulation parameter live without resetting state
+    pub fn update_param(&mut self, param: LiveSimParam) {
+        match param {
+            LiveSimParam::Repulsion(v) => self.k_rep = v,
+            LiveSimParam::Attraction(v) => self.k_att = v,
+            LiveSimParam::Gravity(v) => self.gravity = v,
+            LiveSimParam::IdealLength(v) => self.ideal_length = v,
+            LiveSimParam::Temperature(v) => self.temperature = v,
+            LiveSimParam::CoolingRate(v) => self.cooling_rate = v,
+            LiveSimParam::BarnesHut { enabled, theta } => {
+                self.use_barnes_hut = enabled;
+                self.theta = theta;
+            }
         }
     }
 
@@ -214,6 +242,20 @@ impl LiveForceSimulation {
 impl Default for LiveForceSimulation {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl<S: Copy + Default> crate::traits::IterativeLayout<S> for LiveForceSimulation {
+    fn step(&mut self, state: &mut GraphState<S>) -> bool {
+        if self.temperature < 0.01 {
+            return false;
+        }
+        self.tick(state);
+        self.temperature >= 0.01
+    }
+
+    fn is_converged(&self) -> bool {
+        self.temperature < 0.01
     }
 }
 

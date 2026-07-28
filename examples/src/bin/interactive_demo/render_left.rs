@@ -144,6 +144,7 @@ impl DemoApp {
                                     )
                                     .when(is_expanded, |card| {
                                         let fields = self.render_layout_form_fields(name, theme);
+                                        let phase_names = self.get_layout_phases(name);
                                         card.child(
                                             gpui::div()
                                                 .p_2()
@@ -157,12 +158,37 @@ impl DemoApp {
                                                 .child(
                                                     Button::new(SharedString::from(format!("run-btn-{}", name)))
                                                         .primary()
-                                                        .label("RUN LAYOUT")
+                                                        .label("RUN FULL LAYOUT")
                                                         .on_click(cx.listener(move |this, _, _, cx| {
                                                             this.selected_layout = name.to_string();
                                                             this.trigger_layout(cx);
                                                         })),
-                                                ),
+                                                )
+                                                .when(!phase_names.is_empty(), |b| {
+                                                    b.child(
+                                                        gpui::div()
+                                                            .flex()
+                                                            .flex_col()
+                                                            .gap_1()
+                                                            .mt_1()
+                                                            .child(
+                                                                gpui::div()
+                                                                    .text_color(theme.text)
+                                                                    .text_size(px(10.0))
+                                                                    .font_weight(gpui::FontWeight::BOLD)
+                                                                    .child("STEP BY ALGORITHMIC PHASE:"),
+                                                            )
+                                                            .children(phase_names.into_iter().enumerate().map(|(phase_idx, phase_name)| {
+                                                                let btn_id = format!("step-phase-btn-{}-{}", name, phase_idx);
+                                                                Button::new(SharedString::from(btn_id))
+                                                                    .label(SharedString::from(format!("▶ {}", phase_name)))
+                                                                    .on_click(cx.listener(move |this, _, _, cx| {
+                                                                        this.selected_layout = name.to_string();
+                                                                        this.trigger_step_specific_phase(phase_idx, cx);
+                                                                    }))
+                                                            })),
+                                                    )
+                                                }),
                                         )
                                     })
                             })),

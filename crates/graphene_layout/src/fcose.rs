@@ -36,6 +36,32 @@ pub struct FCoseConstraints {
     pub relative_placement: Vec<RelativePlacementConstraint>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FCosePhase {
+    DraftLayout,
+    ComponentPacking,
+    ConstraintSatisfaction,
+    LayoutPolishing,
+}
+
+impl std::fmt::Display for FCosePhase {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            FCosePhase::DraftLayout => write!(f, "Phase I: Draft Layout Generation (Spectral)"),
+            FCosePhase::ComponentPacking => write!(f, "Phase II: Component Packing"),
+            FCosePhase::ConstraintSatisfaction => write!(f, "Phase III: Constraint Satisfaction"),
+            FCosePhase::LayoutPolishing => write!(f, "Phase IV: Layout Polishing (Spring Embedder)"),
+        }
+    }
+}
+
+static FCOSE_PHASES: [FCosePhase; 4] = [
+    FCosePhase::DraftLayout,
+    FCosePhase::ComponentPacking,
+    FCosePhase::ConstraintSatisfaction,
+    FCosePhase::LayoutPolishing,
+];
+
 pub struct FCoseLayout {
     pub iterations: usize,
     pub ideal_edge_length: f32,
@@ -54,6 +80,7 @@ pub struct FCoseLayout {
     pub tiling_padding_vertical: f32,
     pub pack_components: bool,
     pub node_dimensions_include_labels: bool,
+    pub current_phase_idx: usize,
 
     pub constraints: FCoseConstraints,
 
@@ -82,6 +109,7 @@ impl Default for FCoseLayout {
             tiling_padding_vertical: 10.0,
             pack_components: true,
             node_dimensions_include_labels: false,
+            current_phase_idx: 0,
             constraints: FCoseConstraints::default(),
             node_repulsion_fn: None,
             ideal_edge_length_fn: None,
@@ -922,6 +950,32 @@ impl<S: Copy + Default> Layout<S> for FCoseLayout {
 
         crate::collision::resolve_overlaps(state, 10.0);
         state.dirty_flags |= graphene_core::DirtyFlags::POSITION_DIRTY;
+        self.current_phase_idx = 4;
+    }
+}
+
+impl<S: Copy + Default> crate::traits::PhaseSteppableLayout<S> for FCoseLayout {
+    type Phase = FCosePhase;
+
+    fn phases(&self) -> &[Self::Phase] {
+        &FCOSE_PHASES
+    }
+
+    fn current_phase(&self) -> Option<Self::Phase> {
+        if self.current_phase_idx < FCOSE_PHASES.len() {
+            Some(FCOSE_PHASES[self.current_phase_idx])
+        } else {
+            None
+        }
+    }
+
+    fn step_next_phase(&mut self, state: &mut GraphState<S>) -> bool {
+        if self.current_phase_idx >= FCOSE_PHASES.len() {
+            return false;
+        }
+        self.current_phase_idx += 1;
+        self.compute(state);
+        self.current_phase_idx < FCOSE_PHASES.len()
     }
 }
 

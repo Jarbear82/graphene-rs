@@ -147,4 +147,40 @@ impl Quadtree {
             force
         }
     }
+
+    /// Query all node indices whose bounding boxes might overlap with node `i`'s bounding box expanded by `padding`.
+    pub fn query_overlapping_candidates(
+        &self,
+        pos_i: Vec2,
+        half_w_i: f32,
+        half_h_i: f32,
+        padding: f32,
+        out: &mut Vec<usize>,
+    ) {
+        if self.total_mass == 0.0 {
+            return;
+        }
+
+        let query_min_x = pos_i.x - half_w_i - padding;
+        let query_max_x = pos_i.x + half_w_i + padding;
+        let query_min_y = pos_i.y - half_h_i - padding;
+        let query_max_y = pos_i.y + half_h_i + padding;
+
+        let intersects = query_max_x >= self.bounds_min.x
+            && query_min_x <= self.bounds_max.x
+            && query_max_y >= self.bounds_min.y
+            && query_min_y <= self.bounds_max.y;
+
+        if !intersects {
+            return;
+        }
+
+        if let Some(ref children) = self.children {
+            for child in children.iter() {
+                child.query_overlapping_candidates(pos_i, half_w_i, half_h_i, padding, out);
+            }
+        } else {
+            out.extend_from_slice(&self.node_indices);
+        }
+    }
 }

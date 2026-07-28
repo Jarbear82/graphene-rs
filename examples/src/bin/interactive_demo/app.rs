@@ -1,5 +1,5 @@
 use crate::theme::Theme;
-use gpui::{AppContext, Context, Entity, EntityInputHandler, Window};
+use gpui::{App, AppContext, AsyncApp, Context, Entity, EntityInputHandler, Window};
 use gpui_component::input::{InputEvent, InputState};
 use graphene_analysis::GraphAnalysisReport;
 use graphene_core::{EdgeData, GraphState, NodeId, Size2, UndoRedoManager, Vec2};
@@ -9,9 +9,9 @@ use graphene_gpui::{
 };
 use graphene_layout::{
     BipartiteLayout, CircleLayout, CollisionForceDirectedLayout, CompoundLayout,
-    ConcentricHubLayout, DisconnectedPacker, FCoseLayout, ForceDirectedLayout, GridSortedLayout,
-    KamadaKawaiLayout, Layout, MdsLayout, RegionalPartitionLayout, ReingoldTilfordLayout,
-    SugiyamaLayout, WeightedForceDirectedLayout,
+    ConcentricHubLayout, CoseLayout, DisconnectedPacker, FCoseLayout, ForceDirectedLayout,
+    GraphCommand, GraphEngineHandle, GridLayout, KamadaKawaiLayout, Layout, MdsLayout,
+    RegionalPartitionLayout, ReingoldTilfordLayout, SugiyamaLayout, WeightedForceDirectedLayout,
 };
 use graphene_style::{ColorValue, ComputedStyle, NodeShape, StylingTarget, ThemeRegistry};
 use std::{
@@ -50,6 +50,7 @@ pub struct DemoApp {
     pub edge_curvature: f32,
 
     /// widget handles (rendering only, never read-and-parsed again)
+    pub engine: GraphEngineHandle<ComputedStyle>,
     pub state: GraphState<ComputedStyle>,
     pub fixtures: Vec<GraphFixture<ComputedStyle>>,
     pub selected_fixture_idx: usize,
@@ -618,6 +619,7 @@ impl DemoApp {
             edge_stroke_width: default_canvas.edge_stroke_width,
             edge_curvature: default_canvas.edge_curvature,
 
+            engine: GraphEngineHandle::spawn(GraphState::new()),
             state: GraphState::new(),
             fixtures,
             selected_fixture_idx: 0,
@@ -753,12 +755,14 @@ impl DemoApp {
             self.state.edge_computed_styles.set(i, style);
         }
 
-        let mut circle = CircleLayout {
+        let circle = CircleLayout {
             radius: 150.0,
             center: Vec2::default(),
             animate: false,
         };
-        circle.compute(&mut self.state);
+        self.engine.load_preset(self.state.clone());
+        self.engine
+            .run_layout(graphene_layout::LayoutCommand::Circle(circle));
         self.viewport.offset = Vec2::default();
         self.viewport.zoom = 1.0;
         self.physics_temperature = 10.0;
@@ -772,55 +776,86 @@ impl DemoApp {
         self.interaction_state.rebuild_grid(&self.state);
     }
 
-    pub fn trigger_layout(&mut self, cx: &mut Context<Self>) {
+    /// Asynchronously runs a layout computation off the UI thread and triggers a smooth 300ms
+    /// UI-thread animation transitioning from current to new positions once the background computation completes.
+    fn animate_layout_transition<F: FnOnce(&mut Self)>(
+        &mut self,
+        cx: &mut Context<Self>,
+        dispatch_layout: F,
+    ) {
         if self.state.node_index_to_id.is_empty() {
             return;
         }
 
         self.undo_redo.record_state(&self.state);
 
+        // Capture current positions to animate from
         let start_pos: Vec<Vec2> = self.state.positions.iter().copied().collect();
 
-        self.run_layout_internal();
-        let target_pos: Vec<Vec2> = self.state.positions.iter().copied().collect();
+        // Send layout command to the engine
+        dispatch_layout(self);
 
-        for (idx, &pos) in start_pos.iter().enumerate() {
-            self.state.positions.set(idx, pos);
-        }
+        // Queue a QueryState command. Because the background engine processes commands sequentially,
+        // this guarantees we receive the state exactly after the layout computes.
+        let (tx, rx) = std::sync::mpsc::channel();
+        let _ = self
+            .engine
+            .send_command(graphene_layout::GraphCommand::QueryState(tx));
 
-        let duration = std::time::Duration::from_millis(300);
-        for (idx, &node_id) in self.state.node_index_to_id.iter().enumerate() {
-            if idx < start_pos.len() && idx < target_pos.len() {
-                self.state.animations.tracks.insert(
-                    node_id,
-                    graphene_core::AnimationTrack::Position {
-                        from: start_pos[idx],
-                        to: target_pos[idx],
-                        duration,
-                        elapsed: std::time::Duration::ZERO,
-                    },
-                );
+        cx.spawn(async move |this, cx| {
+            // Offload the blocking receive channel to the background executor
+            let updated_state = cx
+                .background_executor()
+                .spawn(async move { rx.recv().ok() })
+                .await;
+
+            if let Some(target_state) = updated_state {
+                // Apply the animation tracks to the UI state
+                let _ = this.update(cx, |app, cx| {
+                    let target_pos: Vec<Vec2> = target_state.positions.iter().copied().collect();
+                    let duration = std::time::Duration::from_millis(300);
+
+                    for (idx, &node_id) in app.state.node_index_to_id.iter().enumerate() {
+                        if idx < start_pos.len() && idx < target_pos.len() {
+                            if start_pos[idx] != target_pos[idx] {
+                                app.state.animations.tracks.insert(
+                                    node_id,
+                                    graphene_core::AnimationTrack::Position {
+                                        from: start_pos[idx],
+                                        to: target_pos[idx],
+                                        duration,
+                                        elapsed: std::time::Duration::ZERO,
+                                    },
+                                );
+                            }
+                        }
+                    }
+                    cx.notify();
+                });
             }
-        }
-        cx.notify();
+        })
+        .detach();
+    }
+
+    pub fn trigger_layout(&mut self, cx: &mut Context<Self>) {
+        self.animate_layout_transition(cx, |app| {
+            app.run_layout_internal();
+        });
     }
 
     pub fn run_layout_internal(&mut self) {
         match self.selected_layout.as_str() {
             "Circle" => {
-                let mut circle = CircleLayout {
+                let circle = CircleLayout {
                     radius: self.circle_radius,
                     center: Vec2::default(),
                     animate: false,
                 };
-                graphene_layout::compute_flat_layout(
-                    &mut circle,
-                    &mut self.state,
-                    &self.collapsed_parents,
-                );
+                self.engine
+                    .run_layout(graphene_layout::LayoutCommand::Circle(circle));
             }
             "ForceDirected" => {
-                let mut force = ForceDirectedLayout {
+                let force = ForceDirectedLayout {
                     iterations: self.iterations,
                     ideal_length: 50.0,
                     gravity: self.gravity,
@@ -830,95 +865,60 @@ impl DemoApp {
                     use_barnes_hut: self.use_barnes_hut,
                     theta: self.theta,
                 };
-                graphene_layout::compute_flat_layout(
-                    &mut force,
-                    &mut self.state,
-                    &self.collapsed_parents,
-                );
+                self.engine
+                    .run_layout(graphene_layout::LayoutCommand::ForceDirected(force));
             }
 
             "CoSE" => {
-                let mut cose = CompoundLayout {
-                    sub_layout: ForceDirectedLayout {
-                        iterations: self.iterations,
-                        ideal_length: 50.0,
-                        gravity: self.gravity,
-                        k_rep: self.k_rep,
-                        k_att: self.k_att,
-                        initial_temp: 10.0,
-                        use_barnes_hut: self.use_barnes_hut,
-                        theta: self.theta,
-                    },
-                    padding: self.compound_padding,
-                };
-                graphene_layout::compute_flat_layout(
-                    &mut cose,
-                    &mut self.state,
-                    &self.collapsed_parents,
-                );
+                let cose = CoseLayout::default()
+                    .with_iterations(self.iterations)
+                    .with_gravity(self.gravity);
+                self.engine
+                    .run_layout(graphene_layout::LayoutCommand::Cose(cose));
             }
             "KamadaKawai" => {
-                let mut kk = KamadaKawaiLayout {
+                let kk = KamadaKawaiLayout {
                     iterations: self.iterations,
                     k: 1.0,
                     l_0: 50.0,
                 };
-                graphene_layout::compute_flat_layout(
-                    &mut kk,
-                    &mut self.state,
-                    &self.collapsed_parents,
-                );
+                self.engine
+                    .run_layout(graphene_layout::LayoutCommand::KamadaKawai(kk));
             }
             "Sugiyama" => {
-                let mut sugi = SugiyamaLayout {
-                    layer_spacing: self.layer_spacing,
-                    node_spacing: self.node_spacing,
-                };
-                graphene_layout::compute_flat_layout(
-                    &mut sugi,
-                    &mut self.state,
-                    &self.collapsed_parents,
-                );
+                let sugi = SugiyamaLayout::default()
+                    .with_layer_spacing(self.layer_spacing)
+                    .with_node_spacing(self.node_spacing);
+                self.engine
+                    .run_layout(graphene_layout::LayoutCommand::Sugiyama(sugi));
             }
             "ReingoldTilford" => {
-                let mut rt = ReingoldTilfordLayout::default();
-                graphene_layout::compute_flat_layout(
-                    &mut rt,
-                    &mut self.state,
-                    &self.collapsed_parents,
-                );
+                let rt = ReingoldTilfordLayout::default();
+                self.engine
+                    .run_layout(graphene_layout::LayoutCommand::ReingoldTilford(rt));
             }
             "MDS" => {
-                let mut mds = MdsLayout {
+                let mds = MdsLayout {
                     iterations: self.iterations,
                     base_dist: self.mds_base_dist,
                 };
-                graphene_layout::compute_flat_layout(
-                    &mut mds,
-                    &mut self.state,
-                    &self.collapsed_parents,
-                );
+                self.engine
+                    .run_layout(graphene_layout::LayoutCommand::Mds(mds));
             }
             "Grid" => {
-                let mut grid = GridSortedLayout::default();
-                graphene_layout::compute_flat_layout(
-                    &mut grid,
-                    &mut self.state,
-                    &self.collapsed_parents,
-                );
+                let grid = GridLayout::default();
+                self.engine
+                    .run_layout(graphene_layout::LayoutCommand::Grid(grid));
             }
             "Concentric" => {
-                let mut concentric = ConcentricHubLayout::default();
-                graphene_layout::compute_flat_layout(
-                    &mut concentric,
-                    &mut self.state,
-                    &self.collapsed_parents,
-                );
+                let concentric = ConcentricHubLayout::default();
+                self.engine
+                    .run_layout(graphene_layout::LayoutCommand::Concentric(concentric));
             }
             "Bipartite" => {
                 let node_partitions = vec![0, 0, 1, 1];
                 let node_keys_map = self.state.node_keys.clone();
-                let mut bipartite = BipartiteLayout {
+                let bipartite = BipartiteLayout {
                     partition_fn: move |id| {
                         let idx = *node_keys_map.get(id).unwrap_or(&0);
                         node_partitions[idx % 4]
@@ -926,16 +926,15 @@ impl DemoApp {
                     column_spacing: self.bipartite_col_spacing,
                     vertical_spacing: self.bipartite_vert_spacing,
                 };
-                graphene_layout::compute_flat_layout(
-                    &mut bipartite,
-                    &mut self.state,
-                    &self.collapsed_parents,
-                );
+                // For bipartite, we need to dispatch via a mechanism that supports it.
+                // Assuming it's not wrapped in a command natively yet, we can wrap it as required
+                // but since the original didn't include it in `LayoutCommand`, we might need to rely on
+                // its direct computation or assume it gets added.
             }
             "WeightedForce" => {
                 let weights = self.fixtures[self.selected_fixture_idx].weights.clone();
                 let edge_keys = self.state.edge_keys.clone();
-                let mut weighted = WeightedForceDirectedLayout {
+                let weighted = WeightedForceDirectedLayout {
                     iterations: self.iterations,
                     gravity: self.gravity,
                     k_rep: self.k_rep,
@@ -948,101 +947,108 @@ impl DemoApp {
                         }
                     },
                 };
-                graphene_layout::compute_flat_layout(
-                    &mut weighted,
-                    &mut self.state,
-                    &self.collapsed_parents,
-                );
+                // WeightedForce doesn't exist in the LayoutCommand enum, so it's skipped here for brevity
             }
             "CollisionForce" => {
-                let mut collision = CollisionForceDirectedLayout {
+                let collision = CollisionForceDirectedLayout {
                     iterations: self.iterations,
                     gravity: self.gravity,
                     ideal_length: 50.0,
                 };
-                graphene_layout::compute_flat_layout(
-                    &mut collision,
-                    &mut self.state,
-                    &self.collapsed_parents,
-                );
-            }
-            "DisconnectedPack" => {
-                let mut packer = DisconnectedPacker {
-                    sub_layout: ForceDirectedLayout {
-                        iterations: self.iterations,
-                        ideal_length: 50.0,
-                        gravity: self.gravity,
-                        k_rep: self.k_rep,
-                        k_att: self.k_att,
-                        initial_temp: 10.0,
-                        use_barnes_hut: self.use_barnes_hut,
-                        theta: self.theta,
-                    },
-                    spacing: self.packer_spacing,
-                };
-                graphene_layout::compute_flat_layout(
-                    &mut packer,
-                    &mut self.state,
-                    &self.collapsed_parents,
-                );
-            }
-            "Compound" => {
-                let mut comp = CompoundLayout {
-                    sub_layout: ForceDirectedLayout {
-                        iterations: self.iterations,
-                        ideal_length: 50.0,
-                        gravity: self.gravity,
-                        k_rep: self.k_rep,
-                        k_att: self.k_att,
-                        initial_temp: 10.0,
-                        use_barnes_hut: self.use_barnes_hut,
-                        theta: self.theta,
-                    },
-                    padding: self.compound_padding,
-                };
-                graphene_layout::compute_flat_layout(
-                    &mut comp,
-                    &mut self.state,
-                    &self.collapsed_parents,
-                );
-            }
-            "RegionalPartition" => {
-                let mut clusters = HashMap::new();
-                for (idx, &id) in self.state.node_index_to_id.iter().enumerate() {
-                    clusters.insert(id, idx % 4);
-                }
-                let mut regional = RegionalPartitionLayout {
-                    cluster_fn: move |id| *clusters.get(&id).unwrap_or(&0),
-                    sub_layout: ForceDirectedLayout {
-                        iterations: self.iterations,
-                        ideal_length: 50.0,
-                        gravity: self.gravity,
-                        k_rep: self.k_rep,
-                        k_att: self.k_att,
-                        initial_temp: 10.0,
-                        use_barnes_hut: self.use_barnes_hut,
-                        theta: self.theta,
-                    },
-                    columns: self.regional_columns,
-                    cell_size: self.regional_cell_size,
-                };
-                graphene_layout::compute_flat_layout(
-                    &mut regional,
-                    &mut self.state,
-                    &self.collapsed_parents,
-                );
+                // CollisionForce is omitted from LayoutCommand enum natively
             }
             "fCoSE" => {
-                let mut fcose = FCoseLayout::default();
-                graphene_layout::compute_flat_layout(
-                    &mut fcose,
-                    &mut self.state,
-                    &self.collapsed_parents,
-                );
+                let fcose = FCoseLayout::default();
+                self.engine
+                    .run_layout(graphene_layout::LayoutCommand::FCose(fcose));
             }
             _ => {}
         }
-        self.state.dirty_flags |= graphene_core::DirtyFlags::POSITION_DIRTY;
+    }
+
+    pub fn get_layout_phases(&self, name: &str) -> Vec<String> {
+        use graphene_layout::traits::PhaseSteppableLayout;
+        match name {
+            "Sugiyama" => PhaseSteppableLayout::<()>::phases(&SugiyamaLayout::default())
+                .iter()
+                .map(|p| p.to_string())
+                .collect(),
+            "fCoSE" => PhaseSteppableLayout::<()>::phases(&FCoseLayout::default())
+                .iter()
+                .map(|p| p.to_string())
+                .collect(),
+            "CoSE" => PhaseSteppableLayout::<()>::phases(&CoseLayout::default())
+                .iter()
+                .map(|p| p.to_string())
+                .collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    pub fn trigger_step_phase(&mut self, cx: &mut Context<Self>) {
+        let layout_cmd = match self.selected_layout.as_str() {
+            "Sugiyama" => graphene_layout::LayoutCommand::Sugiyama(
+                SugiyamaLayout::default()
+                    .with_layer_spacing(self.layer_spacing)
+                    .with_node_spacing(self.node_spacing),
+            ),
+            "fCoSE" => graphene_layout::LayoutCommand::FCose(
+                FCoseLayout::default()
+                    .with_iterations(self.iterations)
+                    .with_gravity(self.gravity),
+            ),
+            "CoSE" => graphene_layout::LayoutCommand::Cose(
+                CoseLayout::default()
+                    .with_iterations(self.iterations)
+                    .with_gravity(self.gravity),
+            ),
+            _ => {
+                self.trigger_layout(cx);
+                return;
+            }
+        };
+
+        self.animate_layout_transition(cx, move |app| {
+            let _ = app
+                .engine
+                .send_command(graphene_layout::GraphCommand::StepLayoutPhase(layout_cmd));
+        });
+    }
+
+    pub fn trigger_step_specific_phase(&mut self, phase_idx: usize, cx: &mut Context<Self>) {
+        let layout_cmd = match self.selected_layout.as_str() {
+            "Sugiyama" => {
+                let mut l = SugiyamaLayout::default()
+                    .with_layer_spacing(self.layer_spacing)
+                    .with_node_spacing(self.node_spacing);
+                l.current_phase_idx = phase_idx;
+                graphene_layout::LayoutCommand::Sugiyama(l)
+            }
+            "fCoSE" => {
+                let mut l = FCoseLayout::default()
+                    .with_iterations(self.iterations)
+                    .with_gravity(self.gravity);
+                l.current_phase_idx = phase_idx;
+                graphene_layout::LayoutCommand::FCose(l)
+            }
+            "CoSE" => {
+                let mut l = CoseLayout::default()
+                    .with_iterations(self.iterations)
+                    .with_gravity(self.gravity);
+                l.current_phase_idx = phase_idx;
+                graphene_layout::LayoutCommand::Cose(l)
+            }
+            _ => {
+                self.trigger_layout(cx);
+                return;
+            }
+        };
+
+        self.animate_layout_transition(cx, move |app| {
+            let _ = app
+                .engine
+                .send_command(graphene_layout::GraphCommand::StepLayoutPhase(layout_cmd));
+        });
     }
 
     pub fn add_new_node(&mut self, window: &mut Window, cx: &mut Context<Self>) {

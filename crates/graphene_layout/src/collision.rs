@@ -241,32 +241,72 @@ pub fn resolve_overlaps<S: Copy>(state: &mut GraphState<S>, padding: f32) {
 
     // Phase 1: Adaptive Uniform Expansion for tightly packed graphs
     let mut max_scale = 1.0f32;
-    for i in 0..n {
-        let pos_i = *state.positions.get(i);
-        let size_i = *state.sizes.get(i);
-        let hw_i = size_i.w / 2.0;
-        let hh_i = size_i.h / 2.0;
+    if n > 50 {
+        let positions: Vec<Vec2> = (0..n).map(|i| *state.positions.get(i)).collect();
+        let quadtree = crate::quadtree::Quadtree::build(&positions);
+        let mut candidates = Vec::with_capacity(32);
 
-        for j in (i + 1)..n {
-            if is_hierarchical_pair(state, i, j) { continue; }
+        for i in 0..n {
+            let pos_i = positions[i];
+            let size_i = *state.sizes.get(i);
+            let hw_i = size_i.w / 2.0;
+            let hh_i = size_i.h / 2.0;
 
-            let pos_j = *state.positions.get(j);
-            let size_j = *state.sizes.get(j);
-            let hw_j = size_j.w / 2.0;
-            let hh_j = size_j.h / 2.0;
+            candidates.clear();
+            quadtree.query_overlapping_candidates(pos_i, hw_i, hh_i, padding, &mut candidates);
 
-            let min_dist_x = hw_i + hw_j + padding;
-            let min_dist_y = hh_i + hh_j + padding;
+            for &j in &candidates {
+                if j <= i || is_hierarchical_pair(state, i, j) { continue; }
 
-            let dx = (pos_i.x - pos_j.x).abs();
-            let dy = (pos_i.y - pos_j.y).abs();
+                let pos_j = positions[j];
+                let size_j = *state.sizes.get(j);
+                let hw_j = size_j.w / 2.0;
+                let hh_j = size_j.h / 2.0;
 
-            if dx < min_dist_x && dy < min_dist_y {
-                let sx = if dx > 0.1 { min_dist_x / dx } else { 2.0 };
-                let sy = if dy > 0.1 { min_dist_y / dy } else { 2.0 };
-                let s = sx.min(sy);
-                if s > max_scale && s < 10.0 {
-                    max_scale = s;
+                let min_dist_x = hw_i + hw_j + padding;
+                let min_dist_y = hh_i + hh_j + padding;
+
+                let dx = (pos_i.x - pos_j.x).abs();
+                let dy = (pos_i.y - pos_j.y).abs();
+
+                if dx < min_dist_x && dy < min_dist_y {
+                    let sx = if dx > 0.1 { min_dist_x / dx } else { 2.0 };
+                    let sy = if dy > 0.1 { min_dist_y / dy } else { 2.0 };
+                    let s = sx.min(sy);
+                    if s > max_scale && s < 10.0 {
+                        max_scale = s;
+                    }
+                }
+            }
+        }
+    } else {
+        for i in 0..n {
+            let pos_i = *state.positions.get(i);
+            let size_i = *state.sizes.get(i);
+            let hw_i = size_i.w / 2.0;
+            let hh_i = size_i.h / 2.0;
+
+            for j in (i + 1)..n {
+                if is_hierarchical_pair(state, i, j) { continue; }
+
+                let pos_j = *state.positions.get(j);
+                let size_j = *state.sizes.get(j);
+                let hw_j = size_j.w / 2.0;
+                let hh_j = size_j.h / 2.0;
+
+                let min_dist_x = hw_i + hw_j + padding;
+                let min_dist_y = hh_i + hh_j + padding;
+
+                let dx = (pos_i.x - pos_j.x).abs();
+                let dy = (pos_i.y - pos_j.y).abs();
+
+                if dx < min_dist_x && dy < min_dist_y {
+                    let sx = if dx > 0.1 { min_dist_x / dx } else { 2.0 };
+                    let sy = if dy > 0.1 { min_dist_y / dy } else { 2.0 };
+                    let s = sx.min(sy);
+                    if s > max_scale && s < 10.0 {
+                        max_scale = s;
+                    }
                 }
             }
         }
@@ -279,10 +319,19 @@ pub fn resolve_overlaps<S: Copy>(state: &mut GraphState<S>, padding: f32) {
         }
     }
 
-    // Phase 2: Minimum Translation Vector (MTV) Overlap Resolution
-    let max_iterations = 300;
+    // Phase 2: Minimum Translation Vector (MTV) Overlap Resolution with Quadtree acceleration
+    let max_iterations = if n > 500 { 50 } else { 200 };
+    let mut candidates = Vec::with_capacity(32);
+
     for _iter in 0..max_iterations {
         let mut overlap_found = false;
+
+        let positions: Option<Vec<Vec2>> = if n > 50 {
+            Some((0..n).map(|i| *state.positions.get(i)).collect())
+        } else {
+            None
+        };
+        let quadtree = positions.as_ref().map(|p| crate::quadtree::Quadtree::build(p));
 
         for i in 0..n {
             let pos_i = *state.positions.get(i);
@@ -290,9 +339,15 @@ pub fn resolve_overlaps<S: Copy>(state: &mut GraphState<S>, padding: f32) {
             let hw_i = size_i.w / 2.0;
             let hh_i = size_i.h / 2.0;
 
-            for j in (i + 1)..n {
-                if is_hierarchical_pair(state, i, j) { continue; }
+            candidates.clear();
+            if let Some(ref qt) = quadtree {
+                qt.query_overlapping_candidates(pos_i, hw_i, hh_i, padding, &mut candidates);
+            }
 
+            let mut process_pair = |state: &mut GraphState<S>, j: usize, overlap_found: &mut bool| {
+                if j <= i || is_hierarchical_pair(state, i, j) { return; }
+
+                let pos_i = *state.positions.get(i);
                 let pos_j = *state.positions.get(j);
                 let size_j = *state.sizes.get(j);
                 let hw_j = size_j.w / 2.0;
@@ -313,7 +368,7 @@ pub fn resolve_overlaps<S: Copy>(state: &mut GraphState<S>, padding: f32) {
                 let overlap_y = min_dist_y - dy.abs();
 
                 if overlap_x > 0.0 && overlap_y > 0.0 {
-                    overlap_found = true;
+                    *overlap_found = true;
 
                     let (shift_x, shift_y) = if overlap_x < overlap_y {
                         let sign_x = if dx >= 0.0 { 1.0 } else { -1.0 };
@@ -328,6 +383,16 @@ pub fn resolve_overlaps<S: Copy>(state: &mut GraphState<S>, padding: f32) {
 
                     state.positions.set(i, new_pos_i);
                     state.positions.set(j, new_pos_j);
+                }
+            };
+
+            if quadtree.is_some() {
+                for &j in &candidates {
+                    process_pair(state, j, &mut overlap_found);
+                }
+            } else {
+                for j in (i + 1)..n {
+                    process_pair(state, j, &mut overlap_found);
                 }
             }
         }

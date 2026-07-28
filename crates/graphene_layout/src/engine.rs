@@ -5,6 +5,10 @@ use crate::force::ForceDirectedLayout;
 use crate::hierarchical::SugiyamaLayout;
 use crate::livesim::{LiveForceSimulation, RenderSnapshot};
 use crate::traits::Layout;
+use crate::ConcentricHubLayout;
+use crate::KamadaKawaiLayout;
+use crate::MdsLayout;
+use crate::ReingoldTilfordLayout;
 use graphene_analysis::GraphAnalysisReport;
 use graphene_core::math::{Size2, Vec2};
 use graphene_core::{EdgeData, GraphState, NodeId};
@@ -20,25 +24,54 @@ pub enum LayoutCommand {
     Circle(CircleLayout),
     Grid(GridLayout),
     Sugiyama(SugiyamaLayout),
+    KamadaKawai(KamadaKawaiLayout),
+    ReingoldTilford(ReingoldTilfordLayout),
+    Mds(MdsLayout),
+    Concentric(ConcentricHubLayout),
 }
 
 /// Asynchronous commands sent from the main UI thread to the GraphEngine thread.
 pub enum GraphCommand<S: Copy + Send + 'static> {
-    AddNode { pos: Vec2, size: Size2, data: S },
-    AddEdge { source: NodeId, target: NodeId, data: EdgeData },
+    AddNode {
+        pos: Vec2,
+        size: Size2,
+        data: S,
+    },
+    AddEdge {
+        source: NodeId,
+        target: NodeId,
+        data: EdgeData,
+    },
     RemoveNode(NodeId),
     RemoveEdge(graphene_core::EdgeId),
-    SetPosition { id: NodeId, pos: Vec2 },
-    TranslateNode { id: NodeId, delta: Vec2 },
+    SetPosition {
+        id: NodeId,
+        pos: Vec2,
+    },
+    TranslateNode {
+        id: NodeId,
+        delta: Vec2,
+    },
     LoadPreset(GraphState<S>),
     RunLayout(LayoutCommand),
-    RunAnalysis { is_directed: bool },
+    RunAnalysis {
+        is_directed: bool,
+    },
     StartLiveSim(LiveForceSimulation),
     StopLiveSim,
     StepLiveSim,
+    StepLiveSimN(usize),
+    StepLayoutPhase(LayoutCommand),
+    UpdateLiveSimParam(crate::livesim::LiveSimParam),
     SetUiMode(bool),
-    SetNodeLabel { id: NodeId, label: String },
-    UpdateCachedNodeSize { id: NodeId, size: Size2 },
+    SetNodeLabel {
+        id: NodeId,
+        label: String,
+    },
+    UpdateCachedNodeSize {
+        id: NodeId,
+        size: Size2,
+    },
     QueryState(Sender<GraphState<S>>),
     Shutdown,
 }
@@ -58,7 +91,8 @@ impl<S: Copy + Default + Send + Sync + 'static> GraphEngineHandle<S> {
         let (command_tx, command_rx) = channel::<GraphCommand<S>>();
 
         let n = initial_state.node_index_to_id.len();
-        let initial_positions: Vec<Vec2> = (0..n).map(|i| *initial_state.positions.get(i)).collect();
+        let initial_positions: Vec<Vec2> =
+            (0..n).map(|i| *initial_state.positions.get(i)).collect();
         let initial_sizes: Vec<Size2> = (0..n).map(|i| *initial_state.sizes.get(i)).collect();
 
         let snapshot = Arc::new(RwLock::new(RenderSnapshot {
@@ -80,7 +114,14 @@ impl<S: Copy + Default + Send + Sync + 'static> GraphEngineHandle<S> {
             loop {
                 if active_sim.is_some() {
                     while let Ok(cmd) = command_rx.try_recv() {
-                        if !Self::process_command(&mut state, &mut active_sim, cmd, &snapshot_clone, &analysis_report_clone, &mut version_counter) {
+                        if !Self::process_command(
+                            &mut state,
+                            &mut active_sim,
+                            cmd,
+                            &snapshot_clone,
+                            &analysis_report_clone,
+                            &mut version_counter,
+                        ) {
                             return;
                         }
                     }
@@ -92,7 +133,14 @@ impl<S: Copy + Default + Send + Sync + 'static> GraphEngineHandle<S> {
                 } else {
                     match command_rx.recv() {
                         Ok(cmd) => {
-                            if !Self::process_command(&mut state, &mut active_sim, cmd, &snapshot_clone, &analysis_report_clone, &mut version_counter) {
+                            if !Self::process_command(
+                                &mut state,
+                                &mut active_sim,
+                                cmd,
+                                &snapshot_clone,
+                                &analysis_report_clone,
+                                &mut version_counter,
+                            ) {
                                 return;
                             }
                         }
@@ -124,7 +172,11 @@ impl<S: Copy + Default + Send + Sync + 'static> GraphEngineHandle<S> {
                 *version += 1;
                 Self::publish_snapshot(state, snapshot, *version);
             }
-            GraphCommand::AddEdge { source, target, data } => {
+            GraphCommand::AddEdge {
+                source,
+                target,
+                data,
+            } => {
                 state.add_edge(source, target, data);
                 *version += 1;
                 Self::publish_snapshot(state, snapshot, *version);
@@ -167,6 +219,10 @@ impl<S: Copy + Default + Send + Sync + 'static> GraphEngineHandle<S> {
                     LayoutCommand::Circle(mut l) => l.compute(state),
                     LayoutCommand::Grid(mut l) => l.compute(state),
                     LayoutCommand::Sugiyama(mut l) => l.compute(state),
+                    LayoutCommand::Concentric(mut l) => l.compute(state),
+                    LayoutCommand::KamadaKawai(mut l) => l.compute(state),
+                    LayoutCommand::Mds(mut l) => l.compute(state),
+                    LayoutCommand::ReingoldTilford(mut l) => l.compute(state),
                 }
                 *version += 1;
                 Self::publish_snapshot(state, snapshot, *version);
@@ -194,6 +250,42 @@ impl<S: Copy + Default + Send + Sync + 'static> GraphEngineHandle<S> {
                     sim.tick(state);
                     *version += 1;
                     Self::publish_snapshot(state, snapshot, *version);
+                }
+            }
+            GraphCommand::StepLiveSimN(steps) => {
+                if let Some(ref mut sim) = active_sim {
+                    for _ in 0..steps {
+                        sim.tick(state);
+                    }
+                    *version += 1;
+                    Self::publish_snapshot(state, snapshot, *version);
+                }
+            }
+            GraphCommand::StepLayoutPhase(layout_cmd) => {
+                use crate::traits::PhaseSteppableLayout;
+                match layout_cmd {
+                    LayoutCommand::Sugiyama(mut s) => {
+                        s.step_next_phase(state);
+                    }
+                    LayoutCommand::Cose(mut c) => {
+                        c.step_next_phase(state);
+                    }
+                    LayoutCommand::FCose(mut f) => {
+                        f.step_next_phase(state);
+                    }
+                    other => match other {
+                        LayoutCommand::ForceDirected(mut l) => l.compute(state),
+                        LayoutCommand::Circle(mut l) => l.compute(state),
+                        LayoutCommand::Grid(mut l) => l.compute(state),
+                        _ => unreachable!(),
+                    },
+                }
+                *version += 1;
+                Self::publish_snapshot(state, snapshot, *version);
+            }
+            GraphCommand::UpdateLiveSimParam(param) => {
+                if let Some(ref mut sim) = active_sim {
+                    sim.update_param(param);
                 }
             }
             GraphCommand::SetUiMode(is_ui) => {
@@ -253,7 +345,10 @@ impl<S: Copy + Default + Send + Sync + 'static> GraphEngineHandle<S> {
     }
 
     /// Send an async command to the GraphEngine thread.
-    pub fn send_command(&self, cmd: GraphCommand<S>) -> Result<(), std::sync::mpsc::SendError<GraphCommand<S>>> {
+    pub fn send_command(
+        &self,
+        cmd: GraphCommand<S>,
+    ) -> Result<(), std::sync::mpsc::SendError<GraphCommand<S>>> {
         self.command_tx.send(cmd)
     }
 
