@@ -62,6 +62,10 @@ static FCOSE_PHASES: [FCosePhase; 4] = [
     FCosePhase::LayoutPolishing,
 ];
 
+/// fCoSE fast compound graph layout algorithm.
+///
+/// Reference: Balci, H., & Dogrusoz, U. (2021). "fCoSE: A fast compound graph layout algorithm."
+/// IEEE Transactions on Visualization and Computer Graphics, 28(12), 4282–4293.
 pub struct FCoseLayout {
     pub iterations: usize,
     pub ideal_edge_length: f32,
@@ -348,123 +352,7 @@ impl<S: Copy + Default> Layout<S> for FCoseLayout {
                 components.push(comp);
             }
 
-            let mut ext_adj = adj.clone();
-            if components.len() > 1 {
-                let dummy = n;
-                ext_adj.push(Vec::new());
-                for comp in &components {
-                    let rep = comp[0];
-                    ext_adj[dummy].push(rep);
-                    ext_adj[rep].push(dummy);
-                }
-            }
-
-            let total_nodes = ext_adj.len();
-            let total_nodes = ext_adj.len();
-            let mut dists = vec![f32::INFINITY; total_nodes * total_nodes];
-            for start in 0..total_nodes {
-                dists[start * total_nodes + start] = 0.0;
-                let mut q = std::collections::VecDeque::new();
-                q.push_back(start);
-                while let Some(curr) = q.pop_front() {
-                    let d_curr = dists[start * total_nodes + curr];
-                    for &next in &ext_adj[curr] {
-                        if dists[start * total_nodes + next] == f32::INFINITY {
-                            dists[start * total_nodes + next] = d_curr + 1.0;
-                            q.push_back(next);
-                        }
-                    }
-                }
-            }
-
-            let mut d_matrix = vec![0.0f32; n * n];
-            for i in 0..n {
-                for j in 0..n {
-                    let val = dists[i * total_nodes + j];
-                    d_matrix[i * n + j] = if val.is_finite() { val * val } else { 16.0 };
-                }
-            }
-
-            let mut row_sums = vec![0.0f32; n];
-            let mut total_sum = 0.0f32;
-            for i in 0..n {
-                let mut r_sum = 0.0f32;
-                for j in 0..n {
-                    r_sum += d_matrix[i * n + j];
-                }
-                row_sums[i] = r_sum;
-                total_sum += r_sum;
-            }
-
-            let mut b_matrix = vec![0.0f32; n * n];
-            let l_f = n as f32;
-            for i in 0..n {
-                for j in 0..n {
-                    b_matrix[i * n + j] = -0.5 * (d_matrix[i * n + j] - row_sums[i] / l_f - row_sums[j] / l_f + total_sum / (l_f * l_f));
-                }
-            }
-
-            let mut seed = 42u64;
-            let mut lcg_rand = || {
-                seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
-                (seed >> 32) as f32 / u32::MAX as f32
-            };
-
-            let power_iteration = |matrix: &[f32], sz: usize, rand_fn: &mut dyn FnMut() -> f32| -> (f32, Vec<f32>) {
-                let mut u_vec = vec![0.0f32; sz];
-                for val in u_vec.iter_mut() {
-                    *val = rand_fn() - 0.5;
-                }
-                let norm = u_vec.iter().map(|&x| x * x).sum::<f32>().sqrt().max(1e-5);
-                for val in u_vec.iter_mut() {
-                    *val /= norm;
-                }
-
-                for _ in 0..100 {
-                    let mut w_vec = vec![0.0f32; sz];
-                    for row in 0..sz {
-                        for col in 0..sz {
-                            w_vec[row] += matrix[row * sz + col] * u_vec[col];
-                        }
-                    }
-                    let w_norm = w_vec.iter().map(|&x| x * x).sum::<f32>().sqrt();
-                    if w_norm < 1e-5 {
-                        break;
-                    }
-                    for row in 0..sz {
-                        u_vec[row] = w_vec[row] / w_norm;
-                    }
-                }
-
-                let mut lamb = 0.0f32;
-                let mut mu_vec = vec![0.0f32; sz];
-                for row in 0..sz {
-                    for col in 0..sz {
-                        mu_vec[row] += matrix[row * sz + col] * u_vec[col];
-                    }
-                    lamb += u_vec[row] * mu_vec[row];
-                }
-
-                (lamb, u_vec)
-            };
-
-            let (lambda_1, v_1) = power_iteration(&b_matrix, n, &mut lcg_rand);
-            let mut b_deflated = b_matrix.clone();
-            if lambda_1 > 0.0 {
-                for i in 0..n {
-                    for j in 0..n {
-                        b_deflated[i * n + j] -= lambda_1 * v_1[i] * v_1[j];
-                    }
-                }
-            }
-            let (lambda_2, v_2) = power_iteration(&b_deflated, n, &mut lcg_rand);
-
-            let l1 = lambda_1.max(0.0).sqrt();
-            let l2 = lambda_2.max(0.0).sqrt();
-            let mut draft_coords = vec![Vec2::default(); n];
-            for i in 0..n {
-                draft_coords[i] = Vec2::new(l1 * v_1[i], l2 * v_2[i]);
-            }
+            let draft_coords = spectral_placement_landmark(state, 30, self.ideal_edge_length);
 
             let mut total_dist = 0.0f32;
             let mut edge_cnt = 0;
@@ -488,119 +376,132 @@ impl<S: Copy + Default> Layout<S> for FCoseLayout {
         }
 
         let project_constraints = |h_state: &mut GraphState<S>, cons: &FCoseConstraints| {
+            let num_nodes = h_state.node_index_to_id.len();
+            let mut fixed_xs: Vec<Option<f32>> = vec![None; num_nodes];
+            let mut fixed_ys: Vec<Option<f32>> = vec![None; num_nodes];
+
             for c in &cons.fixed_nodes {
                 if let Some(&idx) = h_state.node_keys.get(c.node_id) {
                     h_state.positions.set(idx, c.position);
+                    fixed_xs[idx] = Some(c.position.x);
+                    fixed_ys[idx] = Some(c.position.y);
                 }
             }
 
+            let mut xs: Vec<f32> = (0..num_nodes).map(|i| h_state.positions.get(i).x).collect();
+            let mut ys: Vec<f32> = (0..num_nodes).map(|i| h_state.positions.get(i).y).collect();
+
+            let x_constraints: Vec<(usize, usize, f32)> = cons
+                .relative_placement
+                .iter()
+                .filter_map(|c| match c {
+                    RelativePlacementConstraint::LeftRight { left, right, gap } => {
+                        let l = *h_state.node_keys.get(*left)?;
+                        let r = *h_state.node_keys.get(*right)?;
+                        Some((l, r, *gap))
+                    }
+                    _ => None,
+                })
+                .collect();
+
+            let y_constraints: Vec<(usize, usize, f32)> = cons
+                .relative_placement
+                .iter()
+                .filter_map(|c| match c {
+                    RelativePlacementConstraint::TopBottom { top, bottom, gap } => {
+                        let t = *h_state.node_keys.get(*top)?;
+                        let b = *h_state.node_keys.get(*bottom)?;
+                        Some((t, b, *gap))
+                    }
+                    _ => None,
+                })
+                .collect();
+
+            for _pass in 0..5 {
+                for group in &cons.alignment.vertical {
+                    let valid_idxs: Vec<usize> = group
+                        .iter()
+                        .filter_map(|&id| h_state.node_keys.get(id).copied())
+                        .collect();
+                    if !valid_idxs.is_empty() {
+                        let sum_x: f32 = valid_idxs.iter().map(|&idx| xs[idx]).sum();
+                        let avg_x = sum_x / valid_idxs.len() as f32;
+                        for &idx in &valid_idxs {
+                            if fixed_xs[idx].is_none() {
+                                xs[idx] = avg_x;
+                            }
+                        }
+                    }
+                }
+                for group in &cons.alignment.horizontal {
+                    let valid_idxs: Vec<usize> = group
+                        .iter()
+                        .filter_map(|&id| h_state.node_keys.get(id).copied())
+                        .collect();
+                    if !valid_idxs.is_empty() {
+                        let sum_y: f32 = valid_idxs.iter().map(|&idx| ys[idx]).sum();
+                        let avg_y = sum_y / valid_idxs.len() as f32;
+                        for &idx in &valid_idxs {
+                            if fixed_ys[idx].is_none() {
+                                ys[idx] = avg_y;
+                            }
+                        }
+                    }
+                }
+
+                solve_separation_constraints(&mut xs, &x_constraints, &fixed_xs);
+                solve_separation_constraints(&mut ys, &y_constraints, &fixed_ys);
+            }
+
+            for (i, &x) in xs.iter().enumerate() {
+                let mut p = *h_state.positions.get(i);
+                p.x = x;
+                h_state.positions.set(i, p);
+            }
+            for (i, &y) in ys.iter().enumerate() {
+                let mut p = *h_state.positions.get(i);
+                p.y = y;
+                h_state.positions.set(i, p);
+            }
+
             for group in &cons.alignment.vertical {
-                let valid_idxs: Vec<usize> = group.iter()
+                let valid_idxs: Vec<usize> = group
+                    .iter()
                     .filter_map(|&id| h_state.node_keys.get(id).copied())
                     .collect();
                 if !valid_idxs.is_empty() {
                     let sum_x: f32 = valid_idxs.iter().map(|&idx| h_state.positions.get(idx).x).sum();
                     let avg_x = sum_x / valid_idxs.len() as f32;
                     for &idx in &valid_idxs {
-                        let mut p = *h_state.positions.get(idx);
-                        p.x = avg_x;
-                        h_state.positions.set(idx, p);
-                    }
-                }
-            }
-            for group in &cons.alignment.horizontal {
-                let valid_idxs: Vec<usize> = group.iter()
-                    .filter_map(|&id| h_state.node_keys.get(id).copied())
-                    .collect();
-                if !valid_idxs.is_empty() {
-                    let sum_y: f32 = valid_idxs.iter().map(|&idx| h_state.positions.get(idx).y).sum();
-                    let avg_y = sum_y / valid_idxs.len() as f32;
-                    for &idx in &valid_idxs {
-                        let mut p = *h_state.positions.get(idx);
-                        p.y = avg_y;
-                        h_state.positions.set(idx, p);
-                    }
-                }
-            }
-
-            for _ in 0..5 {
-                for rel in &cons.relative_placement {
-                    match rel {
-                        &RelativePlacementConstraint::LeftRight { left, right, gap } => {
-                            if let (Some(&l_idx), Some(&r_idx)) = (h_state.node_keys.get(left), h_state.node_keys.get(right)) {
-                                let l_pos = *h_state.positions.get(l_idx);
-                                let r_pos = *h_state.positions.get(r_idx);
-                                if r_pos.x < l_pos.x + gap {
-                                    let overlap = (l_pos.x + gap) - r_pos.x;
-                                    let mut new_l = l_pos;
-                                    let mut new_r = r_pos;
-                                    let l_fixed = cons.fixed_nodes.iter().any(|f| f.node_id == left);
-                                    let r_fixed = cons.fixed_nodes.iter().any(|f| f.node_id == right);
-                                    if l_fixed && !r_fixed {
-                                        new_r.x += overlap;
-                                    } else if !l_fixed && r_fixed {
-                                        new_l.x -= overlap;
-                                    } else if !l_fixed && !r_fixed {
-                                        new_l.x -= overlap * 0.5;
-                                        new_r.x += overlap * 0.5;
-                                    }
-                                    h_state.positions.set(l_idx, new_l);
-                                    h_state.positions.set(r_idx, new_r);
-                                }
-                            }
-                        }
-                        &RelativePlacementConstraint::TopBottom { top, bottom, gap } => {
-                            if let (Some(&t_idx), Some(&b_idx)) = (h_state.node_keys.get(top), h_state.node_keys.get(bottom)) {
-                                let t_pos = *h_state.positions.get(t_idx);
-                                let b_pos = *h_state.positions.get(b_idx);
-                                if b_pos.y < t_pos.y + gap {
-                                    let overlap = (t_pos.y + gap) - b_pos.y;
-                                    let mut new_t = t_pos;
-                                    let mut new_b = b_pos;
-                                    let t_fixed = cons.fixed_nodes.iter().any(|f| f.node_id == top);
-                                    let b_fixed = cons.fixed_nodes.iter().any(|f| f.node_id == bottom);
-                                    if t_fixed && !b_fixed {
-                                        new_b.y += overlap;
-                                    } else if !t_fixed && b_fixed {
-                                        new_t.y -= overlap;
-                                    } else if !t_fixed && !b_fixed {
-                                        new_t.y -= overlap * 0.5;
-                                        new_b.y += overlap * 0.5;
-                                    }
-                                    h_state.positions.set(t_idx, new_t);
-                                    h_state.positions.set(b_idx, new_b);
-                                }
-                            }
-                        }
-                    }
-                }
-                for group in &cons.alignment.vertical {
-                    let valid_idxs: Vec<usize> = group.iter()
-                        .filter_map(|&id| h_state.node_keys.get(id).copied())
-                        .collect();
-                    if !valid_idxs.is_empty() {
-                        let sum_x: f32 = valid_idxs.iter().map(|&idx| h_state.positions.get(idx).x).sum();
-                        let avg_x = sum_x / valid_idxs.len() as f32;
-                        for &idx in &valid_idxs {
+                        if fixed_xs[idx].is_none() {
                             let mut p = *h_state.positions.get(idx);
                             p.x = avg_x;
                             h_state.positions.set(idx, p);
                         }
                     }
                 }
-                for group in &cons.alignment.horizontal {
-                    let valid_idxs: Vec<usize> = group.iter()
-                        .filter_map(|&id| h_state.node_keys.get(id).copied())
-                        .collect();
-                    if !valid_idxs.is_empty() {
-                        let sum_y: f32 = valid_idxs.iter().map(|&idx| h_state.positions.get(idx).y).sum();
-                        let avg_y = sum_y / valid_idxs.len() as f32;
-                        for &idx in &valid_idxs {
+            }
+            for group in &cons.alignment.horizontal {
+                let valid_idxs: Vec<usize> = group
+                    .iter()
+                    .filter_map(|&id| h_state.node_keys.get(id).copied())
+                    .collect();
+                if !valid_idxs.is_empty() {
+                    let sum_y: f32 = valid_idxs.iter().map(|&idx| h_state.positions.get(idx).y).sum();
+                    let avg_y = sum_y / valid_idxs.len() as f32;
+                    for &idx in &valid_idxs {
+                        if fixed_ys[idx].is_none() {
                             let mut p = *h_state.positions.get(idx);
                             p.y = avg_y;
                             h_state.positions.set(idx, p);
                         }
                     }
+                }
+            }
+
+            for c in &cons.fixed_nodes {
+                if let Some(&idx) = h_state.node_keys.get(c.node_id) {
+                    h_state.positions.set(idx, c.position);
                 }
             }
         };
@@ -949,6 +850,7 @@ impl<S: Copy + Default> Layout<S> for FCoseLayout {
         }
 
         crate::collision::resolve_overlaps(state, 10.0);
+        project_constraints(state, &self.constraints);
         state.dirty_flags |= graphene_core::DirtyFlags::POSITION_DIRTY;
         self.current_phase_idx = 4;
     }
@@ -977,6 +879,247 @@ impl<S: Copy + Default> crate::traits::PhaseSteppableLayout<S> for FCoseLayout {
         self.compute(state);
         self.current_phase_idx < FCOSE_PHASES.len()
     }
+}
+
+struct ConstraintBlock {
+    vars: Vec<usize>,
+    posn: f32,
+}
+
+fn solve_separation_constraints(
+    x: &mut [f32],
+    constraints: &[(usize, usize, f32)],
+    fixed_pos: &[Option<f32>],
+) {
+    let n = x.len();
+    if n == 0 || constraints.is_empty() {
+        return;
+    }
+    let initial_x = x.to_vec();
+    let mut block_of: Vec<usize> = (0..n).collect();
+    let mut blocks: Vec<ConstraintBlock> = (0..n)
+        .map(|i| ConstraintBlock {
+            vars: vec![i],
+            posn: fixed_pos.get(i).and_then(|&fp| fp).unwrap_or(x[i]),
+        })
+        .collect();
+    let mut offsets = vec![0.0f32; n];
+
+    let max_iters = constraints.len() * n + 100;
+    for _iter in 0..max_iters {
+        for i in 0..n {
+            x[i] = blocks[block_of[i]].posn + offsets[i];
+        }
+
+        let violation = constraints
+            .iter()
+            .map(|&(l, r, gap)| (x[l] + gap - x[r], l, r, gap))
+            .filter(|(v, ..)| *v > 1e-4)
+            .max_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+
+        let Some((_, l, r, gap)) = violation else { break };
+
+        let bl = block_of[l];
+        let br = block_of[r];
+        if bl == br {
+            break;
+        }
+
+        let shift = offsets[l] + gap - offsets[r];
+        for &w in &blocks[br].vars {
+            offsets[w] += shift;
+            block_of[w] = bl;
+        }
+
+        let vars_br = std::mem::take(&mut blocks[br].vars);
+        blocks[bl].vars.extend(vars_br);
+
+        let fixed_var = blocks[bl]
+            .vars
+            .iter()
+            .find_map(|&v| fixed_pos.get(v).and_then(|&fp| fp).map(|pos| (v, pos)));
+
+        if let Some((v_fixed, fp)) = fixed_var {
+            blocks[bl].posn = fp - offsets[v_fixed];
+        } else {
+            let num_vars = blocks[bl].vars.len() as f32;
+            let sum_target: f32 = blocks[bl].vars.iter().map(|&v| initial_x[v] - offsets[v]).sum();
+            blocks[bl].posn = sum_target / num_vars;
+        }
+    }
+
+    for i in 0..n {
+        x[i] = blocks[block_of[i]].posn + offsets[i];
+    }
+}
+
+fn spectral_placement_landmark<S: Copy>(
+    state: &GraphState<S>,
+    sample_size: usize,
+    node_separation: f32,
+) -> Vec<Vec2> {
+    let n = state.node_index_to_id.len();
+    if n == 0 {
+        return Vec::new();
+    }
+    if n == 1 {
+        return vec![Vec2::default()];
+    }
+    let sample_size = sample_size.min(n).max(1);
+
+    let mut adj = vec![Vec::new(); n];
+    for i in 0..state.edges.len() {
+        let (Some(&u), Some(&v)) = (
+            state.node_keys.get(*state.edge_sources.get(i)),
+            state.node_keys.get(*state.edge_targets.get(i)),
+        ) else {
+            continue;
+        };
+        adj[u].push(v);
+        adj[v].push(u);
+    }
+
+    let mut c = vec![vec![0.0f32; sample_size]; n];
+    let mut min_dist = vec![f32::INFINITY; n];
+    let mut pivot = 0usize;
+
+    for col in 0..sample_size {
+        let mut dist = vec![f32::INFINITY; n];
+        let mut queue = std::collections::VecDeque::new();
+        dist[pivot] = 0.0;
+        queue.push_back(pivot);
+        while let Some(u) = queue.pop_front() {
+            for &v in &adj[u] {
+                if dist[v].is_infinite() {
+                    dist[v] = dist[u] + 1.0;
+                    queue.push_back(v);
+                }
+            }
+        }
+
+        let max_finite = dist.iter().filter(|d| d.is_finite()).copied().fold(0.0f32, f32::max);
+        let fallback_dist = if max_finite > 0.0 { max_finite * 2.0 } else { 4.0 };
+
+        for i in 0..n {
+            let d_val = if dist[i].is_finite() { dist[i] } else { fallback_dist };
+            c[i][col] = d_val * node_separation;
+            min_dist[i] = min_dist[i].min(c[i][col]);
+        }
+        pivot = (0..n)
+            .max_by(|&a, &b| min_dist[a].partial_cmp(&min_dist[b]).unwrap_or(std::cmp::Ordering::Equal))
+            .unwrap_or(0);
+    }
+
+    for row in &mut c {
+        for v in row.iter_mut() {
+            *v *= *v;
+        }
+    }
+
+    let mut row_sums = vec![0.0f32; n];
+    let mut col_sums = vec![0.0f32; sample_size];
+    let mut grand_sum = 0.0f32;
+
+    for i in 0..n {
+        for m in 0..sample_size {
+            let val = c[i][m];
+            row_sums[i] += val;
+            col_sums[m] += val;
+            grand_sum += val;
+        }
+    }
+
+    let k_f = sample_size as f32;
+    let n_f = n as f32;
+    let grand_avg = grand_sum / (n_f * k_f);
+
+    let mut b = vec![vec![0.0f32; sample_size]; n];
+    for i in 0..n {
+        let r_avg = row_sums[i] / k_f;
+        for m in 0..sample_size {
+            let c_avg = col_sums[m] / n_f;
+            b[i][m] = -0.5 * (c[i][m] - r_avg - c_avg + grand_avg);
+        }
+    }
+
+    let mut k_mat = vec![0.0f32; sample_size * sample_size];
+    for m1 in 0..sample_size {
+        for m2 in 0..sample_size {
+            let mut sum = 0.0f32;
+            for i in 0..n {
+                sum += b[i][m1] * b[i][m2];
+            }
+            k_mat[m1 * sample_size + m2] = sum;
+        }
+    }
+
+    let mut seed = 42u64;
+    let mut lcg_rand = || {
+        seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+        (seed >> 32) as f32 / u32::MAX as f32
+    };
+
+    let power_iteration_k = |matrix: &[f32], sz: usize, rand_fn: &mut dyn FnMut() -> f32| -> (f32, Vec<f32>) {
+        let mut u_vec = vec![0.0f32; sz];
+        for val in u_vec.iter_mut() {
+            *val = rand_fn() - 0.5;
+        }
+        let norm = u_vec.iter().map(|&x| x * x).sum::<f32>().sqrt().max(1e-5);
+        for val in u_vec.iter_mut() {
+            *val /= norm;
+        }
+
+        for _ in 0..100 {
+            let mut w_vec = vec![0.0f32; sz];
+            for row in 0..sz {
+                for col in 0..sz {
+                    w_vec[row] += matrix[row * sz + col] * u_vec[col];
+                }
+            }
+            let w_norm = w_vec.iter().map(|&x| x * x).sum::<f32>().sqrt();
+            if w_norm < 1e-5 {
+                break;
+            }
+            for row in 0..sz {
+                u_vec[row] = w_vec[row] / w_norm;
+            }
+        }
+
+        let mut lamb = 0.0f32;
+        let mut mu_vec = vec![0.0f32; sz];
+        for row in 0..sz {
+            for col in 0..sz {
+                mu_vec[row] += matrix[row * sz + col] * u_vec[col];
+            }
+            lamb += u_vec[row] * mu_vec[row];
+        }
+
+        (lamb, u_vec)
+    };
+
+    let (lambda_1, v_1) = power_iteration_k(&k_mat, sample_size, &mut lcg_rand);
+    let mut k_deflated = k_mat.clone();
+    if lambda_1 > 0.0 {
+        for m1 in 0..sample_size {
+            for m2 in 0..sample_size {
+                k_deflated[m1 * sample_size + m2] -= lambda_1 * v_1[m1] * v_1[m2];
+            }
+        }
+    }
+    let (_lambda_2, v_2) = power_iteration_k(&k_deflated, sample_size, &mut lcg_rand);
+
+    let mut coords = vec![Vec2::default(); n];
+    for i in 0..n {
+        let mut x = 0.0f32;
+        let mut y = 0.0f32;
+        for m in 0..sample_size {
+            x += b[i][m] * v_1[m];
+            y += b[i][m] * v_2[m];
+        }
+        coords[i] = Vec2::new(x, y);
+    }
+
+    coords
 }
 
 #[cfg(test)]

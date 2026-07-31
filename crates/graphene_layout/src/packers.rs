@@ -2,6 +2,9 @@ use crate::traits::Layout;
 use graphene_core::{math::Vec2, GraphState, NodeId};
 use std::collections::{HashMap, HashSet};
 
+/// Disconnected component packing layout wrapper.
+///
+/// Reference: Disconnected component bounding box packing.
 pub struct DisconnectedPacker<L> {
     pub sub_layout: L,
     pub spacing: f32,

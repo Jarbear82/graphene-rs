@@ -16,6 +16,9 @@ use std::sync::mpsc::{channel, Sender};
 use std::sync::{Arc, RwLock};
 use std::thread::{spawn, JoinHandle};
 
+use crate::fruchterman_reingold::FruchtermanReingoldLayout;
+use crate::tutte::TutteBarycentricLayout;
+
 /// Supported layout algorithms for the background GraphEngine thread.
 pub enum LayoutCommand {
     Cose(CoseLayout),
@@ -28,6 +31,8 @@ pub enum LayoutCommand {
     ReingoldTilford(ReingoldTilfordLayout),
     Mds(MdsLayout),
     Concentric(ConcentricHubLayout),
+    FruchtermanReingold(FruchtermanReingoldLayout),
+    Tutte(TutteBarycentricLayout),
 }
 
 /// Asynchronous commands sent from the main UI thread to the GraphEngine thread.
@@ -223,6 +228,8 @@ impl<S: Copy + Default + Send + Sync + 'static> GraphEngineHandle<S> {
                     LayoutCommand::KamadaKawai(mut l) => l.compute(state),
                     LayoutCommand::Mds(mut l) => l.compute(state),
                     LayoutCommand::ReingoldTilford(mut l) => l.compute(state),
+                    LayoutCommand::FruchtermanReingold(mut l) => l.compute(state),
+                    LayoutCommand::Tutte(mut l) => l.compute(state),
                 }
                 *version += 1;
                 Self::publish_snapshot(state, snapshot, *version);

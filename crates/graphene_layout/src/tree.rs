@@ -2,6 +2,10 @@ use crate::traits::Layout;
 use graphene_core::{math::Vec2, GraphState, NodeId};
 use std::collections::HashMap;
 
+/// Reingold-Tilford tidy tree layout.
+///
+/// Reference: Reingold, E. M., & Tilford, J. S. (1981). "Tidier Drawings of Trees."
+/// IEEE Transactions on Software Engineering, SE-7(2), 223–228.
 pub struct ReingoldTilfordLayout {
     pub sibling_spacing: f32,
     pub level_spacing: f32,

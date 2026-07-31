@@ -3,12 +3,16 @@ name = "graphene_layout"
 version = "0.1.0"
 edition = "2021"
 
+[features]
+default = []
+parallel = ["dep:rayon"]
+
 [dependencies]
 graphene_core = { path = "../graphene_core" }
 graphene_fixtures = { path = "../graphene_fixtures" }
 graphene_style = { path = "../graphene_style" }
 graphene_analysis = { path = "../graphene_analysis" }
-
+rayon = { version = "1.8", optional = true }
 
 [dev-dependencies]
 graphene_algorithms = { path = "../graphene_algorithms" }

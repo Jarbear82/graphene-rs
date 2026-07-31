@@ -217,3 +217,37 @@ fn test_fcose_layout_configurability() {
     assert_eq!(layout.randomize, false);
     assert_eq!(layout.compound_padding, 15.0);
 }
+
+#[test]
+fn test_fruchterman_reingold_layout_configurability() {
+    use graphene_layout::FruchtermanReingoldLayout;
+
+    let layout = FruchtermanReingoldLayout::default()
+        .with_width(800.0)
+        .with_length(600.0)
+        .with_iterations(150)
+        .with_initial_temp(80.0);
+
+    assert_eq!(layout.width, 800.0);
+    assert_eq!(layout.length, 600.0);
+    assert_eq!(layout.iterations, 150);
+    assert_eq!(layout.initial_temp, 80.0);
+}
+
+#[test]
+fn test_tutte_barycentric_layout_configurability() {
+    use graphene_layout::TutteBarycentricLayout;
+
+    let mut state = graphene_core::GraphState::<()>::new();
+    let dummy_id = state.add_node(Vec2::default(), graphene_core::math::Size2::default());
+    let layout = TutteBarycentricLayout::default()
+        .with_fixed_boundary(vec![dummy_id])
+        .with_polygon_radius(300.0)
+        .with_max_iterations(100)
+        .with_tol(1e-4);
+
+    assert_eq!(layout.fixed_boundary.len(), 1);
+    assert_eq!(layout.polygon_radius, 300.0);
+    assert_eq!(layout.max_iterations, 100);
+    assert_eq!(layout.tol, 1e-4);
+}

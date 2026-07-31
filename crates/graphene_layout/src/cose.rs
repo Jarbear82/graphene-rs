@@ -27,6 +27,10 @@ static COSE_PHASES: [CosePhase; 4] = [
     CosePhase::CoolingAndConvergence,
 ];
 
+/// CoSE compound graph layout algorithm.
+///
+/// Reference: Dogrusoz, U., et al. (2009). "A layout algorithm for undirected compound graphs."
+/// Information Sciences, 179(7), 980–994.
 pub struct CoseLayout {
     pub iterations: usize,
     pub ideal_edge_length: f32,

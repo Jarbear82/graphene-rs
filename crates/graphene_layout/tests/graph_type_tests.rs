@@ -1217,3 +1217,65 @@ fn test_fcose_and_cose_phase_stepped_layouts() {
     assert_eq!(PhaseSteppableLayout::<()>::phases(&cose).len(), 4);
     assert_eq!(PhaseSteppableLayout::<()>::current_phase(&cose), Some(CosePhase::Initialization));
 }
+
+#[test]
+fn test_fruchterman_reingold_layout_execution() {
+    use graphene_layout::FruchtermanReingoldLayout;
+
+    let fixtures = get_all_fixtures::<()>();
+    let mut fixture = fixtures
+        .iter()
+        .find(|f| f.name.contains("Undirected Small"))
+        .unwrap()
+        .clone();
+
+    let mut fr = FruchtermanReingoldLayout::default().with_iterations(50);
+    fr.compute(&mut fixture.state);
+    assert_valid_positions(&fixture.state);
+}
+
+#[test]
+fn test_tutte_barycentric_layout_execution() {
+    use graphene_core::Size2;
+    use graphene_layout::TutteBarycentricLayout;
+
+    let mut state = GraphState::<()>::new();
+    let n1 = state.add_node(Vec2::default(), Size2::new(10.0, 10.0));
+    let n2 = state.add_node(Vec2::default(), Size2::new(10.0, 10.0));
+    let n3 = state.add_node(Vec2::default(), Size2::new(10.0, 10.0));
+    let interior = state.add_node(Vec2::default(), Size2::new(10.0, 10.0));
+
+    state.add_edge(n1, n2, graphene_core::EdgeData::default());
+    state.add_edge(n2, n3, graphene_core::EdgeData::default());
+    state.add_edge(n3, n1, graphene_core::EdgeData::default());
+    state.add_edge(interior, n1, graphene_core::EdgeData::default());
+    state.add_edge(interior, n2, graphene_core::EdgeData::default());
+    state.add_edge(interior, n3, graphene_core::EdgeData::default());
+
+    let mut tutte = TutteBarycentricLayout::default()
+        .with_fixed_boundary(vec![n1, n2, n3])
+        .with_polygon_radius(100.0)
+        .with_max_iterations(50);
+
+    tutte.compute(&mut state);
+    assert_valid_positions(&state);
+}
+
+#[test]
+fn test_multilevel_layout_execution() {
+    use graphene_layout::{ForceDirectedLayout, MultilevelLayout};
+
+    let fixtures = get_all_fixtures::<()>();
+    let mut fixture = fixtures
+        .iter()
+        .find(|f| f.name.contains("Undirected Medium"))
+        .unwrap()
+        .clone();
+
+    let mut ml = MultilevelLayout::new(ForceDirectedLayout::default().with_iterations(20))
+        .with_min_graph_size(3);
+    ml.compute(&mut fixture.state);
+    assert_valid_positions(&fixture.state);
+}
+
+

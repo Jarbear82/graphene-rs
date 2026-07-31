@@ -2,6 +2,14 @@ use crate::search_traversal::graph_state_search::{dijkstra, EdgeTopology};
 use graphene_core::{EdgeId, GraphState, NodeId};
 use std::collections::{HashMap, VecDeque};
 
+/// Betweenness centrality via Brandes' algorithm.
+///
+/// Reference: Brandes, U. (2001). "A Faster Algorithm for Betweenness
+/// Centrality." Journal of Mathematical Sociology, 25(2), 163–177.
+///
+/// Complexity: O(VE) for unweighted graphs (this implementation).
+/// Verified against: known-answer test on star graph K_{1,n-1}
+/// (see `cytoscape_algorithm_tests::test_betweenness_known_answer_star_graph`).
 pub fn betweenness_centrality<S: Copy>(state: &GraphState<S>) -> HashMap<NodeId, f32> {
     let mut centrality = HashMap::new();
     for &id in &state.node_index_to_id {
@@ -69,6 +77,10 @@ pub fn betweenness_centrality<S: Copy>(state: &GraphState<S>) -> HashMap<NodeId,
                 }
             }
         }
+    }
+
+    for val in centrality.values_mut() {
+        *val /= 2.0;
     }
 
     centrality

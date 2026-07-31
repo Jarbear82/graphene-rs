@@ -2,6 +2,9 @@ use crate::traits::Layout;
 use graphene_core::{math::Size2, math::Vec2, GraphState, NodeId};
 use std::collections::{HashMap, HashSet};
 
+/// Compound node hierarchical layout.
+///
+/// Reference: Hierarchical layout for compound parent/child graphs.
 pub struct CompoundLayout<L> {
     pub sub_layout: L,
     pub padding: f32,
@@ -67,6 +70,9 @@ impl<S: Copy + Default, L: Layout<S>> Layout<S> for CompoundLayout<L> {
     }
 }
 
+/// Concentric hub graph layout.
+///
+/// Reference: Concentric layout centered on highest-degree hub nodes.
 pub struct ConcentricHubLayout {
     pub hub_threshold: usize,
     pub inner_radius: f32,
@@ -182,6 +188,9 @@ pub fn star_expand_hypergraph<S: Copy + Default>(
     expanded
 }
 
+/// Regional partition layout.
+///
+/// Reference: Partitioned layout operating independently on sub-regions.
 pub struct RegionalPartitionLayout<F, L> {
     pub cluster_fn: F,
     pub sub_layout: L,

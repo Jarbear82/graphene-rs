@@ -1,6 +1,9 @@
 use crate::traits::Layout;
 use graphene_core::{math::Vec2, EdgeId, GraphState, HierarchyExt};
 
+/// Force-directed layout with AABB collision resolution.
+///
+/// Reference: Force-directed layout with AABB node bounds collision resolution.
 pub struct CollisionForceDirectedLayout {
     pub iterations: usize,
     pub gravity: f32,
@@ -128,6 +131,9 @@ impl<S: Copy> Layout<S> for CollisionForceDirectedLayout {
     }
 }
 
+/// Force-directed layout with edge-weight scaled spring constants.
+///
+/// Reference: Force-directed layout with edge-weight scaled spring constants.
 pub struct WeightedForceDirectedLayout<W> {
     pub iterations: usize,
     pub gravity: f32,

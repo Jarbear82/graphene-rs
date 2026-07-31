@@ -6,6 +6,9 @@ use std::time::Duration;
 const LCG_MULTIPLIER: u64 = 6364136223846793005;
 const LCG_INCREMENT: u64 = 1442695040888963407;
 
+/// Random graph layout.
+///
+/// Reference: Uniform random coordinate distribution.
 pub struct RandomLayout {
     pub width: f32,
     pub height: f32,
@@ -69,6 +72,9 @@ impl<S: Copy + Default> Layout<S> for RandomLayout {
     }
 }
 
+/// Grid graph layout.
+///
+/// Reference: Regular 2D grid matrix placement.
 pub struct GridLayout {
     pub columns: usize,
     pub spacing_x: f32,
@@ -142,6 +148,9 @@ impl<S: Copy + Default> Layout<S> for GridLayout {
     }
 }
 
+/// Circle graph layout.
+///
+/// Reference: Circular perimeter coordinate assignment.
 pub struct CircleLayout {
     pub radius: f32,
     pub center: Vec2,
@@ -209,6 +218,9 @@ impl<S: Copy + Default> Layout<S> for CircleLayout {
     }
 }
 
+/// Concentric ring graph layout.
+///
+/// Reference: Concentric ring placement based on topological levels.
 pub struct ConcentricLayout {
     pub level_radius_step: f32,
     pub center: Vec2,
@@ -293,6 +305,9 @@ impl<S: Copy + Default> Layout<S> for ConcentricLayout {
     }
 }
 
+/// Breadth-first tree graph layout.
+///
+/// Reference: BFS tree-level placement algorithm.
 pub struct BreadthFirstLayout {
     pub root: NodeId,
     pub sibling_spacing: f32,

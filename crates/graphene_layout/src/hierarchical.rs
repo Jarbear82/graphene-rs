@@ -28,6 +28,10 @@ static SUGIYAMA_PHASES: [SugiyamaPhase; 4] = [
     SugiyamaPhase::Placement,
 ];
 
+/// Sugiyama hierarchical layout algorithm.
+///
+/// Reference: Sugiyama, K., Tagawa, S., & Toda, M. (1981). "Methods for visual understanding of hierarchical system structures."
+/// IEEE Transactions on Systems, Man, and Cybernetics, 11(2), 109–125.
 pub struct SugiyamaLayout {
     pub layer_spacing: f32,
     pub node_spacing: f32,

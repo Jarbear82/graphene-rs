@@ -3,6 +3,9 @@ use crate::traits::Layout;
 use graphene_core::{math::Vec2, GraphState};
 use std::collections::HashMap;
 
+/// Grid layout with nodes sorted by degree or rank.
+///
+/// Reference: Grid layout with nodes sorted by degree or rank.
 pub struct GridSortedLayout {
     pub columns: usize,
     pub node_spacing: f32,

@@ -3,6 +3,9 @@ use crate::traits::Layout;
 use graphene_core::{math::Vec2, GraphState, NodeId};
 use std::collections::HashMap;
 
+/// Bipartite graph layout.
+///
+/// Reference: Two-column bipartite partition placement.
 pub struct BipartiteLayout<F = fn(NodeId) -> usize> {
     pub partition_fn: F,
     pub column_spacing: f32,
