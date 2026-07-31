@@ -962,6 +962,28 @@ impl DemoApp {
                 self.engine
                     .run_layout(graphene_layout::LayoutCommand::FCose(fcose));
             }
+            "FruchtermanReingold" => {
+                use graphene_layout::FruchtermanReingoldLayout;
+                let fr = FruchtermanReingoldLayout::default().with_iterations(self.iterations);
+                self.engine
+                    .run_layout(graphene_layout::LayoutCommand::FruchtermanReingold(fr));
+            }
+            "Tutte" => {
+                use graphene_layout::TutteBarycentricLayout;
+                let boundary: Vec<_> = self.state.node_index_to_id.iter().take(3).copied().collect();
+                let tutte = TutteBarycentricLayout::default()
+                    .with_fixed_boundary(boundary)
+                    .with_max_iterations(self.iterations);
+                self.engine
+                    .run_layout(graphene_layout::LayoutCommand::Tutte(tutte));
+            }
+            "MultilevelForce" => {
+                use graphene_layout::{ForceDirectedLayout, MultilevelLayout};
+                let force = ForceDirectedLayout::default().with_iterations(20);
+                let ml = MultilevelLayout::new(force).with_min_graph_size(5);
+                self.engine
+                    .run_layout(graphene_layout::LayoutCommand::MultilevelForce(ml));
+            }
             _ => {}
         }
     }

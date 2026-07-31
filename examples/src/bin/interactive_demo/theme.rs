@@ -18,6 +18,9 @@ pub const LAYOUT_NAMES: &[&str] = &[
     "Compound",
     "RegionalPartition",
     "fCoSE",
+    "FruchtermanReingold",
+    "Tutte",
+    "MultilevelForce",
 ];
 
 pub fn distance_to_segment(p: Point<Pixels>, a: Point<Pixels>, b: Point<Pixels>) -> f32 {
