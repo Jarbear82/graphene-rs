@@ -61,13 +61,24 @@ impl<S: Copy> Layout<S> for GridSortedLayout {
             sorted_nodes.sort();
         }
 
+        let mut max_w = 0.0f32;
+        let mut max_h = 0.0f32;
+        for i in 0..n {
+            let size = *state.sizes.get(i);
+            max_w = max_w.max(size.w);
+            max_h = max_h.max(size.h);
+        }
+
+        let col_step = self.node_spacing.max(max_w + 10.0);
+        let row_step = self.node_spacing.max(max_h + 10.0);
+
         let cols = self.columns.max(1);
         for (idx, id) in sorted_nodes.into_iter().enumerate() {
             if let Some(&node_idx) = state.node_keys.get(id) {
                 let r = idx / cols;
                 let c = idx % cols;
-                let x = (c as f32) * self.node_spacing;
-                let y = (r as f32) * self.node_spacing;
+                let x = (c as f32) * col_step;
+                let y = (r as f32) * row_step;
                 state.positions.set(node_idx, Vec2::new(x, y));
             }
         }

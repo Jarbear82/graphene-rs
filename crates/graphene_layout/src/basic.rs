@@ -381,13 +381,36 @@ impl<S: Copy + Default> Layout<S> for BreadthFirstLayout {
 
         for (&lvl, level_nodes) in &levels {
             let count = level_nodes.len();
-            let total_width = (count - 1) as f32 * self.sibling_spacing;
+            if count == 0 {
+                continue;
+            }
+
+            let mut x_offsets = vec![0.0f32; count];
+            let mut current_x = 0.0f32;
+            for i in 0..count {
+                let id = level_nodes[i];
+                let idx = *state.node_keys.get(id).unwrap();
+                let w = state.sizes.get(idx).w;
+                if i == 0 {
+                    x_offsets[i] = w / 2.0;
+                    current_x = w;
+                } else {
+                    let prev_id = level_nodes[i - 1];
+                    let prev_idx = *state.node_keys.get(prev_id).unwrap();
+                    let prev_w = state.sizes.get(prev_idx).w;
+                    let gap = self.sibling_spacing.max(10.0);
+                    current_x += prev_w / 2.0 + gap + w / 2.0;
+                    x_offsets[i] = current_x;
+                }
+            }
+
+            let total_width = current_x;
             let start_x = -total_width / 2.0;
 
             for (i, &id) in level_nodes.iter().enumerate() {
                 if let Some(&idx) = state.node_keys.get(id) {
                     let target = Vec2::new(
-                        start_x + i as f32 * self.sibling_spacing,
+                        start_x + x_offsets[i],
                         lvl as f32 * self.level_spacing,
                     );
                     if self.animate {
