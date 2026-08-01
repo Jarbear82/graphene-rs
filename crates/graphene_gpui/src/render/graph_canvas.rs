@@ -378,6 +378,7 @@ impl<'a> IntoElement for GraphCanvas<'a> {
 
             let mut label = node_labels.get(&id)
                 .cloned()
+                .or_else(|| state.get_node_label(id).map(|s| s.to_string()))
                 .unwrap_or_else(|| format!("N{}", idx));
 
             let is_compound = {
@@ -406,9 +407,12 @@ impl<'a> IntoElement for GraphCanvas<'a> {
                 }
             }
 
-            let is_selected = selected_node == Some(id);
-            let is_neighbor = selected_node.is_some() && connected_nodes.contains(&id);
-            let is_faded = selected_node.is_some() && !is_selected && !is_neighbor;
+            let is_primary = state.selected.is_primary(id) || selected_node == Some(id);
+            let is_secondary = state.selected.is_secondary(id);
+            let is_selected = is_primary || is_secondary;
+            let has_selection = state.selected.primary_node().is_some() || selected_node.is_some();
+            let is_neighbor = has_selection && connected_nodes.contains(&id);
+            let is_faded = has_selection && !is_selected && !is_neighbor;
 
             let effective_font_size = cfg.node_font_size * viewport.zoom;
             if effective_font_size < cfg.min_visible_font_size {
@@ -440,8 +444,10 @@ impl<'a> IntoElement for GraphCanvas<'a> {
 
             let mut fill_color = if let Some(score) = score_opt {
                 heatmap_color(score)
-            } else if is_selected {
+            } else if is_primary {
                 accent_color
+            } else if is_secondary {
+                gpui::rgba(0xf9e2af_ff)
             } else if is_compound {
                 let mut col = accent_color;
                 col.a = cfg.compound_fill_alpha;
@@ -450,8 +456,10 @@ impl<'a> IntoElement for GraphCanvas<'a> {
                 node_fill_color
             };
 
-            let mut border_color = if is_selected || is_neighbor {
+            let mut border_color = if is_primary || is_neighbor {
                 accent_color
+            } else if is_secondary {
+                gpui::rgba(0xf9e2af_ff)
             } else if is_compound {
                 let mut col = accent_color;
                 col.a = cfg.compound_border_alpha;

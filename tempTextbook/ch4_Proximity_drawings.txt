@@ -1,0 +1,7 @@
+**No pseudocode is present in the document.**
+
+This is a survey chapter (“Proximity Drawings” by Giuseppe Liotta) that discusses definitions, combinatorial characterizations, complexity results, and the existence of algorithms for various proximity drawings (Gabriel, relative neighborhood, β-drawings, minimum-weight, Delaunay/Voronoi, rectangle-of-influence, nearest-neighbor, sphere-of-influence, witness, weak, and approximate variants).
+
+It repeatedly mentions algorithms and their running times (e.g., linear-time real-RAM algorithms for certain trees, \(O(n)\) or \(O(n^{1.5}\log n)\) testing/drawing procedures, NP-hardness results, polynomial-area constructions, checkers, etc.), but it contains **no formal pseudocode**, numbered algorithm listings, “Input:/Output:” blocks, or step-by-step procedural descriptions.
+
+All algorithmic content is high-level prose referring to results from the cited papers (Monma & Suri, Bose et al., Dillencourt, Aronov et al., Di Giacomo et al., etc.). To obtain the actual pseudocode you would need to consult those original references.

@@ -1,0 +1,68 @@
+**The document contains no formal pseudocode** (no algorithmic listings with `procedure`/`function`/`begin`/`end`, indented steps in code-like form, or similar).
+
+It is a survey chapter that explains the algorithms at a high level through narrative descriptions, cases, lemmas, theorems, figures, and data-structure notes. Below is a concise extraction of the algorithmic outlines as presented.
+
+### Cycle-Based Algorithms (Section 1.6)
+
+**Auslander-Parter (Adding Segments)**
+Recursive characterization for a biconnected graph \(G\) with cycle \(C\):
+
+- **Trivial case**: \(G\) is a single cycle \(C\).
+- **Base case**: \(C\) separates a single segment that is a path.
+- **Recursive case**: Find a separating cycle \(C\). Build the interlacement graph of the segments w.r.t. \(C\).
+  - If it is not bipartite → non-planar.
+  - Otherwise, recurse on each subgraph formed by \(C\) + one segment.
+
+Compatible segments (attachments do not interleave) can share a side of \(C\). Embedding is built bottom-up (possible flips). \(O(n^3)\) time in the basic form.
+
+**Hopcroft-Tarjan (Adding Paths)**
+Uses a DFS tree / spine cycle.
+Start with the spine cycle \(G_0\). Add paths one at a time in an order determined by lowpoints (segments with lower lowpoints first). Maintain attachments on a stack so that interleaving can be tested efficiently. The algorithm can be made linear-time (embedding phase added later).
+
+**de Fraysseix–Ossona de Mendez–Rosenstiehl (Adding Edges)**
+Work on a DFS-orientation \(G = (V, T \uplus B)\).
+A left-right (LR) partition of the back edges \(B = L \uplus R\) is an LR-partition if, for every vertex \(v\) with incoming tree edge \(e\) and outgoing edges \(e_1,e_2\):
+
+- all return edges of \(e_1\) ending strictly higher than \(\mathrm{lowpt}(e_2)\) belong to one class, and
+- all return edges of \(e_2\) ending strictly higher than \(\mathrm{lowpt}(e_1)\) belong to the other class.
+
+**Theorem**: A graph is planar iff it admits an LR-partition.
+From an (aligned) LR-partition one obtains an LR-ordering of the edges around each vertex that yields a planar embedding. Constraints on pairs of back edges produce a (implicit) constraint graph that is tested for bipartiteness; a linear-time realization exists.
+
+### Vertex-Addition Algorithms (Section 1.7)
+
+All algorithms process vertices in a *proper numbering* \(\psi\) (so that the yet-to-be-added vertices always induce a connected subgraph) and maintain embeddings of the already-processed subgraph \(G_i\) that keep the “outer vertices” on the outer face. Blocks may be flipped/permuted but are never nested inside one another.
+
+**Lempel-Even-Cederbaum**
+Uses an *st*-numbering.
+Maintain a *bush form* \(B_i\) (planar drawing of \(G_i\) plus virtual edges to future vertices, all leaves on a horizontal line). Encode the linear order of virtual vertices by an algebraic expression \(\varepsilon(\Gamma_{B_i})\) (or equivalently by a PQ-tree).
+
+- **Reduction**: permute bushes around cut-vertices and flip biconnected components so that all virtual vertices labelled \(v_{i+1}\) become consecutive.
+- **Substitution**: merge those virtual vertices and attach new virtual vertices for the outgoing edges of \(v_{i+1}\).
+
+If reduction is impossible the graph is non-planar. Linear-time implementation uses Booth-Lueker PQ-trees; the embedding phase was added later.
+
+**Shih-Hsu**
+Vertices ordered by reverse DFS numbers.
+Maintain a PC-tree for each connected component of \(G_i\) (P-nodes = ordinary vertices, C-nodes = biconnected components; C-nodes have a reversible cyclic order).
+
+When \(v_i\) is added:
+
+- Identify *relevant nodes* (highpt = \(i\), lowpt > \(i\)).
+- Terminal nodes of the relevant-node subtree: if > 2 → non-planar.
+- Classify edges leaving relevant nodes into five types; form *i*-subtrees and \(i^*\)-subtrees.
+- Four main cases according to the number of terminals (1 or 2) and whether any relevant node is a C-node.
+- If planar, contract the newly closed block into a single C-node.
+
+**Boyer-Myrvold**
+Also reverse-DFS order.
+Maintain an explicit “flexible” embedding of each block (blocks can be flipped in \(O(1)\) time via the *bicomp* data structure based on unoriented circular lists).
+
+Each iteration \(i\) (when \(v_i\) has incoming back edges) consists of two phases:
+
+1. **Path searching (Walk-up)**: for every back edge \((u_j,v_i)\) find an admissible path from \(u_j\) to \(v_i\) that stays on block boundaries, respects outer-vertex constraints, and satisfies pairwise compatibility conditions.
+2. **Block embedding (Walk-down)**: merge the blocks traversed by the chosen paths and embed the back edges, producing a new block.
+
+If either phase fails the graph is non-planar.
+
+The chapter emphasises that all of the linear-time algorithms ultimately fall into one of the two families above and that the same high-level ideas (DFS, lowpoints, flips of blocks, outer-face invariants) reappear throughout.

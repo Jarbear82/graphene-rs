@@ -1,0 +1,74 @@
+**Algorithm Rectangular-Draw(G)** (from Section 10.3.2)
+
+```
+begin
+1  Draw the outer cycle \(C_o(G)\) of \(G\) as a rectangle by two horizontal line segments
+   \(P_N\) and \(P_S\) and two vertical line segments \(P_E\) and \(P_W\);
+   {The directions of edges on \(C_o(G)\) are decided.}
+2  Find all \(C_o(G)\)-components \(J_1, J_2, \dots, J_p\); {See Fig. 10.9(a).}
+3  for each component \(J_i\) do
+   begin
+4    \(G_i = C_o(G) \cup J_i\); {\(G_i\) is the union of graphs \(C_o(G)\) and \(J_i\).}
+5    Draw(\(G_i, J_i\))
+   end
+end.
+```
+
+**Procedure Draw(G, J)**
+
+```
+begin {G has exactly one \(C_o(G)\)-component \(J\).}
+1  if \(G\) has a boundary NS-, SN-, EW-, or WE-path \(P\)
+   then {\(P\) is a partitioning path.}
+   begin {See Fig. 10.17.}
+2    Assume without loss of generality that \(P\) is a boundary NS-path;
+3    Draw all edges of \(P\) on a vertical line;
+4    if \(|E(P)| \ge 2\) then
+     begin
+5      Let \(F_1, F_2, \dots, F_q\) be the \(C_o\)-components of \(G_E^P\);
+6      for each component \(F_i\), \(1 \le i \le q\), do
+7        Draw(\(C_o(G_E^P) \cup F_i, F_i\))
+     end
+   end
+ else {G has no boundary NS-, SN-, EW-, or WE-path.}
+   begin
+8    Find a partition-pair \(P_c\) and \(P_{cc}\) as in the proof
+     of Lemma 10.4 in [RNN98];
+9    if \(P_c = P_{cc}\) then {See Fig. 10.10.}
+     begin
+10     Draw all edges of \(P_c\) on a vertical line segment;
+11     Let \(G_1 = G_W^{P_c}\) and \(G_2 = G_E^{P_c}\) be the two resulting subgraphs;
+12     for each subgraph \(G_i\), \(i = 1, 2\), do
+       begin
+13       Let \(F_1, F_2, \dots, F_q\) be the \(C_o\)-components of \(G_i\);
+14       for each component \(F_j\), \(1 \le j \le q\), do
+15         Draw(\(C_o(G_i) \cup F_j, F_j\))
+       end
+     end
+16   else {\(P_c \ne P_{cc}\). See Fig. 10.15.}
+     begin
+17     Draw all edges of \(P_c\) and \(P_{cc}\) on alternating sequences
+       of horizontal and vertical line segments as in Fig. 10.15(b);
+18     Let \(G_1\) be the graph obtained from \(G_W^{P_{cc}}\) by contracting
+       all edges of \(P_{cc}\) that are on horizontal sides of rectangular
+       embeddings of \(C_1, C_2, \dots, C_k\);
+19     Let \(G_2\) be the graph obtained from \(G_E^{P_c}\) by contracting
+       all edges of \(P_c\) that are on horizontal sides of rectangular
+       embeddings of \(C_1, C_2, \dots, C_k\);
+20     Let \(G_3 = G(C_1), G_4 = G(C_2), \dots, G_{k+2} = G(C_k)\);
+21     for each graph \(G_i\), \(1 \le i \le k+2\), do
+       begin
+22       Let \(F_1, F_2, \dots, F_q\) be the \(C_o\)-components of \(G_i\);
+23       for each component \(F_j\), \(1 \le j \le q\), do
+24         Draw(\(C_o(G_i) \cup F_j, F_j\))
+       end
+     end
+   end
+end
+```
+
+**Notes from the text**
+- The algorithm outputs only the **directions** (horizontal/vertical) of all edges. Integer coordinates of vertices can then be assigned in linear time via a spanning tree \(T_y\) (delete certain upward vertical edges) and a bottom-to-top assignment of \(y\)-coordinates on maximal horizontal segments (analogously for \(x\)-coordinates).
+- It is assumed \(G\) has no bad cycle (the algorithm can be modified to detect bad cycles).
+- Each \(C_o(G)\)-component is handled independently (Lemma 10.1). Boundary NS-/SN-/EW-/WE-paths are preferred as partitioning paths; otherwise a partition-pair \(P_c, P_{cc}\) is found from the westmost NS-path.
+- The remaining algorithms in the chapter (matching-based method for \(\Delta\le 4\), corner selection without designated corners, and box-rectangular drawing) are described at a high level or reduced to the above procedure / perfect matching; no additional explicit pseudocode appears in the provided pages.

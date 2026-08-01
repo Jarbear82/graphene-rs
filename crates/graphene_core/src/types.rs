@@ -1,6 +1,6 @@
 use bitflags::bitflags;
 use bitvec::vec::BitVec;
-use slotmap::{new_key_type, SecondaryMap};
+use slotmap::{new_key_type, SecondaryMap, SlotMap};
 use std::time::Duration;
 
 pub use crate::math::{Size2, Vec2};
@@ -318,15 +318,23 @@ impl Default for Hierarchy {
     }
 }
 
-/// Specialized selection store — a `DenseStorage<bool>` wrapper around BitVec.
+/// Specialized selection store — manages primary & secondary node selection and edge selection.
 #[derive(Debug, Clone)]
 pub struct SelectionStore {
     bits: BitVec,
+    primary_node: Option<NodeId>,
+    secondary_node: Option<NodeId>,
+    selected_edge: Option<usize>,
 }
 
 impl SelectionStore {
     pub fn new() -> Self {
-        Self { bits: BitVec::new() }
+        Self {
+            bits: BitVec::new(),
+            primary_node: None,
+            secondary_node: None,
+            selected_edge: None,
+        }
     }
 
     pub fn insert(&mut self) -> usize {
@@ -350,12 +358,102 @@ impl SelectionStore {
         self.bits.pop().unwrap()
     }
 
+    pub fn select_node(&mut self, id: NodeId, node_keys: &SlotMap<NodeId, usize>) {
+        self.selected_edge = None;
+        match (self.primary_node, self.secondary_node) {
+            (None, _) => {
+                self.primary_node = Some(id);
+                self.secondary_node = None;
+            }
+            (Some(p), None) => {
+                if p == id {
+                    self.primary_node = Some(id);
+                    self.secondary_node = None;
+                } else {
+                    self.primary_node = Some(p);
+                    self.secondary_node = Some(id);
+                }
+            }
+            (Some(p), Some(s)) => {
+                if id == p {
+                    self.primary_node = Some(id);
+                    self.secondary_node = None;
+                } else if id == s {
+                    self.primary_node = Some(s);
+                    self.secondary_node = None;
+                } else {
+                    self.primary_node = Some(s);
+                    self.secondary_node = Some(id);
+                }
+            }
+        }
+        self.update_bits(node_keys);
+    }
+
+    pub fn select_edge(&mut self, edge_idx: usize) {
+        self.primary_node = None;
+        self.secondary_node = None;
+        self.selected_edge = Some(edge_idx);
+        self.bits.fill(false);
+    }
+
+    pub fn clear(&mut self) {
+        self.primary_node = None;
+        self.secondary_node = None;
+        self.selected_edge = None;
+        self.bits.fill(false);
+    }
+
+    pub fn primary_node(&self) -> Option<NodeId> {
+        self.primary_node
+    }
+
+    pub fn secondary_node(&self) -> Option<NodeId> {
+        self.secondary_node
+    }
+
+    pub fn selected_edge(&self) -> Option<usize> {
+        self.selected_edge
+    }
+
+    pub fn is_primary(&self, id: NodeId) -> bool {
+        self.primary_node == Some(id)
+    }
+
+    pub fn is_secondary(&self, id: NodeId) -> bool {
+        self.secondary_node == Some(id)
+    }
+
+    fn update_bits(&mut self, node_keys: &SlotMap<NodeId, usize>) {
+        self.bits.fill(false);
+        if let Some(p) = self.primary_node {
+            if let Some(&idx) = node_keys.get(p) {
+                if idx < self.bits.len() {
+                    self.bits.set(idx, true);
+                }
+            }
+        }
+        if let Some(s) = self.secondary_node {
+            if let Some(&idx) = node_keys.get(s) {
+                if idx < self.bits.len() {
+                    self.bits.set(idx, true);
+                }
+            }
+        }
+    }
+
     pub fn get(&self, idx: usize) -> bool {
-        self.bits[idx]
+        if idx < self.bits.len() {
+            self.bits[idx]
+        } else {
+            false
+        }
     }
 
     pub fn set(&mut self, idx: usize, value: bool) {
-        self.bits.set(idx, value);
+        if idx < self.bits.len() {
+            self.bits.set(idx, value);
+        }
     }
 
     pub fn len(&self) -> usize {

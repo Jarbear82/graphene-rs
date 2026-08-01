@@ -1,0 +1,40 @@
+**Pseudocode extracted from the document:**
+
+### 1. Simple algorithm for computing a maximal planar subgraph
+**(Figure 2.15, Section 2.5.2)**
+
+```
+Require: graph G = (V, E)
+Ensure: maximal planar subgraph P of G
+
+P := a spanning tree of G
+F := E \ E(P)
+for all e ∈ F do
+    if P ∪ e is planar then
+        P := P ∪ e
+    end if
+end for
+```
+
+### 2. Overview of the branch-and-cut approach
+**(Figure 2.10, Section 2.4.3)**
+
+```
+L := {initial problem}
+{L denotes the list of unsolved problems}
+repeat
+    Choose a subproblem Π ∈ L and set L := L \ {Π}
+    repeat
+        Let ˆx be an optimal solution for the linear relaxation of Π
+        if ˆx is not feasible for Π then
+            Separate violated inequalities and add them to the LP
+        end if
+    until no more violated inequalities can be found
+    if no feasible solution for Π could be found then
+        Split Π into subproblems and add them to L
+    end if
+until L = ∅
+Print the best found feasible solution
+```
+
+These are the only formal pseudocode blocks present in the provided pages of the document. Other algorithmic ideas (e.g., edge insertion, column generation, SPQR-tree-based incremental planarity testing, or the overall planarization method) are described in prose or high-level steps without formal pseudocode.

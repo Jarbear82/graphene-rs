@@ -1,0 +1,103 @@
+**Extracted algorithmic descriptions (presented as structured steps / pseudocode-style summaries from the chapter).** The document mostly uses narrative + case-based descriptions rather than formal programming pseudocode. The clearest explicit “Algorithm … end Algorithm” block is for *Rings*. The others are reconstructed directly from the detailed procedural text.
+
+### 1. Algorithm Rings (ringed circular layout for high-degree / general trees) [TM02]
+```
+Algorithm Rings
+  Sort the children by their number of children;
+  Find the smallest k for which the sum of the number of children of the first k children
+    expressed as a fraction of the total number of grandchildren is greater or equal to f(k);
+  Place first k children in the outermost ring;
+  Place the rest of the children in the same way in the inner rings;
+end Algorithm
+```
+Where
+\[
+f(n)=\frac{(R_2)^2}{(R_1)^2}=\frac{(1-\sin(\pi/n))^2}{(1+\sin(\pi/n))^2}
+\]
+is the fraction of area left after placing *n* circles in a ring.
+(Children of each node are drawn recursively as circles in concentric rings; outer rings get the largest subtrees. Adjacent rings are rotated oppositely; color/transparency may be used for cues.)
+
+A binary-tree adaptation places children alternately in the same horizontal or vertical channel (starting horizontal at the root) and sets edge length to `depth(subtree(v))+1`.
+
+A top-down variant *FastRings* assigns equal-size circles to all nodes for faster incremental drawing.
+
+### 2. Algorithm Separation (unordered binary trees, linear-area straight-line drawings with controlled aspect ratio) [GR04]
+**Input:** binary tree *T* (root *o*), desirable aspect ratio *A*, constant *ε* (0 < *ε* < 1) with \(n^{-\varepsilon}\le A\le n^\varepsilon\).
+
+**Feasible drawing properties** (for a tree with designated link-node \(u^*\)):
+- Root at top-left corner.
+- If \(u^*\ne o\) then \(u^*\) lies on the bottom boundary and can move downward freely.
+- If \(u^*=o\) then its vertical/horizontal channels are free and it can move upward freely.
+
+**High-level recursive steps:**
+1. **Split Tree**
+   - Order children so that the designated link-node \(u^*\) becomes the leftmost node.
+   - Find a separator edge \((u,v)\) (Theorem: every binary tree has a separator that splits it into parts of sizes \(xn\) and \((1-x)n\) for \(1/3\le x\le 2/3\)).
+   - **Case 1** (separator not on leftmost path): define partial trees \(T_A,T_B,T_C,T_\alpha,T_\beta,T_1,T_2\) by removing nodes *a* and *u* (and their incident edges). Designate appropriate link-nodes.
+   - **Case 2** (separator on leftmost path): define partial trees \(T_A,T_B,T_C\) by removing *u*.
+   Each partial tree has ≤ (2/3)*n* nodes.
+
+2. **Assign Aspect Ratios**
+   Let \(n_k=|T_k|\), \(x_k=n_k/n\).
+   \(T_k\) is *large* if (\(A\ge1\) and \(n_k\ge(n/A)^{1/(1+\varepsilon)}\)) or (\(A<1\) and \(n_k\ge(An)^{1/(1+\varepsilon)}\)); otherwise *small*.
+   - If \(A\ge1\): large → \(A_k=x_k A\); small → \(A_k=n_k^{-\varepsilon}\).
+   - If \(A<1\): large → \(A_k=A/x_k\); small → \(A_k=n_k^\varepsilon\).
+
+3. **Draw Partial Trees**
+   (If \(A\ge1\), temporarily invert the aspect ratios of \(T_A\) and \(T_\beta\) to compensate for later 90° rotation.)
+   Recursively draw each non-empty partial tree with its assigned aspect ratio.
+   Base case: a single-node tree is just that node.
+
+4. **Compose Drawings**
+   Combine the drawings according to the case diagrams (Figures 5.9, 5.11, 5.12).
+   - When \(A<1\) the partial drawings are stacked vertically (unit separation).
+   - When \(A\ge1\) they are placed side-by-side (some are rotated 90° and flipped).
+   Re-insert the removed nodes/edges while preserving the feasible-drawing invariants and planarity/straight-line/grid properties.
+   The final drawing fits in a rectangle of area \(O(n)\) and aspect ratio *A* and has the subtree-separation property.
+   Running time: \(O(n\log n)\).
+
+### 3. Algorithm Fixed Spine (order-preserving upward planar straight-line drawings of ordered binary trees) [GR03a]
+**Goal:** upward \(\alpha\)-drawing (order-preserving, no node left of or above the root; vertical separation \(\alpha\) and horizontal separation 1 between root and its rightmost child). Optimal \(O(n\log n)\) area, height ≤ *n*, width \(O(\log n)\), \(O(n)\) time.
+
+Let \(P=v_0v_1\dots v_m\) be a *spine* of *T* (\(v_0=\)root; each subsequent node is the child whose subtree is largest).
+
+**Recursive construction of an upward \(\alpha\)-drawing \(D(T)\):**
+- **Case 1** (\(v_1\) is left child of \(v_0\)):
+  Let *L* = subtree of \(v_1\), *R* = subtree of the non-spine child *s* of \(v_0\).
+  Place \(v_0\) at origin. Recursively obtain 1-drawings \(D(L)\) and \(D(R)\).
+  Place \(D(R)\) so *s* is 1 unit right and \(\alpha\) units below \(v_0\).
+  Place \(D(L)\) so \(v_1\) shares the vertical channel of \(v_0\) and lies 1 unit below \(D(R)\).
+
+- **Case 2** (\(v_1\) is right child of \(v_0\)):
+  Let *k* ≥ 1 be the smallest index such that \(v_k\) is a leaf or has a non-spine left child.
+  - If \(v_k\) has a non-spine left child: define the non-spine subtrees \(L,A,R_1,\dots,R_{k-1},B\).
+    Place \(v_0\) at origin, \(v_1\) one unit right / \(\alpha\) below \(v_0\).
+    Recursively draw the non-spine pieces (1-drawings) and place them sequentially to the right, each one unit below the previous.
+    Place \(D(A)\) and \(D(L)\) below the spine segment; compute \(\beta=\)height(\(D(A)\))+height(\(D(L)\))+2.
+    Recursively obtain a \(\beta\)-drawing of the mirror-image of *B*, flip it right-to-left, and place it to the right of the preceding material.
+  - If \(v_k\) is a leaf: same layout omitting \(D(A)\) and \(D(B)\).
+
+A left-corner drawing (no node left of or above the root) of area \(O(n\log n)\) is obtained by taking a 1-drawing of the mirror image, rotating 90° clockwise and flipping.
+
+### 4. Algorithm Arbitrary Spine (order-preserving planar straight-line drawings with user-controlled aspect ratio) [GR03a]
+**Input:** ordered binary tree *T*, parameter \(2\le A\le n\).
+Produces a *feasible* drawing (root on the left boundary; nothing between the root and the upper-left corner of the bounding rectangle).
+Width \(O(A+\log n)\), height \(O((n/A)\log A)\), area \(O(n\log n)\) (set \(A=\log n\) for \(O(n\log\log n)\)).
+
+**Recursive construction of a feasible drawing of a subtree \(T'\) (m nodes):**
+- If \(m\le A\): produce a left-corner drawing via the Fixed-Spine lemma (width ≤ *m*, height \(O(\log m)\)).
+- Otherwise:
+  1. Compute a spine \(P=v_0\dots v_q\) of \(T'\).
+  2. Find the unique index *k* with \(m_k>m-A\) and \(m_{k+1}\le m-A\) (\(m_i=\)size of subtree at \(v_i\)).
+  3. Define the non-spine subtrees \(T_i\) (0 ≤ *i* < *k*), \(T^*\), \(T^+\), \(T''\), \(T'''\).
+  4. Place \(v_0\) at the origin.
+  5. **Sub-case *k*=0**: recursively draw \(T^*\), the mirror of \(T^+\) and the mirror of \(T'''\); place them according to the four possible left/right-child combinations (Figures 5.17), using max-width offsets and flips so that the drawing stays feasible.
+  6. **Sub-case *k*>0**: obtain left-corner drawings of each \(T_i\) (Lemma) and feasible drawings of the mirrors of \(T^*\) and \(T''\).
+     Place the spine nodes and the \(D_i\) sequentially to the right (vertical placement of each \(D_i\) depends on whether its root is a left or right child).
+     Place the flipped \(D^*\) and \(D''\) relative to the lowest/highest channels already occupied, preserving the feasible property (Figures 5.18).
+
+Both Fixed-Spine and Arbitrary-Spine run in \(O(n)\) time.
+
+---
+
+These are the principal algorithms for which the chapter supplies concrete procedural descriptions. Many other results are stated only as existence theorems or high-level approach sketches (level-based / H-V / path-based / separation-based) without comparable step-by-step detail.

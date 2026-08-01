@@ -1,7 +1,9 @@
+pub mod canonical_ordering;
 pub mod centrality;
 pub mod clustering;
 pub mod graph_ops;
 pub mod pathfinding;
+pub mod planarity;
 pub mod search_traversal;
 
 pub use graph_ops::build_adjacency_list;

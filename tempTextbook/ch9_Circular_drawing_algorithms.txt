@@ -1,0 +1,137 @@
+**Algorithm CIRCULAR** (Figure 9.6)
+
+**Input:** A biconnected graph, \(G = (V, E)\).
+**Output:** A circular drawing \(\Gamma\) of \(G\) such that each node in \(V\) lies on the periphery of a single embedding circle.
+
+1. Bucket sort the nodes by ascending degree into a table \(T\).
+2. Set counter to 1.
+3. While counter \(\leq n-3\)
+4.  If a wave front node \(u\) has lowest degree, then currentNode \(= u\).
+5.  Else If a wave center node \(v\) has lowest degree, then currentNode \(= v\).
+6.  Else set currentNode to be some node with lowest degree.
+7.  Visit the adjacent nodes consecutively. For each two nodes,
+8.    If a pair edge exists place the edge into removalList.
+9.    Else place a triangulation edge between the current pair of neighbors and also into removalList.
+10.  Update the location of currentNode’s neighbors in \(T\).
+11.  Remove currentNode and incident edges from \(G\).
+12.  Increment counter by 1.
+13. Restore \(G\) to its original topology.
+14. Remove the edges in removalList from \(G\).
+15. Perform a DFS (or a longest path heuristic) on \(G\).
+16. Place the resulting longest path onto the embedding circle.
+17. If there are any nodes that have not been placed, then place the remaining nodes into the embedding order with the following priority:
+  (i) between two neighbors, (ii) next to one neighbor, (iii) next to zero neighbors.
+
+---
+
+**Algorithm CIRCULAR-Postprocessing** (Figure 9.7)
+
+**Input:** A drawing \(\Gamma\) of biconnected graph \(G = (V, E)\) produced by Algorithm CIRCULAR.
+**Output:** A drawing \(\Gamma'\) of \(G\) with fewer or equal number of crossings.
+
+1. currentCrossings = current number of crossings in the drawing.
+2. For a fixed number of times
+3.  For each node, \(u\), in \(G\)
+4.    Initialize List1 to contain the embedding circle positions which lie between two nodes adjacent to \(u\).
+5.    If List1 is empty
+    (a) Initialize List2 to contain the embedding circle positions which lie next to one neighbor of \(u\).
+    (b) PositionList = List2.
+6.    Else PositionList = List1.
+7.    For each location in PositionList
+8.      Place \(u\) at this location
+9.      newCrossings = the new number of crossings.
+10.      If newCrossings < currentCrossings then currentCrossings = newCrossings.
+11.      Else Place \(u\) back into its previous position.
+12. If no improvement was made during this iteration, stop.
+
+---
+
+**Algorithm CountAllCrossings** (Figure 9.9)
+
+**Input:** A single circle drawing \(\Gamma\) of a biconnected graph \(G = (V, E)\).
+**Output:** The number of edge crossings in \(\Gamma\).
+
+1. Order the edges as they are encountered around the circle in a clockwise order.
+2. numberOfCrossings = 0.
+3. For each edge endpoint, \(p_i\), of edge \(e_i\), do
+4.  If \(p_i\) is the first endpoint of edge \(e_i\) append \(e_i\) to openEdgeList.
+5.  Else
+  (a) Increase numberOfCrossings by the number of open edges with respect to the arc \(p_g p_h p_i\), where \(p_g\) and \(p_i\) are the endpoints of \(e_i\) and \(p_h\) is some endpoint which was visited after \(p_g\) and before \(p_i\).
+  (b) Remove \(e_i\) from openEdgeList.
+
+---
+
+**Algorithm CountSingleNodeCrossings** (Figure 9.11)
+
+**Input:** A single circle drawing of a graph \(G = (V, E)\), a node \(v \in V\), and a new position \(\alpha\) for \(v\).
+**Output:** The change in the number of edge crossings caused by moving \(v\) to \(\alpha\).
+
+1. ctr = 0.
+2. numberOfCrossings = 0.
+3. Order the pertinent edge endpoints as they are encountered around the embedding circle.
+4. Mark the pertinent edges as not seen.
+5. For each pertinent edge endpoint \(p_i\) of edge \(e_i\) do
+6.  If \(e_i\) is incident to \(v\) increment the numberOfCrossings by ctr.
+7.  Else If \(e_i\) has been seen decrement ctr by 1.
+8.  Else increment ctr by 1 and mark \(e_i\) as seen.
+9. OldNumberSingleNodeCrossings = numberOfCrossings.
+10. ctr = 0.
+11. numberOfCrossings = 0.
+12. Move \(v\) to its new position, \(\alpha\).
+13. Mark the pertinent edges as not seen.
+14. Repeat Steps 5–8 in the opposite direction.
+15. NewNumberSingleNodeCrossings = numberOfCrossings.
+16. changeInCrossings = NewNumberSingleNodeCrossings − OldNumberSingleNodeCrossings.
+
+---
+
+**Algorithm LayoutCluster1** (Figure 9.18)
+
+**Input:** A biconnected component, \(B_i\).
+**Output:** A circular layout of \(B_i\) such that the positions of the articulation points are placed well with respect to the ideal positions.
+
+1. Perform Algorithm CIRCULAR on \(B_i\) and save the results in \(\Gamma_1\).
+2. If the number of ancestor nodes in \(B_i\) is less than the number of descendant nodes, set the block type to be descendant, otherwise, set the block type to be ancestor.
+3. Loop through the nodes of \(B_i\) as they appear around the embedding circle in \(\Gamma_1\) and for each node which is the same type as the block type, record the clockwise distance to the last node of that type.
+4. Find the nodes that have the smallest value of the distances recorded in Step 3 and determine the median node, \(u\), of this set.
+5. If the block type is descendant, rotate the layout of \(B_i\) found in Step 1 such that \(u\) is in the middle of the lower half of the embedding circle.
+6. Else rotate the layout of \(B_i\) found in Step 1 such that \(u\) is in the middle of the upper half of the embedding circle.
+7. Place the remaining ancestor and descendant nodes in their closest ideal position.
+
+---
+
+**Algorithm CIRCULAR-with Radial** (Figure 9.20)
+
+**Input:** Any graph \(G\).
+**Output:** A circular drawing \(\Gamma\) of \(G\).
+
+1. Decompose \(G\) into a block-cutpoint tree \(T\).
+2. If \(G\) has only one biconnected component, perform Algorithm CIRCULAR on \(G\).
+3. Else
+4.  Assign the strict articulation points to a biconnected component.
+5.  Layout the root cluster of \(T\) with Algorithm CIRCULAR.
+6.  For each subtree \(S\) of the root cluster
+7.    Perform the \(\rho\) coordinate assignment phase of RADIAL – with Different Node Sizes on \(S\).
+8.    For each biconnected component, \(B_i\), of \(S\)
+9.      Layout \(B_i\) with Algorithm LayoutCluster1, or LayoutCluster2 taking into account the radii defined for the superstructure tree in Step 7.
+10.    Considering the order of the subtrees defined during the layout of biconnected components in Step 9, perform the \(\theta\) coordinate assignment phase of RADIAL – with Different Node Sizes on \(S\).
+11.    Translate and rotate the clusters of \(S\) according to the radial layout of \(S\).
+
+---
+
+**Algorithm CIRCULAR-with Forces** (Figure 9.24)
+
+**Input:** A graph \(G = (V, E, P)\).
+**Output:** User-grouped circular drawing of \(G\) \(\Gamma\).
+
+1. Determine the superstructure \(G_s\) of \(G\).
+2. Layout \(G_s\) with a basic force-directed technique.
+3. For each group \(p_i\) in \(P\)
+  (a) If the subgraph induced by \(p_i\), \(G_i\), is biconnected layout \(G_i\) with CIRCULAR.
+  (b) Else layout \(G_i\) with CIRCULAR-Nonbiconnected.
+4. Place the layout of each group \(p_i\) at the respective location found in Step 2.
+5. For each group \(p_i\)
+  (a) rotate the layout circle and keep the position which has the lowest local potential energy.
+  (b) reverse the order of the nodes around the embedding circle and repeat Step 5a.
+  (c) if the result of Step 5a had a lower local potential energy than that of Step 5b revert to the result of Step 5a.
+6. Apply a force-directed technique using the equations of Section 9.6.1 to \(G\).

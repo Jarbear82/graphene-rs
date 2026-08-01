@@ -1,0 +1,132 @@
+**No formal pseudocode appears in the document.** All algorithms are described narratively. Below are reconstructed, faithful pseudocode-style summaries of the main algorithms, derived directly from the textual descriptions in the chapter.
+
+### 1. 1-Radial, 1-Bend Drawing via Canonical Ordering (DDLW05)
+```
+Input: Maximal planar graph G with external face (u,v,w)
+Output: 1-radial 1-bend drawing on a semi-circle Λ
+
+1. Compute a canonical ordering v1=u, v2=v, v3, …, vn=w of G
+   (for every k ≥ 4: G_{k-1} is biconnected, C_{k-1} contains (u,v),
+    and the neighbors of vk form a subpath of C_{k-1} − (u,v))
+
+2. Place v1, v2, v3 at three arbitrary points of Λ in the order v1, v3, v2
+   and draw the three edges as straight-line segments. Let Γ3 be this drawing.
+
+3. For k = 4 to n:
+   - Let w1,…,wh be the consecutive neighbors of vk on the outer face of G_{k-1}
+     (they appear consecutively on Λ by the maintained invariant).
+   - Place vk in the right safe region of w1 (the free arc between w1 and β_{w1}).
+   - Draw (w1,vk) as a straight-line segment.
+   - For each subsequent edge ei = (vk,wi) (i=2…h):
+       choose two intersection points with Λ:
+         • one on the free arc between vk and β_{w1},
+         • one in the left safe region of wi (between α_{wi} and wi);
+       draw ei as a 1-bend polyline through those two points.
+   - Update the left/right safe regions of all vertices on the new outer face Ck.
+
+Invariants maintained for Γk:
+• Clockwise order of vertices on Λ = clockwise order on outer face Ck.
+• Every outer-face vertex c has non-empty left and right safe arcs free of vertices/edge crossings.
+```
+
+### 2. Kaufmann–Wiese (KW) Hamiltonian Augmentation (KW02)
+```
+Input: Planar graph G
+Output: Hamiltonian augmentation Ham(G) (each original edge subdivided ≤ 1 time)
+
+1. Augment G to a maximal planar graph (linear time).
+2. Find all separating triangles (Chiba–Nishizeki, O(n)).
+3. For each separating triangle with an edge e=(u,v) shared by faces (u,v,w) and (u,v,z):
+     - Replace e by the path u–d–v (introduce division vertex d).
+     - Add edges (d,w) and (d,z).
+4. The resulting graph is 4-connected, hence Hamiltonian.
+5. Compute a Hamiltonian cycle of the 4-connected graph (Chiba–Nishizeki, O(n)).
+```
+
+### 3. Pach–Wenger (PW) Hamiltonian Augmentation (PW01)
+```
+Input: Planar graph G with a planar drawing Γ
+Output: Hamiltonian augmentation Ham(G)
+
+1. Compute a spanning tree S of G.
+2. Starting at an arbitrary vertex, walk clockwise around the boundary of S,
+   recording the first-visit order of the vertices: w1,w2,…,wn.
+3. For each consecutive pair wi, wi+1 (indices mod n):
+     - If the edge already exists, add it to the Hamiltonian cycle.
+     - Otherwise draw a simple curve that follows the boundary of S very closely
+       from wi to wi+1; wherever the curve crosses an edge of G introduce a new
+       division vertex and add the resulting path pieces as edges.
+4. Merge any multiple edges; the resulting graph is Ham(G).
+   (Each original edge is subdivided at most twice → ≤ 5n−10 vertices.)
+```
+
+### 4. DDLW Hamiltonian Augmentation via Curve Embedding (DDLW05)
+```
+Input: Planar graph G
+Output: Hamiltonian augmentation Ham(G) whose division vertices are “flat”
+
+1. Compute a curve embedding L (linear order of vertices) by producing a
+   1-bend drawing of G on a semi-circle (algorithm of §8.3.2).
+2. From that drawing obtain a topological 2-page book embedding of a
+   subdivision sub(G) in which every edge crosses the spine at most once
+   (the crossing points become the division vertices).
+3. Add edges between consecutive vertices on the spine (and between the first
+   and last vertex if necessary) to obtain a Hamiltonian cycle of Ham(G).
+   All division vertices lie between their two original end-vertices in the
+   left-to-right order (“flatness”).
+```
+
+### 5. Point-Set Embedding with ≤ 2 Bends (Kaufmann–Wiese)
+```
+Input: Planar graph G with n vertices, point set S with |S|=n
+Output: Planar drawing of G on S with ≤ 2 bends per edge
+
+1. Compute a Hamiltonian augmentation Ham(G) (KW or DDLW technique)
+   and an augmenting Hamiltonian cycle H = (v1…vn).
+2. If necessary enrich S with extra points corresponding to division vertices.
+3. Order the (augmented) points of S by increasing x-coordinate: p1…pm.
+4. Map vi ↦ pi and draw the path H \ {(v1,vn)} with straight-line edges.
+5. For every remaining edge e:
+     - Choose a slope σ larger in absolute value than every edge of the path.
+     - Draw e with two segments of slopes ±σ, above the path if e lies to the
+       left of the directed path, below otherwise.
+6. Perturb slopes slightly to eliminate overlapping segments incident to the
+   same vertex.
+7. (KW version only) For each division vertex d that creates a third bend,
+   rotate the two incident segments to make them vertical (may require
+   cascading rotations).  DDLW version needs no rotation because all
+   division vertices are already flat.
+```
+
+### 6. Upright 2-Layer 0-Bend Drawing on Paired Curves (DGL08)
+```
+Input: Bipartite planar graph G that admits an embedding with one partite
+       set entirely on the outer face; two paired parallel convex curves λe, λi
+Output: Upright straight-line drawing with vertices of one part on λe,
+         the other on λi
+
+1. (If necessary) Augment G to a biconnected bipartite graph while keeping
+   one partite set on the outer face.
+2. Compute a bipartite-fan decomposition:
+   - A bipartite fan is a biconnected bipartite graph in which a single apex
+     vertex belongs to every face.
+   - Recursively extract fans whose triplets identify cut-sets.
+3. For the outermost fan Fu define a wedge Wu on the two curves
+   (region bounded by λe and two segments, one of which intersects λi twice).
+4. Draw Fu inside Wu so that each fan triplet defines a new nested wedge.
+5. Recursively draw the subgraphs identified by the triplets inside those wedges.
+```
+
+### 7. k-Radial 0-Bend Drawing of a k-Outerplanar Graph (DDLM05)
+```
+Input: k-outerplanar embedded graph G
+Output: Straight-line drawing on k concentric circles
+
+1. Place the vertices of the outermost face on the largest circle C0
+   (preserving cyclic order).
+2. Remove those vertices; the remaining graph is (k−1)-outerplanar.
+3. Recursively draw the remaining graph on the inner circles C1…Ck−1.
+(The converse also holds: any k-radial 0-bend drawing implies outerplanarity ≤ k.)
+```
+
+These reconstructions stay as close as possible to the original narrative descriptions; the chapter itself never presents them in formal algorithmic notation.

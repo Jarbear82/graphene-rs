@@ -1,0 +1,85 @@
+The document is a survey of results on simultaneous embeddings of planar graphs (SGE, SEFE, and SE). It contains constructive proofs and high-level algorithmic descriptions for several positive results, but **no formal pseudocode**. Below is pseudocode reconstructed directly from the explicit constructive arguments given in the text (primarily Theorems 11.1 and 11.6, together with the supporting constructions they invoke).
+
+### 1. Simultaneous Geometric Embedding of Two Paths
+(Theorem 11.1 / Brass et al. [BCD⁺07])
+
+```
+Algorithm TwoPathsSGE(P₁, P₂)
+Input:  Two paths P₁ = (v_{π₁(1)}, …, v_{π₁(n)}) and
+        P₂ = (v_{π₂(1)}, …, v_{π₂(n)}) on the same vertex set V of size n
+Output: Straight-line drawings of P₁ and P₂ on an n × n grid
+         with identical vertex positions
+
+1. for each vertex u ∈ V do
+2.     let p₁ ← position of u in P₁          // p₁ ∈ {1,…,n}
+3.     let p₂ ← position of u in P₂          // p₂ ∈ {1,…,n}
+4.     place u at the grid point (p₁, p₂)
+5. draw every edge of P₁ as a straight-line segment
+6. draw every edge of P₂ as a straight-line segment
+7. return the two drawings
+```
+
+**Correctness note (from the text).**
+P₁ becomes an *x*-monotone polygonal chain and P₂ becomes a *y*-monotone polygonal chain; neither can self-intersect.
+
+---
+
+### 2. Simultaneous Embedding (with bends) of Two Planar Graphs
+(Theorem 11.6 / Erten & Kobourov [EK05a])
+
+The algorithm first handles the 4-connected case, then reduces the general case to it via the Kaufmann–Wiese augmentation.
+
+```
+Algorithm SimultaneousEmbedding(G₁, G₂)
+Input:  Two planar graphs G₁ = (V,E₁), G₂ = (V,E₂) on n vertices
+Output: Drawings of G₁ and G₂ on an O(n²)×O(n²) grid
+         with at most three bends per edge and identical vertex positions
+
+// ---------- Phase 1: 4-connected case ----------
+1. if G₁ and G₂ are both 4-connected then
+2.     compute Hamiltonian cycles H₁ of G₁ and H₂ of G₂
+        (Chiba–Nishizeki algorithm)
+3.     let P₁ ⊂ H₁ and P₂ ⊂ H₂ be the corresponding Hamiltonian paths
+4.     compute an SGE of P₁ and P₂ by TwoPathsSGE(P₁,P₂)
+        // P₁ is y-monotone, P₂ is x-monotone
+5.     δ ← minimum absolute slope among all edges of the drawing of P₁
+6.     δ' ← a value slightly smaller than δ
+7.     // close the Hamiltonian cycles and add the remaining edges
+8.     for each missing edge e of H₁ (and later of G₁\H₁) do
+9.         draw e by two straight-line segments of slopes ±δ' (or
+            slopes chosen from the open intervals (δ',δ) and (−δ,−δ'))
+10.    treat G₂ analogously (using the x-monotone path P₂)
+11.    return the resulting drawings
+        // each edge has at most one bend
+
+// ---------- Phase 2: general planar graphs ----------
+12. else
+13.     augment G₁ (resp. G₂) to a 4-connected planar graph G₁⁺ (G₂⁺)
+        by adding edges and subdividing each original edge at most once
+        (Kaufmann–Wiese technique)
+14.     obtain drawings of G₁⁺ and G₂⁺ by the 4-connected procedure above
+15.     delete all dummy edges
+16.     replace every subdivision vertex by a bend
+17.     return the resulting drawings
+        // each original edge now has at most three bends
+```
+
+**Grid-size remark (from the text).**
+All vertex and bend coordinates lie on an O(n²)×O(n²) integer grid (or O(n³)×O(n³) if every bend is required to be a grid point).
+
+---
+
+### 3. Additional constructive results that admit straightforward pseudocode
+
+The survey also gives explicit (but shorter) constructions for several restricted families.  Their high-level structure is identical:
+
+* **Caterpillar + path / two caterpillars / stars / cycles** (Brass et al.)
+  Place the “spine” vertices by a path-style coordinate assignment, then attach leaves in constant-width corridors so that no two edges of the same graph cross.
+
+* **Tree + matching / outerpath + matching / wheel + cycle** (Cabello et al.)
+  First embed the tree (or outerpath) by a standard straight-line algorithm, then route the matching edges with a constant number of slopes that avoid the already-drawn faces.
+
+* **Level-planar graph + path** (Cappos et al.)
+  The path induces a layering; a standard level-planar straight-line drawing of the first graph already realises an SGE.
+
+Because the survey only sketches the geometric ideas and does not supply line-by-line procedures for these families, the two algorithms above are the only ones for which complete, self-contained pseudocode can be extracted directly from the given text.

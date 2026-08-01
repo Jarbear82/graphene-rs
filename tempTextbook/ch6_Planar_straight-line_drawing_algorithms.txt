@@ -1,0 +1,70 @@
+**Algorithm MaximalShift** (shift method of de Fraysseix, Pach & Pollack / Chrobak–Payne linear-time implementation)
+
+**Input:** A maximal plane graph \(G\) with \(n\) vertices
+**Output:** A planar straight-line drawing of \(G\) on the \((2n-4)\times(n-2)\) grid
+
+```
+1:  compute a canonical ordering \(v_1,\dots,v_n\) of \(G\)
+2:  \((\Delta x(v_1), y(v_1), \mathrm{left}(v_1), \mathrm{right}(v_1)) \leftarrow (0,0,\mathrm{nil},v_3)\)
+3:  \((\Delta x(v_3), y(v_3), \mathrm{left}(v_3), \mathrm{right}(v_3)) \leftarrow (1,1,\mathrm{nil},v_2)\)
+4:  \((\Delta x(v_2), y(v_2), \mathrm{left}(v_2), \mathrm{right}(v_2)) \leftarrow (1,0,\mathrm{nil},\mathrm{nil})\)
+5:  for \(4\le k\le n\) do
+6:      /* stretch the \(L(w_p)\)-to-\(L(w_{p+1})\) and \(L(w_{q-1})\)-to-\(L(w_q)\) gaps */
+7:      \(\Delta x(w_{p+1})\leftarrow\Delta x(w_{p+1})+1\)
+8:      \(\Delta x(w_q)\leftarrow\Delta x(w_q)+1\)
+9:      /* compute \(\Delta x(w_q,w_p)\) */
+10:     \(\Delta x(w_q,w_p)\leftarrow\Delta x(w_{p+1})+\dots+\Delta x(w_q)\)
+11:     /* compute \(\Delta x(v_k)\) and \(y(v_k)\); see Eqs. 6.8 and 6.7 */
+12:     \(\Delta x(v_k)\leftarrow(\Delta x(w_q,w_p)+y(w_q)-y(w_p))/2\)
+13:     \(y(v_k)\leftarrow(\Delta x(w_q,w_p)+y(w_q)+y(w_p))/2\)
+14:     /* add \(v_k\) to \(T\) */
+15:     \(\mathrm{right}(w_p)\leftarrow v_k\)
+16:     if \(p+1\neq q\) then
+17:         \(\mathrm{left}(v_k)\leftarrow w_{p+1}\)
+18:     else
+19:         \(\mathrm{left}(v_k)\leftarrow\mathrm{nil}\)
+20:     end if
+21:     \(\mathrm{right}(v_k)\leftarrow w_q\)
+22:     if \(q-1\neq p\) then
+23:         \(\mathrm{right}(w_{q-1})\leftarrow\mathrm{nil}\)
+24:     end if
+25:     /* adjust \(\Delta x(w_q)\) and \(\Delta x(w_{p+1})\) */
+26:     \(\Delta x(w_q)\leftarrow\Delta x(w_q,w_p)-\Delta x(v_k)\)
+27:     if \(p+1\neq q\) then
+28:         \(\Delta x(w_{p+1})\leftarrow\Delta x(w_{p+1})-\Delta x(v_k)\)
+29:     end if
+30: end for
+31: \(x(v_1)\leftarrow0\)
+32: AccumulateOffset(\(v_1,x(v_1)\))
+```
+
+**Procedure AccumulateOffset**
+
+**Input:** A vertex \(v\) of \(T\) and an integer \(x\)
+
+```
+1:  if \(v\neq\mathrm{nil}\) then
+2:      \(x(v)\leftarrow x+\Delta x(v)\)
+3:      AccumulateOffset(\(\mathrm{left}(v),x(v)\))
+4:      AccumulateOffset(\(\mathrm{right}(v),x(v)\))
+5:  end if
+```
+
+(The data structure maintained for each vertex \(v\) consists of the \(x\)-offset \(\Delta x(v)\), the \(y\)-coordinate \(y(v)\), and the left/right children in the binary-tree representation \(T\) of the ordered forest of shift-sets \(L(\cdot)\).)
+
+**Realizer construction** (Schnyder; constructive proof of Lemma 6.4)
+
+Given a maximal plane graph \(G\):
+
+1. Compute a canonical ordering of \(G\).
+2. Set \(v_1\), \(v_2\) and \(v_n\) as the sinks of the blue, green and red trees, respectively.
+3. Make \((v_1,v_2)\) an outgoing blue edge for \(v_2\) and an outgoing green edge for \(v_1\).
+4. For each \(3\le k\le n\), let \(c_l,\dots,c_r\) be the consecutive neighbours of \(v_k\) on \(C_{k-1}\) from left to right:
+   - \((v_k,c_l)\) is an outgoing blue edge for \(v_k\);
+   - \((v_k,c_r)\) is an outgoing green edge for \(v_k\);
+   - each edge \((v_k,c_i)\) (\(l<i<r\)) is an outgoing red edge for \(c_i\).
+5. Also make \((v_n,v_1)\) an outgoing red edge for \(v_1\) and \((v_n,v_2)\) an outgoing red edge for \(v_2\).
+
+(The resulting coloured oriented trees form a realizer. Barycentric coordinates are then obtained by counting faces in the three regions defined by the three coloured paths from each vertex; dropping one coordinate yields a straight-line grid drawing of size \((2n-5)\times(2n-5)\).)
+
+No other fully elaborated numbered pseudocode blocks appear in the chapter.

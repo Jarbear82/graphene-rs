@@ -9,6 +9,7 @@ parallel = ["dep:rayon"]
 
 [dependencies]
 graphene_core = { path = "../graphene_core" }
+graphene_algorithms = { path = "../graphene_algorithms" }
 graphene_fixtures = { path = "../graphene_fixtures" }
 graphene_style = { path = "../graphene_style" }
 graphene_analysis = { path = "../graphene_analysis" }

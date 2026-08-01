@@ -35,6 +35,8 @@ pub enum LayoutCommand {
     FruchtermanReingold(FruchtermanReingoldLayout),
     Tutte(TutteBarycentricLayout),
     MultilevelForce(MultilevelLayout<ForceDirectedLayout>),
+    MaximalShift(crate::planar_shift::MaximalShiftLayout),
+    CircularAdvanced(crate::circular_advanced::CircularAdvancedLayout),
 }
 
 impl LayoutCommand {
@@ -52,6 +54,8 @@ impl LayoutCommand {
         "FruchtermanReingold",
         "Tutte",
         "MultilevelForce",
+        "MaximalShift",
+        "CircularAdvanced",
     ];
 
     pub fn from_name(name: &str, iterations: usize) -> Option<Self> {
@@ -81,6 +85,8 @@ impl LayoutCommand {
             "MultilevelForce" => Some(Self::MultilevelForce(MultilevelLayout::new(
                 ForceDirectedLayout::default().with_iterations(20),
             ))),
+            "MaximalShift" => Some(Self::MaximalShift(crate::planar_shift::MaximalShiftLayout::default())),
+            "CircularAdvanced" => Some(Self::CircularAdvanced(crate::circular_advanced::CircularAdvancedLayout::default())),
             _ => None,
         }
     }
@@ -282,6 +288,8 @@ impl<S: Copy + Default + Send + Sync + 'static> GraphEngineHandle<S> {
                     LayoutCommand::FruchtermanReingold(mut l) => l.compute(state),
                     LayoutCommand::Tutte(mut l) => l.compute(state),
                     LayoutCommand::MultilevelForce(mut l) => l.compute(state),
+                    LayoutCommand::MaximalShift(l) => l.apply(state),
+                    LayoutCommand::CircularAdvanced(l) => l.apply(state),
                 }
                 let collapsed = std::collections::HashSet::new();
                 crate::collision::finish_layout_epilogue(state, &collapsed, 10.0, 20.0);

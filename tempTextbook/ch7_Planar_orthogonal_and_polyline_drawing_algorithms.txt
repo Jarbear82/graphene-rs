@@ -1,0 +1,89 @@
+**Extracted Pseudocode**
+
+The document contains two formal algorithm listings presented in pseudocode style (Require/Ensure). The remaining algorithmic content is given as prose descriptions of constructions, case analyses, and procedures (visibility-to-orthogonal conversion, network-flow modeling for bend minimization and compaction, mixed-model routing, and the one-bend incremental insertion process). Those are summarized briefly after the two listings.
+
+### Figure 7.1 – Optimal Topological Ordering of a DAG
+```
+Require: G = (V, E) be a Directed Acyclic Graph
+Ensure: T(G) is an optimal topological ordering
+
+{Compute the indegree for every vertex}
+for all v ∈ V do
+    in(v) ← 0
+end for
+for all (u, v) ∈ E do
+    increment in(v)
+end for
+
+{Identify all sinks}
+S₀ ← ∅
+for all v ∈ V do
+    if in(v) = 0 then
+        S₀.add(v)
+    end if
+end for
+
+n ← 0
+repeat
+    {Mark all current sinks and remove them from G}
+    Sₙ₊₁ ← ∅
+    for all v ∈ Sₙ do
+        T(v) ← n
+        for all (v, u) ∈ E do {remove v from the graph}
+            decrement in(u)
+            if in(u) = 0 then {u is a new sink}
+                Sₙ₊₁.add(u)
+            end if
+        end for
+        increment n
+    end for
+until Sₙ is empty {No more sinks}
+```
+
+### Figure 7.6 – Visibility Representation of a Plane Graph
+```
+Require: G = (V, E) be a plane graph
+Ensure: Γ is a visibility representation of G on the integer grid of size O(n²)
+
+Make G biconnected by adding “dummy” edges {See [FM98]}
+Select an edge (s, t) on the external face
+Compute a planar st-graph on G {For simplicity, we refer to it as G}
+Create the dual planar st-graph G*
+
+Compute the optimal topological ordering Tₓ = T(G*) {See Figure 7.1}
+Compute the optimal topological ordering Tᵧ = T(G)
+
+for all v ∈ V do {Assigning positions to the horizontal vertex segments}
+    Let fₗ be the face to the left of the leftmost outgoing edge of v
+    Let fᵣ be the face to the right of the rightmost outgoing edge of v
+    {fₗ and fᵣ are vertices in the dual graph G*}
+    Γ(v).y ← Tᵧ(v)
+    Γ(v).xₘᵢₙ ← Tₓ(fₗ)
+    Γ(v).xₘₐₓ ← Tₓ(fᵣ) − 1
+end for
+
+for all e = (u, v) ∈ E do {Assigning positions to the vertical edge segments}
+    Let fₗ be the face to the left of e {fₗ is a vertex in G*}
+    Γ(e).x ← Tₓ(fₗ)
+    Γ(e).yₘᵢₙ ← Tᵧ(u)
+    Γ(e).yₘₐₓ ← Tᵧ(v)
+end for
+
+Remove any added “dummy” edges
+```
+
+### Other Algorithms (Described in Prose)
+
+- **Orthogonal drawing from visibility representation (Section 7.3.1 / Theorem 7.3)**
+  Compute a (constrained) visibility representation. Place each vertex at a single point on its horizontal segment according to one of six local cases (accounting for degree ≤ 4 and symmetry). Route the incident edges with at most two bends per endpoint. Optionally apply heuristics to reduce bends, then compact the resulting orthogonal shape.
+
+- **Minimum-bend orthogonal shape via network flow (Section 7.3.2)**
+  Build a flow network whose nodes are the vertices and faces of the embedded 4-planar graph (plus a global source and sink). Arc types encode angle supply (4 units per vertex), face consumption (σ(f) = 2d(f)−4 internal / 2d(f)+4 external), angles at vertices, and bends between faces. A minimum-cost maximum flow yields an orthogonal shape with the fewest bends. A second pair of (horizontal/vertical) flow networks, after rectangularization of faces, determines segment lengths that realize a compact drawing of minimum width, height, area and total edge length. Running time O(n^{3/2} log n) with modern planar-flow algorithms.
+
+- **Mixed-model algorithm (Section 7.4.1)**
+  Using a biconnected ordering, assign each edge an in-point and out-point; route every edge as four segments (vertex → out-point → vertical → horizontal → in-point → vertex). Produces at most three bends per edge while mixing orthogonal and free-direction segments.
+
+- **One-bend algorithm with vertex regions (Sections 7.4.2–7.4.4 / Theorem 7.5)**
+  Maintain a canonical ordering and associated shifting sets. Surround each vertex by six alternating free/port regions. Insert vertices incrementally, performing a constant number of regular/left/right shifts (at most five) so that the new vertex is placed at the intersection of two slope-±1 lines through maximal ports of its leftmost and rightmost neighbors. Route every edge through exactly one port of one endpoint (the other segment is free). Guarantees at most one bend per edge, angular resolution ≥ 1/(2d(v)), and an O(n)×O(n) grid, all in linear time.
+
+These are the complete algorithmic descriptions present in the chapter.

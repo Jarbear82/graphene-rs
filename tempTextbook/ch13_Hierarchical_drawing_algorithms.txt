@@ -1,0 +1,206 @@
+The document presents several algorithms in the Sugiyama hierarchical drawing framework. Below is the pseudocode for each, extracted and cleaned for clarity (preserving the original structure and notation).
+
+### Greedy Cycle Removal (Figure 13.3)
+```
+Require: digraph G = (V, E)
+
+S_l ← ∅
+S_r ← ∅
+while G is not empty do
+  while G contains a sink do
+    Choose a sink v
+    Remove v from G
+    Prepend v to S_r
+  end while
+  while G contains a source do
+    Choose a source u
+    Remove u from G
+    Append u to S_l
+  end while
+  if G is not empty then
+    Choose a vertex w such that d⁺(w) − d⁻(w) is maximum
+    Remove w from G
+    Append w to S_l
+  end if
+end while
+```
+
+### Algorithm of Demetrescu and Finocchi (Figure 13.4)
+```
+Require: digraph G = (V, E), w : E → ℝ
+
+F ← ∅
+while (V, E \ F) is not acyclic do
+  Let C be a simple cycle in (V, E \ F)
+  Let (x, y) be a minimum weight edge in C
+  Let ε = w(x, y)
+  for all (u, v) ∈ C do
+    w(u, v) ← w(u, v) − ε
+    if w(u, v) = 0 then
+      F ← F ∪ {(u, v)}
+    end if
+  end for
+end while
+for all (u, v) ∈ F do
+  if (V, E \ F ∪ {(u, v)}) is acyclic then
+    F ← F \ {(u, v)}
+  end if
+end for
+```
+
+### The Longest-Path Algorithm (Figure 13.6)
+```
+Requires: DAG G = (V, E)
+
+U ← ∅
+Z ← ∅
+currentLayer ← 1
+while U ≠ V do
+  Select vertex v ∈ V \ U with N⁺_G(v) ⊆ Z
+  if v has been selected then
+    Assign v to the layer with a number currentLayer
+    U ← U ∪ {v}
+  end if
+  if no vertex has been selected then
+    currentLayer ← currentLayer + 1
+    Z ← Z ∪ U
+  end if
+end while
+```
+
+### The Coffman-Graham Layering Algorithm (Figure 13.7)
+```
+Require: A DAG G = (V, E) without transitive edges and an integer W > 0
+
+for all v ∈ V do
+  λ(v) ← ∞
+end for
+for i ← 1 to |V| do
+  Choose v ∈ V with λ(v) = ∞ such that N⁻_G(v) is minimized
+  λ(v) ← i
+end for
+k ← 1, L₁ ← ∅, U ← ∅
+while U ≠ V do
+  Choose v ∈ V \ U such that N⁺_G(v) ⊆ U and λ(v) is maximized
+  if |L_k| ≤ W and N⁺_G(v) ⊆ L₁ ∪ L₂ ∪ … ∪ L_{k−1} then
+    L_k ← L_k ∪ {v}
+  else
+    k ← k + 1; L_k ← {v}
+  end if
+  U ← U ∪ {v}
+end while
+```
+
+### Min-width Layering Algorithm (Figure 13.8)
+```
+Requires: DAG G = (V, E), integers W and c
+
+U ← ∅; Z ← ∅
+currentLayer ← 1; widthCurrent ← 0; widthUp ← 0
+while U ≠ V do
+  Select vertex v ∈ V \ U with N⁺_G(v) ⊆ Z and ConditionSelect
+  if v has been selected then
+    Assign v to the layer with a number currentLayer
+    U ← U ∪ {v}
+    widthCurrent ← widthCurrent − d⁺(v) + 1
+    widthUp ← widthUp + d⁻(v)
+  end if
+  if no vertex has been selected OR ConditionGoUp then
+    currentLayer ← currentLayer + 1
+    Z ← Z ∪ U
+    widthCurrent ← widthUp
+    widthUp ← 0
+  end if
+end while
+```
+*(ConditionSelect: true if v has maximum out-degree among candidates.
+ConditionGoUp: true if (widthCurrent ≥ W and d⁺(v) < 1) or (widthUp ≥ c × W).)*
+
+### PromoteVertex (Figure 13.9)
+```
+Require: A layered DAG G = (V, E) with the layering information stored in a global
+         vertex array of integers called layering; a vertex v ∈ V.
+
+dummydiff ← 0
+for all u ∈ N⁻_G(v) do
+  if layering[u] = layering[v] + 1 then
+    dummydiff ← dummydiff + PromoteVertex(u)
+  end if
+end for
+layering[v] ← layering[v] + 1
+dummydiff ← dummydiff − |N⁻_G(v)| + |N⁺_G(v)|
+return dummydiff
+```
+
+### Vertex-Promotion Heuristic (Figure 13.10)
+```
+Require: G = (V, E) is a layered DAG; a valid layering of G is stored in a global vertex
+         array called layering.
+
+layeringBackUp ← layering
+repeat
+  promotions ← 0
+  for all v ∈ V do
+    if d⁻(v) > 0 then
+      if PromoteVertex(v) < 0 then
+        promotions ← promotions + 1
+        layeringBackUp ← layering
+      else
+        layering ← layeringBackUp
+      end if
+    end if
+  end for
+until promotions = 0
+```
+
+### Network Simplex Layer Assignment (Figure 13.11)
+```
+Require: G = (V, E) is a DAG.
+
+feasible_tree
+while (e = leave_edge()) ≠ nil do
+  f = enter_edge(e)
+  exchange(e, f)
+end while
+normalize()
+balance()
+```
+
+### Newbery’s Biclique Cover Heuristic (Figure 13.14)
+```
+Require: A bipartite graph G = (V, E) and an integer M > 0
+
+B₁ ← ∅
+B₂ ← ∅
+for all pair of source vertices (u, v) do
+  add the largest biclique with a source set {u, v} to B₁
+end for
+Sort the bicliques in B₁ in increasing order by number of target vertices
+Add a biclique with empty source and target sets to B₂
+for all x ∈ B₁ do
+  if S_x ∗ (T_x − 1) < M then
+    Discard x
+  else
+    for all y ∈ B₂ do
+      if T_x = T_y then
+        S_y ← S_y ∪ S_x
+        Continue the external for loop
+      end if
+    end for
+    for all y ∈ B₂ do
+      if T_x ⊆ T_y then
+        Add (S_y ∪ S_x, T_x) to the front of B₂
+        T_y ← T_y \ T_x
+        Continue the external for loop
+      end if
+      if T_y ⊆ T_x then
+        Add (S_x, T_x \ T_y) to the front of B₂
+        S_y ← S_y ∪ S_x
+        Continue the external for loop
+      end if
+    end for
+  end if
+end for
+```
+
+These cover the main algorithms presented with explicit pseudocode in the provided pages of the chapter. Later sections (vertex ordering / crossing minimization, x-coordinate assignment, etc.) discuss further techniques but do not include additional formal pseudocode blocks of this style in the extracted content.

@@ -1,0 +1,60 @@
+**Extracted Pseudocode for Algorithms**
+
+### 1. Basic Labeling Algorithm (for GFLP)
+**INPUT:** A drawing \(\Gamma\) and a set \(F\) of objects to be labeled.
+**OUTPUT:** A label assignment free of overlaps.
+
+1. A set of discrete potential label solutions for each object in \(F\) is carefully selected.
+2. This set of labels is reduced by removing heavily overlapping labels. The remaining labels are assigned to groups, such that, if two labels overlap then they belong to the same group.
+3. Labels are assigned by solving a variant of the matching problem, where at most one label position from each group is part of the solution.
+
+### 2. Algorithm ELP
+**INPUT:** A drawing \(\Gamma\) of graph \(G(V, E)\).
+**OUTPUT:** A label assignment free of overlaps.
+
+1. Split \(\Gamma\) into horizontal strips.
+2. Find all label positions for each edge and construct the groups of overlapping labels.
+3. Create the matching graph \(G_m\) for \(\Gamma\).
+4. Match label positions to edges, by finding a maximum cardinality minimum weight matching of \(G_m\).
+
+### 3. Algorithm Fast Matching
+**INPUT:** Matching graph \(G_m\).
+**OUTPUT:** A maximum cardinality matching for \(G_m\) with low total weight.
+
+1. If the minimum weight incident edge of a node in \(V_f\) connects this node to a node in \(V_c\) of degree 1 then:
+   1.1. Assign this edge as a matched edge.
+   1.2. Update \(G_m\).
+2. If a node in \(V_f\) has degree 1 then:
+   2.1. Assign its incident edge as a matched edge.
+   2.2. Update graph \(G_m\).
+3. Repeat Steps 1 and 2 until no new edge can be matched.
+4. Delete all nodes of degree 0 from \(G_m\).
+5. For each node \(f\) in \(V_f\) do
+   5.1. Remove all but the two incident edges of \(f\) with the least weight.
+6. The remaining graph consists of simple cycles and/or paths.
+   6.1. Find the only two maximum cardinality matchings for each component.
+   6.2. Choose the matching of minimum weight.
+
+**Note:** The *Update \(G_m\)* operation removes the two nodes incident to a new matched edge and stores that edge and its incident nodes as part of the matching. It also removes all incident edges from the two nodes.
+
+### 4. Iterative Algorithm (for MLP)
+**INPUT:** A drawing \(\Gamma\), a set of graphical features \(F\) in \(\Gamma\) to be labeled, a number \(N\) of labels for each graphical feature \(f\) in \(F\).
+**OUTPUT:** A label assignment.
+
+1. Find an initial set of label positions \(L\).
+2. For \(i = 1\) to \(N\) do:
+   2.1. Assign the \(i\)-th label to each graphical feature in \(F\) from the set \(L\) of potential labels using existing labeling algorithms.
+   2.2. Remove potential label positions from \(L\) that overlap already assigned labels.
+
+### 5. Flow-based Algorithm (for MLP)
+**INPUT:** A drawing \(\Gamma\), a set of graphical features \(F\) in \(\Gamma\) to be labeled, a number \(M(f)\) of labels for each graphical feature \(f\) in \(F\).
+**OUTPUT:** A label assignment free of overlaps.
+
+1. Find a set of label positions for each graphical feature in the drawing.
+2. Arrange overlapping label positions into groups.
+3. Create the matching graph \(G_m\).
+4. Augment graph \(G_m\) to a flow graph \(G_{flow}\).
+5. Assign capacities to each edge of \(G_{flow}\).
+6. Assign cost to edges of \(G_{flow}\).
+7. Find the maximum flow minimum cost of graph \(G_{flow}\).
+8. Assign labels according to the results of Step 7.

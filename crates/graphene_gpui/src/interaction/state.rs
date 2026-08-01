@@ -230,6 +230,62 @@ impl InteractionState {
         self.drag_start = None;
         self.pan_origin = None;
     }
+
+    pub fn on_double_click(
+        &mut self,
+        screen_pos: gpui::Point<f32>,
+        viewport: &Viewport,
+        state: &mut GraphState<ComputedStyle>,
+        label: &str,
+    ) -> NodeId {
+        let model_pos = viewport.screen_to_model(screen_pos);
+        let id = state.add_node_with_label(model_pos, Size2::new(40.0, 40.0), label);
+
+        if let Some(&idx) = state.node_keys.get(id) {
+            let mut style = ComputedStyle::default();
+            if let graphene_style::StylingTarget::Node(ref mut node_style) = style.target {
+                node_style.label = Some(idx as u32);
+                node_style.shape = graphene_style::NodeShape::Ellipse;
+                node_style.fill_color =
+                    graphene_style::ColorValue::Rgba(137.0 / 255.0, 180.0 / 255.0, 250.0 / 255.0, 1.0);
+                node_style.border_color =
+                    graphene_style::ColorValue::Rgba(205.0 / 255.0, 214.0 / 255.0, 244.0 / 255.0, 1.0);
+                node_style.border_width = graphene_style::LengthValue::Pixels(2.0);
+            }
+            state.computed_styles.set(idx, style);
+        }
+
+        self.rebuild_grid(state);
+        id
+    }
+}
+
+pub fn update_node_shape(
+    state: &mut GraphState<ComputedStyle>,
+    id: NodeId,
+    shape: graphene_style::NodeShape,
+) {
+    if let Some(&idx) = state.node_keys.get(id) {
+        let style = state.computed_styles.get_mut(idx);
+        if let graphene_style::StylingTarget::Node(ref mut node_style) = style.target {
+            node_style.shape = shape;
+            state.dirty_flags |= graphene_core::DirtyFlags::CONTENT_DIRTY;
+        }
+    }
+}
+
+pub fn update_edge_width(
+    state: &mut GraphState<ComputedStyle>,
+    edge_idx: usize,
+    width: f32,
+) {
+    if edge_idx < state.edge_computed_styles.len() {
+        let style = state.edge_computed_styles.get_mut(edge_idx);
+        if let graphene_style::StylingTarget::Edge(ref mut edge_style) = style.target {
+            edge_style.line_width = graphene_style::LengthValue::Pixels(width);
+            state.dirty_flags |= graphene_core::DirtyFlags::CONTENT_DIRTY;
+        }
+    }
 }
 
 pub fn distance_to_segment(p: gpui::Point<f32>, a: gpui::Point<f32>, b: gpui::Point<f32>) -> f32 {

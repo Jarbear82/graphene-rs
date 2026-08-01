@@ -1,0 +1,185 @@
+**Pseudocode from the chapter (as presented in the source figures):**
+
+### Fruchterman–Reingold (Figure 12.2)
+```
+area := W * L;  {W and L are the width and length of the frame}
+G := (V, E);    {the vertices are assigned random initial positions}
+k := √(area / |V|);
+function fa(x) := begin return x²/k end;
+function fr(x) := begin return k²/x end;
+for i := 1 to iterations do begin
+  {calculate repulsive forces}
+  for v in V do begin
+    {each vertex has two vectors: .pos and .disp}
+    v.disp := 0;
+    for u in V do
+      if (u ≠ v) then begin
+        {δ is the difference vector between the positions of the two vertices}
+        δ := v.pos − u.pos;
+        v.disp := v.disp + (δ / |δ|) * fr(|δ|)
+      end
+  end
+  {calculate attractive forces}
+  for e in E do begin
+    {each edge is an ordered pair of vertices .v and .u}
+    δ := e.v.pos − e.u.pos;
+    e.v.disp := e.v.disp − (δ / |δ|) * fa(|δ|);
+    e.u.disp := e.u.disp + (δ / |δ|) * fa(|δ|)
+  end
+  {limit max displacement to temperature t and prevent from displacement outside frame}
+  for v in V do begin
+    v.pos := v.pos + (v.disp / |v.disp|) * min(v.disp, t);
+    v.pos.x := min(W/2, max(−W/2, v.pos.x));
+    v.pos.y := min(L/2, max(−L/2, v.pos.y))
+  end
+  {reduce the temperature as the layout approaches a better configuration}
+  t := cool(t)
+end
+```
+
+### Tutte’s Barycentric Method (Figure 12.3)
+```
+Barycenter-Draw
+Input: G = (V, E); a partition V = V₀ ∪ V₁ of V into a set V₀ of at least three
+fixed vertices and a set V₁ of free vertices; a strictly convex polygon P with |V₀| vertices
+Output: a position pᵥ for each vertex of V, such that the fixed vertices form a convex polygon P.
+
+1. Place each fixed vertex u ∈ V₀ at a vertex of P, and each free vertex at the origin.
+2. repeat
+     foreach free vertex v ∈ V₁ do
+       xᵥ = (1 / deg(v)) * ∑_{(u,v)∈E} xᵤ
+       yᵥ = (1 / deg(v)) * ∑_{(u,v)∈E} yᵤ
+   until xᵥ and yᵥ converge for all free vertices v.
+```
+
+### Kamada–Kawai (Figure 12.4)
+```
+compute d_{i,j} for 1 ≤ i ≠ j ≤ n;
+compute l_{i,j} for 1 ≤ i ≠ j ≤ n;
+compute k_{i,j} for 1 ≤ i ≠ j ≤ n;
+initialize p₁, p₂, …, pₙ;
+while (max_i Δ_i > ε)
+  let pₘ be the particle satisfying Δₘ = max_i Δ_i;
+  while (Δₘ > ε)
+    compute δx and δy by solving the following system of equations:
+
+    (∂²E / ∂xₘ²)(xₘ^{(t)}, yₘ^{(t)}) δx + (∂²E / ∂xₘ ∂yₘ)(xₘ^{(t)}, yₘ^{(t)}) δy = −(∂E / ∂xₘ)(xₘ^{(t)}, yₘ^{(t)});
+
+    (∂²E / ∂yₘ ∂xₘ)(xₘ^{(t)}, yₘ^{(t)}) δx + (∂²E / ∂yₘ²)(xₘ^{(t)}, yₘ^{(t)}) δy = −(∂E / ∂yₘ)(xₘ^{(t)}, yₘ^{(t)});
+
+    xₘ := xₘ + δx;
+    yₘ := yₘ + δy;
+```
+
+### Harel–Koren (Figure 12.5)
+```
+Layout(G(V, E))
+% Goal: Find L, a nice layout of G
+% Constants:
+% Rad[= 7] – determines radius of local neighborhoods
+% Iterations[= 4] – determines number of iterations in local beautification
+% Ratio[= 3] – ratio between number of vertices in two consecutive levels
+% MinSize[= 10] – size of the coarsest graph
+Compute the all-pairs shortest path length: d_{VV}
+Set up a random layout L
+k ← MinSize
+while k ≤ |V| do
+  centers ← K-Centers(G(V, E), k)
+  radius = max_{v∈centers} min_{u∈centers}{d_{vu}} * Rad
+  LocalLayout(d_{centers×centers}, L(centers), radius, Iterations)
+  for every v ∈ V do
+    L(v) ∈ L(center(v)) + rand
+  k ← k * Ratio
+return L
+
+K-Centers(G(V, E), k)
+% Goal: Find a set S ⊆ V of size k, such that max_{v∈V} min_{s∈S}{d_{sv}} is minimized.
+S ← {v} for some arbitrary v ∈ V
+for i = 2 to k do
+  1. Find the vertex u farthest away from S
+     (i.e., such that min_{s∈S}{d_{us}} ≥ min_{s∈S}{d_{ws}}, ∀w ∈ V)
+  2. S ← S ∪ {u}
+return S
+
+LocalLayout(d_{V×V}, L, k, Iterations)
+% Goal: Find a locally nice layout L by beautifying k-neighborhoods
+% d_{V×V}: all-pairs shortest path length
+% L: initialized layout
+% k: radius of neighborhoods
+for i = 1 to Iterations * |V| do
+  1. Choose the vertex v with the maximal Δ_v^k
+  2. Compute δ_v^k as in Kamada-Kawai
+  3. L(v) ← L(v) + (δ_v^k(x), δ_v^k(y))
+end
+```
+
+### Gajer et al. / GRIP-style multi-scale (Figure 12.6)
+```
+MAIN ALGORITHM
+create a filtration V : V₀ ⊃ V₁ ⊃ … ⊃ V_k ⊃ ∅
+for i = k to 0 do
+  for each v ∈ V_i − V_{i+1} do
+    find vertex neighborhood N_i(v), N_{i−1}(v), …, N_0(v)
+    find initial position pos[v] of v
+  repeat rounds times
+    for each v ∈ V_i do
+      compute local temperature heat[v]
+      disp[v] ← heat[v] · −→F_{N_i(v)}
+    for each v ∈ V_i do
+      pos[v] ← pos[v] + disp[v]
+  add all edges e ∈ E
+```
+
+### Walshaw multilevel (Figure 12.8)
+```
+function f_g(x, w) := begin return −C w k² / x end
+function f_l(x, d, w) := begin return {(x − k)/d} − f_g(x, w) end
+t := t₀;
+Posn := NewPosn;
+while (converged ≠ 1) begin
+  converged := 1;
+  for v ∈ V begin
+    OldPosn[v] = NewPosn[v]
+  end
+  for v ∈ V begin
+    {initialize D, the vector of displacements of v}
+    D := 0;
+    {calculate global (repulsive) forces}
+    for u ∈ V, u ≠ v begin
+      Δ := Posn[u] − Posn[v];
+      D := D + (Δ / |Δ|) * f_g(|Δ|, |u|);
+    end
+    {calculate local (spring) forces}
+    for u ∈ Γ(v) begin
+      Δ := Posn[u] − Posn[v];
+      D := D + (Δ / |Δ|) * f_l(|Δ|, |Γ(v)|, |u|);
+    end
+    {reposition v}
+    NewPosn[v] = NewPosn[v] + (D / |D|) * min(t, |D|);
+    Δ := NewPosn[v] − OldPosn[v];
+    if (|Δ| > k × tol) converged := 0;
+  end
+  {reduce the temperature to reduce the maximum movement}
+  t := cool(t);
+end
+```
+
+### Non-Euclidean counterpart (Figure 12.10)
+```
+generic_algorithm(G)
+while not done do
+  foreach n ∈ G do
+    position[n] := force_directed_placement(n, G)
+end
+
+non_Euclidean_algorithm(G)
+while not done do
+  foreach n ∈ G do
+    x := position[n]
+    G′ := τ_x(G)
+    x′ := force_directed_placement(n, G′)
+    position[n] := τ_x⁻¹(x′)
+end
+```
+
+These are the complete pseudocode listings that appear in the chapter. The surrounding text defines the supporting quantities (forces, energy functions, filtrations, temperature schedules, etc.).

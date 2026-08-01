@@ -1,0 +1,66 @@
+**Algorithms extracted from the document** (as presented; the chapter mostly gives high-level outlines rather than fully formal pseudocode).
+
+### Geometric Automorphism Drawing Problem (GADP)
+**Instance:** Graph \(G\), automorphism group \(A\) of \(G\) given by at most 2 generators.
+**Output:** Straight-line drawing of \(G\) that displays \(A\) (if possible).
+
+There is a linear-time algorithm that solves GADP (Corollary 3.2). It is given constructively by the proof of Theorem 3.2 (drawing on a circular grid). The three cases are:
+
+**(a) Reflection (\(|A|=2\))**
+- Draw \(V\setminus\operatorname{fix}_A\) on a circle about the origin so that the \(x\)-coordinates of \(u\) and \(\alpha(u)\) coincide; draw the induced edges as straight lines (axial symmetry about the \(y\)-axis, non-degenerate).
+- The edges induced by \(V\setminus\operatorname{fix}_A\) cross the \(y\)-axis at finitely many places. Draw \(\operatorname{fix}_A\) on the \(y\)-axis (one path at a time) so that its vertices avoid those crossings.
+- Draw the edges between \(V\setminus\operatorname{fix}_A\) and \(\operatorname{fix}_A\).
+
+**(b) Rotation (\(A=\langle\rho\rangle\))**
+- If \(\operatorname{fix}_A=\emptyset\), place every vertex on the unit circle. The orbits all have the same size \(k\). Choose a representative \(u_i\) from each orbit \(O_i\) and place \(\rho^j(u_i)\) at angle \(2\pi(i+jn/k)/n\).
+- If \(\operatorname{fix}_A=\{c\}\), place \(c\) at the origin (the conditions of the theorem guarantee non-degeneracy).
+
+**(c) Dihedral group (\(A=\langle\alpha,\rho\rangle\))**
+- Use an \(n\times(n/k)\) circular grid.
+- Draw each conjugate of \(\operatorname{fix}_\alpha\) on the appropriate pair of rays by rotating the drawing of \(\operatorname{fix}_\alpha\).
+- Place the remaining orbits on the innermost circle, choosing representatives so that \(\alpha\) is displayed, then rotate by \(2\pi/k\).
+- Non-degeneracy follows from Lemma 3.1 and the hypotheses of the theorem.
+
+### Algorithm Max_PAG_tricon
+(for a maximum-size planar automorphism group of a triconnected planar graph)
+
+1. Find a face \(f\) of \(G\) such that the stabilizer \(\operatorname{stab}_A(f)\) is maximised.
+2. Find the orbits of \(\operatorname{stab}_A(f)\).
+3. Find generators of \(\operatorname{stab}_A(f)\).
+
+**Implementation notes (linear time):**
+- Step 1 uses Fontet’s algorithm on the dual to obtain a minimum-size face orbit; any face of that orbit may be chosen as the outer face.
+- Star-triangulate internal faces, then (if necessary) add a surrounding hexagon so that the outer face has more than three vertices; re-apply Fontet’s algorithm.
+- On the outer face vertices \(v_0,\dots,v_{m-1}\) locate three consecutive vertices \(v_i,v_j,v_k\) belonging to a non-trivial orbit with \(j-i\) minimal. Compute (via the flag lemma) the three candidate automorphisms \(\alpha,\rho_1,\rho_2\) and select the generators of the cyclic or dihedral group they generate.
+
+**Lemma 3.3:** The algorithm runs in linear time.
+
+### Algorithm MAX_PAG_bicon
+(for a maximum-size planar automorphism group of a biconnected planar graph)
+
+**Step 1.** Construct the SPQR-tree \(T\) of \(G\) (linear time via Hopcroft–Tarjan).
+
+**Step 2. Reduction** (bottom-up, level by level from the leaves to the root)
+(a) For each leaf node on level \(i\), compute labels on its parent virtual edge.
+(b) Transfer those labels onto the corresponding virtual edge in the parent node.
+(c) Delete the leaf nodes of level \(i\).
+
+(The labels encode isomorphism codes, axial-swap flags, etc., so that every planar automorphism of the labelled reduced graph extends to the original graph.)
+
+**Step 3.** Compute a maximum-size planar automorphism group at the (labelled) centre of \(T\).
+
+(Seven families of labels and separate routines for each type of triconnected component / centre are required; details appear in the referenced papers.)
+
+### One-connected and disconnected cases
+- One-connected graphs are handled by an analogous reduction on the rooted BC-tree, calling the biconnected algorithm as a subroutine.
+- Disconnected graphs are reduced to an arrangement-of-discs problem (isomorphism classes of components treated as coloured polygonal discs, possibly with holes). The maximum dihedral symmetry size is obtained from a constant number of gcd computations (Lemma 3.4 bounds the number of non-conjugate maximal groups by 3).
+
+### Drawing algorithms (Section 3.5.5)
+Given a planar graph and a planar automorphism group \(A\):
+- **Triconnected:** linear-time straight-line drawing (more sophisticated than Tutte’s barycentre method) that realises \(A\); supports a “squash” operation at a prescribed outer-face vertex that preserves axial symmetry.
+- **Biconnected:** star-triangulate to obtain a triconnected supergraph that still admits \(A\), then apply the triconnected drawer.
+- **One-connected:** draw the root block, then attach successive blocks of the BC-tree, scaling/squashing them into faces of already-drawn blocks.
+
+**Theorem 3.7:** A straight-line drawing that displays \(A\) can be produced in linear time. (Worst-case area is exponential.)
+
+All of the above are the complete algorithmic descriptions appearing in the chapter; fuller implementation details are deferred to the cited papers [HE05, HE06, HME06, HE03].

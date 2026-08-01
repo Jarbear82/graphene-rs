@@ -1,0 +1,12 @@
+**There is no formal pseudocode in the document.**
+
+This is a survey chapter (“Three-Dimensional Drawings” by Vida Dujmović and Sue Whitesides). It describes many algorithms and results in prose (with theorems, volume/bend bounds, high-level ideas, and citations), but it contains **no algorithmic listings, no “Algorithm …” blocks, no Input/Output sections, no step-by-step pseudocode, and no formal procedures**.
+
+### Examples of how algorithms are presented (prose only)
+- **3D grid drawings / track layouts** (Sections 14.2.1–14.2.3): High-level constructions such as “place vertices of the *i*-th color class at grid-points in the set {(i, t, it) : t ≡ i² (mod p)}”, “wrap a 2D drawing around a triangular prism”, or “assign z-coordinates using number-theoretic methods so that crossings are avoided”.
+- **Orthogonal point-drawings** (Section 14.3.1): Descriptions such as “decompose into three cycle covers Cred, Cblue, Cgreen; place vertices on the diagonal at (3i, 3i, 3i) or (i, i, i); route the remaining edges above/below the plane”.
+- **Orthogonal box-drawings** (Section 14.3.2): Statements of the form “an O(m)-time algorithm constructs drawings of volume Θ(n^{5/2}) with at most 3 bends per edge”, without listing the steps.
+- **Thickness / geometric thickness / book thickness** (Section 14.4): Existence proofs and high-level partitioning arguments (e.g., Petersen’s theorem for cycle covers, linear-time algorithms for degree-4 graphs), again without pseudocode.
+- **Other models** (Section 14.5): Mentions of force-directed methods, barycenter method, viewpoint algorithms, etc., all described narratively.
+
+If you need the actual algorithms, you will have to consult the primary papers cited in the chapter (e.g., [CELR96], [ESW00], [Woo03b], [BSWW99], [BTW06], [DEK04], [CGT96], etc.). The survey itself only summarizes their existence and asymptotic guarantees.

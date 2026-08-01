@@ -43,6 +43,7 @@ pub struct GraphState<S: Copy = ()> {
     pub is_ui_mode: bool,
     pub node_labels: DenseStorage<Option<StringId>>,
     pub cached_node_sizes: DenseStorage<Option<Size2>>,
+    pub node_uuids: DenseStorage<String>,
 }
 
 impl<S: Copy + Default> GraphState<S> {
@@ -71,6 +72,7 @@ impl<S: Copy + Default> GraphState<S> {
             is_ui_mode: true,
             node_labels: DenseStorage::new(),
             cached_node_sizes: DenseStorage::new(),
+            node_uuids: DenseStorage::new(),
         }
     }
 
@@ -107,6 +109,7 @@ impl<S: Copy + Default> GraphState<S> {
         self.computed_styles.insert(S::default());
         self.node_labels.insert(None);
         self.cached_node_sizes.insert(None);
+        self.node_uuids.insert(uuid::Uuid::new_v4().to_string());
 
         self.push_event(GraphEvent::NodeAdded { id });
         if !self.is_batching {
@@ -211,6 +214,7 @@ impl<S: Copy + Default> GraphState<S> {
         self.computed_styles.remove(idx);
         self.node_labels.remove(idx);
         self.cached_node_sizes.remove(idx);
+        self.node_uuids.remove(idx);
 
         self.animations.tracks.remove(id);
 
@@ -442,6 +446,18 @@ impl<S: Copy + Default> GraphState<S> {
         self.string_arena.get(string_id)
     }
 
+    pub fn get_node_uuid(&self, id: NodeId) -> Option<&str> {
+        let &idx = self.node_keys.get(id)?;
+        Some(self.node_uuids.get(idx).as_str())
+    }
+
+    pub fn find_node_by_uuid(&self, uuid_str: &str) -> Option<NodeId> {
+        self.node_index_to_id
+            .iter()
+            .copied()
+            .find(|&id| self.get_node_uuid(id) == Some(uuid_str))
+    }
+
     pub fn update_cached_node_size(&mut self, id: NodeId, measured_size: Size2) {
         let Some(&idx) = self.node_keys.get(id) else { return };
         self.cached_node_sizes.set(idx, Some(measured_size));
@@ -462,6 +478,25 @@ impl<S: Copy + Default> GraphState<S> {
 
     pub fn edge_count(&self) -> usize {
         self.edge_index_to_id.len()
+    }
+
+    pub fn add_node_with_label(&mut self, pos: Vec2, size: Size2, label: &str) -> NodeId {
+        let id = self.add_node(pos, size);
+        self.set_node_label(id, label);
+        id
+    }
+
+    pub fn find_node_by_label(&self, label: &str) -> Option<NodeId> {
+        self.node_index_to_id
+            .iter()
+            .copied()
+            .find(|&id| self.get_node_label(id) == Some(label))
+    }
+
+    pub fn add_edge_by_label(&mut self, src_label: &str, tgt_label: &str, data: EdgeData) -> Option<EdgeId> {
+        let src = self.find_node_by_label(src_label)?;
+        let tgt = self.find_node_by_label(tgt_label)?;
+        Some(self.add_edge(src, tgt, data))
     }
 }
 
@@ -554,6 +589,61 @@ mod tests {
         state.update_cached_node_size(id, new_measured);
         assert_eq!(state.get_cached_node_size(id), Some(new_measured));
         assert_eq!(*state.sizes.get(idx), measured);
+    }
+
+    #[test]
+    fn test_graph_state_crud_operations() {
+        let mut state = GraphState::<()>::new();
+        let n1 = state.add_node_with_label(Vec2::new(0.0, 0.0), Size2::new(40.0, 40.0), "Alpha");
+        let n2 = state.add_node_with_label(Vec2::new(100.0, 100.0), Size2::new(40.0, 40.0), "Beta");
+
+        assert_eq!(state.get_node_label(n1), Some("Alpha"));
+        assert_eq!(state.find_node_by_label("Beta"), Some(n2));
+        assert_eq!(state.find_node_by_label("Gamma"), None);
+
+        let e1 = state.add_edge_by_label("Alpha", "Beta", EdgeData::default());
+        assert!(e1.is_some());
+        assert_eq!(state.edge_count(), 1);
+
+        state.set_node_label(n1, "AlphaUpdated");
+        assert_eq!(state.get_node_label(n1), Some("AlphaUpdated"));
+
+        state.remove_node(n1);
+        assert_eq!(state.node_count(), 1);
+        assert_eq!(state.get_node_label(n1), None);
+    }
+
+    #[test]
+    fn test_primary_secondary_selection_and_uuids() {
+        let mut state = GraphState::<()>::new();
+        let n1 = state.add_node_with_label(Vec2::new(0.0, 0.0), Size2::new(40.0, 40.0), "Node1");
+        let n2 = state.add_node_with_label(Vec2::new(10.0, 10.0), Size2::new(40.0, 40.0), "Node2");
+        let n3 = state.add_node_with_label(Vec2::new(20.0, 20.0), Size2::new(40.0, 40.0), "Node3");
+
+        let uuid1 = state.get_node_uuid(n1).expect("UUID missing").to_string();
+        let uuid2 = state.get_node_uuid(n2).expect("UUID missing").to_string();
+        assert_ne!(uuid1, uuid2);
+        assert_eq!(state.find_node_by_uuid(&uuid1), Some(n1));
+        assert_eq!(state.find_node_by_uuid(&uuid2), Some(n2));
+
+        // When label changes, UUID stays the same
+        state.set_node_label(n1, "RenamedLabel");
+        assert_eq!(state.get_node_uuid(n1), Some(uuid1.as_str()));
+
+        // Test primary and secondary selection logic
+        state.selected.select_node(n1, &state.node_keys);
+        assert_eq!(state.selected.primary_node(), Some(n1));
+        assert_eq!(state.selected.secondary_node(), None);
+
+        // Second click selects secondary node without clearing primary
+        state.selected.select_node(n2, &state.node_keys);
+        assert_eq!(state.selected.primary_node(), Some(n1));
+        assert_eq!(state.selected.secondary_node(), Some(n2));
+
+        // Third click shifts previous secondary to primary and new click to secondary
+        state.selected.select_node(n3, &state.node_keys);
+        assert_eq!(state.selected.primary_node(), Some(n2));
+        assert_eq!(state.selected.secondary_node(), Some(n3));
     }
 }
 

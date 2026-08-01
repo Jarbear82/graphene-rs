@@ -229,6 +229,17 @@ impl DemoApp {
                     );
                     let now = std::time::Instant::now();
                     if let Some(node_id) = hit_node {
+                        if ev.modifiers.shift {
+                            if let Some(prev_selected) = this.selected_node {
+                                if prev_selected != node_id {
+                                    this.create_edge_between_nodes(prev_selected, node_id);
+                                    this.selected_node = Some(node_id);
+                                    cx.notify();
+                                    return;
+                                }
+                            }
+                        }
+
                         if let Some((prev_id, prev_time)) = this.last_node_click {
                             if prev_id == node_id && now.duration_since(prev_time).as_millis() < 300 {
                                 let is_parent = this
@@ -260,24 +271,84 @@ impl DemoApp {
                         this.last_node_click = Some((node_id, now));
 
                         this.undo_redo.record_state(&this.state);
-                        this.selected_node = Some(node_id);
+                        this.state.selected.select_node(node_id, &this.state.node_keys);
+                        this.selected_node = this.state.selected.primary_node();
                         this.selected_edge = None;
                         if this.physics_enabled {
                             this.physics_temperature = 5.0;
                         }
 
-                        let label = this.fixtures[this.selected_fixture_idx]
-                            .node_labels
-                            .get(&node_id)
-                            .cloned()
-                            .unwrap_or_else(|| format!("N{}", this.state.node_keys[node_id]));
-                        this.node_name_state.update(cx, |input, cx| {
-                            input.replace_text_in_range(None, &label, window, cx);
-                        });
+                        if let (Some(p_id), Some(s_id)) = (this.state.selected.primary_node(), this.state.selected.secondary_node()) {
+                            let p_label = this.state.get_node_label(p_id)
+                                .map(|s| s.to_string())
+                                .or_else(|| this.fixtures[this.selected_fixture_idx].node_labels.get(&p_id).cloned())
+                                .unwrap_or_else(|| format!("N{}", this.state.node_keys[p_id]));
+
+                            let s_label = this.state.get_node_label(s_id)
+                                .map(|s| s.to_string())
+                                .or_else(|| this.fixtures[this.selected_fixture_idx].node_labels.get(&s_id).cloned())
+                                .unwrap_or_else(|| format!("N{}", this.state.node_keys[s_id]));
+
+                            this.edge_src_state.update(cx, |input, cx| {
+                                let len = input.text().len();
+                                input.replace_text_in_range(Some(0..len), &p_label, window, cx);
+                            });
+                            this.edge_tgt_state.update(cx, |input, cx| {
+                                let len = input.text().len();
+                                input.replace_text_in_range(Some(0..len), &s_label, window, cx);
+                            });
+                        } else if let Some(p_id) = this.state.selected.primary_node() {
+                            let label = this.state.get_node_label(p_id)
+                                .map(|s| s.to_string())
+                                .or_else(|| this.fixtures[this.selected_fixture_idx].node_labels.get(&p_id).cloned())
+                                .unwrap_or_else(|| format!("N{}", this.state.node_keys[p_id]));
+                            this.node_name_state.update(cx, |input, cx| {
+                                let len = input.text().len();
+                                input.replace_text_in_range(Some(0..len), &label, window, cx);
+                            });
+                        }
                     } else {
                         this.last_node_click = None;
+                        let now = std::time::Instant::now();
+                        let click_pos = gpui::point(f32::from(ev.position.x), f32::from(ev.position.y));
+                        let is_double_click = if let Some((prev_pos, prev_time)) = this.last_canvas_click {
+                            now.duration_since(prev_time).as_millis() < 350
+                                && (prev_pos.x - click_pos.x).abs() < 10.0
+                                && (prev_pos.y - click_pos.y).abs() < 10.0
+                        } else {
+                            false
+                        };
+
+                        if is_double_click {
+                            this.last_canvas_click = None;
+                            this.undo_redo.record_state(&this.state);
+                            let label = format!("Node {}", this.state.node_count() + 1);
+                            let new_id = this.interaction_state.on_double_click(
+                                click_pos,
+                                &this.viewport,
+                                &mut this.state,
+                                &label,
+                            );
+                            this.fixtures[this.selected_fixture_idx]
+                                .node_labels
+                                .insert(new_id, label.clone());
+                            this.state.selected.select_node(new_id, &this.state.node_keys);
+                            this.selected_node = Some(new_id);
+                            this.selected_edge = None;
+                            this.node_name_state.update(cx, |input, cx| {
+                                let len = input.text().len();
+                                input.replace_text_in_range(Some(0..len), &label, window, cx);
+                            });
+                            this.run_analysis();
+                            this.engine.load_preset(this.state.clone());
+                            cx.notify();
+                            return;
+                        } else {
+                            this.last_canvas_click = Some((click_pos, now));
+                        }
+
                         let hit_edge = this.interaction_state.hit_test_edge(
-                            gpui::point(f32::from(ev.position.x), f32::from(ev.position.y)),
+                            click_pos,
                             &this.viewport,
                             &this.state,
                             8.0,
@@ -285,10 +356,12 @@ impl DemoApp {
 
                         if let Some(edge_idx) = hit_edge {
                             this.selected_edge = Some(edge_idx);
+                            this.state.selected.select_edge(edge_idx);
                             this.selected_node = None;
                         } else {
                             this.selected_node = None;
                             this.selected_edge = None;
+                            this.state.selected.clear();
                         }
                     }
 

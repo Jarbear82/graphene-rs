@@ -102,6 +102,7 @@ pub struct DemoApp {
     pub undo_redo: UndoRedoManager<ComputedStyle>,
     pub collapsed_parents: HashSet<NodeId>,
     pub last_node_click: Option<(NodeId, Instant)>,
+    pub last_canvas_click: Option<(gpui::Point<f32>, Instant)>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -555,19 +556,34 @@ impl DemoApp {
         .detach();
 
         let node_name_state = cx.new(|cx| {
-            let mut s = InputState::new(window, cx).validate(|s, _| s.parse::<f32>().is_ok());
-            s.replace_text_in_range(None, "NodeX", window, cx);
-            s
+            InputState::new(window, cx)
         });
 
+        cx.subscribe_in(&node_name_state, window, |this, state, event, _window, cx| {
+            if let InputEvent::Change = event {
+                if let Some(id) = this.selected_node {
+                    let label = state.read(cx).value().to_string();
+                    if !label.trim().is_empty() {
+                        this.state.set_node_label(id, &label);
+                        this.fixtures[this.selected_fixture_idx]
+                            .node_labels
+                            .insert(id, label);
+                        this.interaction_state.rebuild_grid(&this.state);
+                        cx.notify();
+                    }
+                }
+            }
+        })
+        .detach();
+
         let edge_src_state = cx.new(|cx| {
-            let mut s = InputState::new(window, cx).validate(|s, _| s.parse::<f32>().is_ok());
+            let mut s = InputState::new(window, cx);
             s.replace_text_in_range(None, "", window, cx);
             s
         });
 
         let edge_tgt_state = cx.new(|cx| {
-            let mut s = InputState::new(window, cx).validate(|s, _| s.parse::<f32>().is_ok());
+            let mut s = InputState::new(window, cx);
             s.replace_text_in_range(None, "", window, cx);
             s
         });
@@ -665,6 +681,7 @@ impl DemoApp {
             undo_redo: UndoRedoManager::new(),
             collapsed_parents: std::collections::HashSet::new(),
             last_node_click: None,
+            last_canvas_click: None,
         };
         app.load_preset(0, window, cx);
         app
@@ -782,6 +799,9 @@ impl DemoApp {
 
         self.undo_redo.record_state(&self.state);
 
+        // Ensure the background engine has the latest state including any newly created nodes/edges
+        self.engine.load_preset(self.state.clone());
+
         // Capture current positions to animate from
         let start_pos: Vec<Vec2> = self.state.positions.iter().copied().collect();
 
@@ -809,20 +829,28 @@ impl DemoApp {
                     let duration = std::time::Duration::from_millis(300);
 
                     for (idx, &node_id) in app.state.node_index_to_id.iter().enumerate() {
-                        if idx < start_pos.len() && idx < target_pos.len() {
-                            if start_pos[idx] != target_pos[idx] {
+                        if idx < target_pos.len() {
+                            let from_pos = if idx < start_pos.len() {
+                                start_pos[idx]
+                            } else {
+                                app.state.positions[idx]
+                            };
+                            let to_pos = target_pos[idx];
+                            if from_pos != to_pos {
                                 app.state.animations.tracks.insert(
                                     node_id,
                                     graphene_core::AnimationTrack::Position {
-                                        from: start_pos[idx],
-                                        to: target_pos[idx],
+                                        from: from_pos,
+                                        to: to_pos,
                                         duration,
                                         elapsed: std::time::Duration::ZERO,
                                     },
                                 );
                             }
+                            app.state.positions.set(idx, to_pos);
                         }
                     }
+                    app.interaction_state.rebuild_grid(&app.state);
                     cx.notify();
                 });
             }
@@ -837,6 +865,7 @@ impl DemoApp {
     }
 
     pub fn run_layout_internal(&mut self) {
+        self.engine.load_preset(self.state.clone());
         if let Some(cmd) =
             graphene_layout::LayoutCommand::from_name(&self.selected_layout, self.iterations)
         {
@@ -931,31 +960,25 @@ impl DemoApp {
 
     pub fn add_new_node(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let label = self.node_name_state.read(cx).text().to_string();
-        if label.trim().is_empty() {
-            return;
-        }
+        let label = if label.trim().is_empty() {
+            format!("Node {}", self.state.node_count() + 1)
+        } else {
+            label
+        };
         self.undo_redo.record_state(&self.state);
-        let pos = Vec2::new(0.0, 0.0);
-        let id = self.state.add_node(pos, Size2::new(40.0, 40.0));
-
-        let idx = self.state.node_keys[id];
-        let mut style = ComputedStyle::default();
-        if let StylingTarget::Node(ref mut node_style) = style.target {
-            node_style.label = Some(idx as u32);
-            node_style.shape = NodeShape::Ellipse;
-            node_style.fill_color =
-                ColorValue::Rgba(137.0 / 255.0, 180.0 / 255.0, 250.0 / 255.0, 1.0);
-            node_style.border_color =
-                ColorValue::Rgba(205.0 / 255.0, 214.0 / 255.0, 244.0 / 255.0, 1.0);
-            node_style.border_width = graphene_style::LengthValue::Pixels(2.0);
-        }
-        self.state.computed_styles.set(idx, style);
+        let center_screen = gpui::point(400.0, 300.0);
+        let id = self.interaction_state.on_double_click(
+            center_screen,
+            &self.viewport,
+            &mut self.state,
+            &label,
+        );
 
         self.fixtures[self.selected_fixture_idx]
             .node_labels
             .insert(id, label);
-        self.state.dirty_flags |= graphene_core::DirtyFlags::TOPOLOGY_DIRTY;
-        self.interaction_state.rebuild_grid(&self.state);
+        self.selected_node = Some(id);
+        self.selected_edge = None;
         self.run_analysis();
 
         self.node_name_state.update(cx, |input, cx| {
@@ -963,42 +986,109 @@ impl DemoApp {
         });
     }
 
+    pub fn update_selected_node_label(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(id) = self.selected_node {
+            let label = self.node_name_state.read(cx).text().to_string();
+            if !label.trim().is_empty() {
+                self.undo_redo.record_state(&self.state);
+                self.state.set_node_label(id, &label);
+                self.fixtures[self.selected_fixture_idx]
+                    .node_labels
+                    .insert(id, label);
+                self.interaction_state.rebuild_grid(&self.state);
+                self.run_analysis();
+            }
+        }
+    }
+
     pub fn delete_selected_node(&mut self) {
         if let Some(id) = self.selected_node {
             self.undo_redo.record_state(&self.state);
             self.state.remove_node(id);
+            self.fixtures[self.selected_fixture_idx].node_labels.remove(&id);
             self.selected_node = None;
-            self.state.dirty_flags |= graphene_core::DirtyFlags::TOPOLOGY_DIRTY;
             self.interaction_state.rebuild_grid(&self.state);
             self.run_analysis();
         }
     }
 
-    pub fn add_new_edge(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let src_label = self.edge_src_state.read(cx).text().to_string();
-        let tgt_label = self.edge_tgt_state.read(cx).text().to_string();
-        let weight_str = self.edge_weight_state.read(cx).text().to_string();
+    pub fn find_node_by_label_or_id_or_index(&self, query: &str) -> Option<NodeId> {
+        let q = query.trim();
+        if q.is_empty() {
+            return None;
+        }
 
-        let fixture = &self.fixtures[self.selected_fixture_idx];
-        let mut src_node = None;
-        let mut tgt_node = None;
+        if let Some(id) = self.state.find_node_by_uuid(q) {
+            return Some(id);
+        }
 
-        for &id in &self.state.node_index_to_id {
-            let label = fixture.node_labels.get(&id).cloned().unwrap_or_default();
-            if label == src_label {
-                src_node = Some(id);
-            }
-            if label == tgt_label {
-                tgt_node = Some(id);
+        if let Some(id) = self.state.find_node_by_label(q) {
+            return Some(id);
+        }
+
+        let q_lower = q.to_lowercase();
+        let fixture_labels = &self.fixtures[self.selected_fixture_idx].node_labels;
+
+        for (&id, label) in fixture_labels.iter() {
+            if label == q || label.to_lowercase() == q_lower {
+                return Some(id);
             }
         }
+
+        let digits = if q_lower.starts_with('n') {
+            &q_lower[1..]
+        } else if q_lower.starts_with("node") {
+            q_lower[4..].trim()
+        } else {
+            &q_lower
+        };
+
+        if let Ok(idx) = digits.parse::<usize>() {
+            if idx < self.state.node_index_to_id.len() {
+                return Some(self.state.node_index_to_id[idx]);
+            }
+        }
+
+        None
+    }
+
+    pub fn create_edge_between_nodes(&mut self, src: NodeId, tgt: NodeId) {
+        if src == tgt {
+            return;
+        }
+        let edge_idx = self.state.edges.len();
+        self.undo_redo.record_state(&self.state);
+        let _edge_id = self.state.add_edge(src, tgt, EdgeData::default());
+
+        self.fixtures[self.selected_fixture_idx]
+            .weights
+            .insert(edge_idx, 1.0);
+
+        let mut style = ComputedStyle::default();
+        if let StylingTarget::Edge(ref mut edge_style) = style.target {
+            edge_style.line_color =
+                ColorValue::Rgba(166.0 / 255.0, 173.0 / 255.0, 200.0 / 255.0, 1.0);
+            edge_style.line_width = graphene_style::LengthValue::Pixels(1.5);
+        }
+        self.state.edge_computed_styles.set(edge_idx, style);
+        self.interaction_state.rebuild_grid(&self.state);
+        self.run_analysis();
+    }
+
+    pub fn add_new_edge(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let src_label = self.edge_src_state.read(cx).value().to_string();
+        let tgt_label = self.edge_tgt_state.read(cx).value().to_string();
+        let weight_str = self.edge_weight_state.read(cx).value().to_string();
+        let w = weight_str.parse::<f32>().unwrap_or(1.0);
+
+        let src_node = self.find_node_by_label_or_id_or_index(&src_label);
+        let tgt_node = self.find_node_by_label_or_id_or_index(&tgt_label);
 
         if let (Some(src), Some(tgt)) = (src_node, tgt_node) {
             let edge_idx = self.state.edges.len();
             self.undo_redo.record_state(&self.state);
-            self.state.add_edge(src, tgt, EdgeData::default());
+            let _edge_id = self.state.add_edge(src, tgt, EdgeData::default());
 
-            let w = weight_str.parse::<f32>().unwrap_or(1.0);
             self.fixtures[self.selected_fixture_idx]
                 .weights
                 .insert(edge_idx, w);
@@ -1010,15 +1100,16 @@ impl DemoApp {
                 edge_style.line_width = graphene_style::LengthValue::Pixels(1.5);
             }
             self.state.edge_computed_styles.set(edge_idx, style);
-            self.state.dirty_flags |= graphene_core::DirtyFlags::TOPOLOGY_DIRTY;
             self.interaction_state.rebuild_grid(&self.state);
             self.run_analysis();
 
             self.edge_src_state.update(cx, |input, cx| {
-                input.replace_text_in_range(None, "", window, cx);
+                let len = input.text().len();
+                input.replace_text_in_range(Some(0..len), "", window, cx);
             });
             self.edge_tgt_state.update(cx, |input, cx| {
-                input.replace_text_in_range(None, "", window, cx);
+                let len = input.text().len();
+                input.replace_text_in_range(Some(0..len), "", window, cx);
             });
         }
     }

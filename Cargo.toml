@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/graphene_core",
+    "crates/graphene_fixtures",
     "crates/graphene_style",
     "crates/graphene_algorithms",
     "crates/graphene_analysis",
