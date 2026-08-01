@@ -148,6 +148,39 @@ impl InteractionState {
         best_match
     }
 
+    pub fn hit_test_edge<S: Copy>(
+        &self,
+        screen_pos: gpui::Point<f32>,
+        viewport: &Viewport,
+        state: &GraphState<S>,
+        threshold: f32,
+    ) -> Option<usize> {
+        for edge_idx in 0..state.edges.len() {
+            let src = *state.edge_sources.get(edge_idx);
+            let tgt = *state.edge_targets.get(edge_idx);
+            let (Some(&src_idx), Some(&tgt_idx)) =
+                (state.node_keys.get(src), state.node_keys.get(tgt))
+            else {
+                continue;
+            };
+            let pos_src = *state.positions.get(src_idx);
+            let pos_tgt = *state.positions.get(tgt_idx);
+
+            let src_screen = viewport.model_to_screen(pos_src);
+            let tgt_screen = viewport.model_to_screen(pos_tgt);
+
+            let dist = distance_to_segment(
+                screen_pos,
+                gpui::point(src_screen.x, src_screen.y),
+                gpui::point(tgt_screen.x, tgt_screen.y),
+            );
+            if dist < threshold {
+                return Some(edge_idx);
+            }
+        }
+        None
+    }
+
     pub fn on_mouse_down(
         &mut self,
         position: gpui::Point<f32>,
@@ -197,6 +230,21 @@ impl InteractionState {
         self.drag_start = None;
         self.pan_origin = None;
     }
+}
+
+pub fn distance_to_segment(p: gpui::Point<f32>, a: gpui::Point<f32>, b: gpui::Point<f32>) -> f32 {
+    let ab_x = b.x - a.x;
+    let ab_y = b.y - a.y;
+    let ap_x = p.x - a.x;
+    let ap_y = p.y - a.y;
+    let ab_len_sq = ab_x * ab_x + ab_y * ab_y;
+    if ab_len_sq == 0.0 {
+        return ((p.x - a.x) * (p.x - a.x) + (p.y - a.y) * (p.y - a.y)).sqrt();
+    }
+    let t = ((ap_x * ab_x + ap_y * ab_y) / ab_len_sq).clamp(0.0, 1.0);
+    let proj_x = a.x + t * ab_x;
+    let proj_y = a.y + t * ab_y;
+    ((p.x - proj_x) * (p.x - proj_x) + (p.y - proj_y) * (p.y - proj_y)).sqrt()
 }
 
 #[cfg(test)]

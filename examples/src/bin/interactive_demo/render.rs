@@ -1,5 +1,5 @@
 use crate::app::DemoApp;
-use crate::theme::{distance_to_segment, Theme};
+use crate::theme::Theme;
 use gpui::{
     px, Context, EntityInputHandler, InteractiveElement, IntoElement, MouseDownEvent,
     ParentElement, Render, Styled, Window,
@@ -276,31 +276,12 @@ impl DemoApp {
                         });
                     } else {
                         this.last_node_click = None;
-                        let mut hit_edge = None;
-                        for edge_idx in 0..this.state.edges.len() {
-                            let src = *this.state.edge_sources.get(edge_idx);
-                            let tgt = *this.state.edge_targets.get(edge_idx);
-                            let (Some(&src_idx), Some(&tgt_idx)) =
-                                (this.state.node_keys.get(src), this.state.node_keys.get(tgt))
-                            else {
-                                continue;
-                            };
-                            let pos_src = *this.state.positions.get(src_idx);
-                            let pos_tgt = *this.state.positions.get(tgt_idx);
-
-                            let src_screen = this.viewport.model_to_screen(pos_src);
-                            let tgt_screen = this.viewport.model_to_screen(pos_tgt);
-
-                            let dist = distance_to_segment(
-                                ev.position,
-                                gpui::point(px(src_screen.x), px(src_screen.y)),
-                                gpui::point(px(tgt_screen.x), px(tgt_screen.y)),
-                            );
-                            if dist < 8.0 {
-                                hit_edge = Some(edge_idx);
-                                break;
-                            }
-                        }
+                        let hit_edge = this.interaction_state.hit_test_edge(
+                            gpui::point(f32::from(ev.position.x), f32::from(ev.position.y)),
+                            &this.viewport,
+                            &this.state,
+                            8.0,
+                        );
 
                         if let Some(edge_idx) = hit_edge {
                             this.selected_edge = Some(edge_idx);

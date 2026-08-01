@@ -1,33 +1,14 @@
 use gpui::{Pixels, Point};
 use graphene_style::ColorValue;
 
-pub const LAYOUT_NAMES: &[&str] = &[
-    "Circle",
-    "ForceDirected",
-    "CoSE",
-    "KamadaKawai",
-    "Sugiyama",
-    "ReingoldTilford",
-    "MDS",
-    "Grid",
-    "Concentric",
-    "Bipartite",
-    "WeightedForce",
-    "CollisionForce",
-    "DisconnectedPack",
-    "Compound",
-    "RegionalPartition",
-    "fCoSE",
-    "FruchtermanReingold",
-    "Tutte",
-    "MultilevelForce",
-];
+pub const LAYOUT_NAMES: &[&str] = graphene_layout::LayoutCommand::ALL_NAMES;
 
 pub fn distance_to_segment(p: Point<Pixels>, a: Point<Pixels>, b: Point<Pixels>) -> f32 {
-    let p_vec = graphene_core::Vec2::new(f32::from(p.x), f32::from(p.y));
-    let a_vec = graphene_core::Vec2::new(f32::from(a.x), f32::from(a.y));
-    let b_vec = graphene_core::Vec2::new(f32::from(b.x), f32::from(b.y));
-    p_vec.distance_to_segment(a_vec, b_vec)
+    graphene_gpui::interaction::state::distance_to_segment(
+        gpui::point(f32::from(p.x), f32::from(p.y)),
+        gpui::point(f32::from(a.x), f32::from(a.y)),
+        gpui::point(f32::from(b.x), f32::from(b.y)),
+    )
 }
 
 pub fn color_value_to_gpui_color(color_val: ColorValue) -> gpui::Rgba {

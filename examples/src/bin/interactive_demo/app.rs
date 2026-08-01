@@ -8,10 +8,7 @@ use graphene_gpui::{
     interaction::state::InteractionState, render::draw_pipeline::Viewport, CanvasConfig,
 };
 use graphene_layout::{
-    BipartiteLayout, CircleLayout, CollisionForceDirectedLayout, CompoundLayout,
-    ConcentricHubLayout, CoseLayout, DisconnectedPacker, FCoseLayout, ForceDirectedLayout,
-    GraphCommand, GraphEngineHandle, GridLayout, KamadaKawaiLayout, Layout, MdsLayout,
-    RegionalPartitionLayout, ReingoldTilfordLayout, SugiyamaLayout, WeightedForceDirectedLayout,
+    CircleLayout, CoseLayout, FCoseLayout, GraphEngineHandle, LayoutCommand, SugiyamaLayout,
 };
 use graphene_style::{ColorValue, ComputedStyle, NodeShape, StylingTarget, ThemeRegistry};
 use std::{
@@ -755,14 +752,10 @@ impl DemoApp {
             self.state.edge_computed_styles.set(i, style);
         }
 
-        let circle = CircleLayout {
-            radius: 150.0,
-            center: Vec2::default(),
-            animate: false,
-        };
         self.engine.load_preset(self.state.clone());
-        self.engine
-            .run_layout(graphene_layout::LayoutCommand::Circle(circle));
+        if let Some(cmd) = graphene_layout::LayoutCommand::from_name("Circle", 100) {
+            self.engine.run_layout(cmd);
+        }
         self.viewport.offset = Vec2::default();
         self.viewport.zoom = 1.0;
         self.physics_temperature = 10.0;
@@ -844,147 +837,10 @@ impl DemoApp {
     }
 
     pub fn run_layout_internal(&mut self) {
-        match self.selected_layout.as_str() {
-            "Circle" => {
-                let circle = CircleLayout {
-                    radius: self.circle_radius,
-                    center: Vec2::default(),
-                    animate: false,
-                };
-                self.engine
-                    .run_layout(graphene_layout::LayoutCommand::Circle(circle));
-            }
-            "ForceDirected" => {
-                let force = ForceDirectedLayout {
-                    iterations: self.iterations,
-                    ideal_length: 50.0,
-                    gravity: self.gravity,
-                    k_rep: self.k_rep,
-                    k_att: self.k_att,
-                    initial_temp: 10.0,
-                    use_barnes_hut: self.use_barnes_hut,
-                    theta: self.theta,
-                };
-                self.engine
-                    .run_layout(graphene_layout::LayoutCommand::ForceDirected(force));
-            }
-
-            "CoSE" => {
-                let cose = CoseLayout::default()
-                    .with_iterations(self.iterations)
-                    .with_gravity(self.gravity);
-                self.engine
-                    .run_layout(graphene_layout::LayoutCommand::Cose(cose));
-            }
-            "KamadaKawai" => {
-                let kk = KamadaKawaiLayout {
-                    iterations: self.iterations,
-                    k: 1.0,
-                    l_0: 50.0,
-                };
-                self.engine
-                    .run_layout(graphene_layout::LayoutCommand::KamadaKawai(kk));
-            }
-            "Sugiyama" => {
-                let sugi = SugiyamaLayout::default()
-                    .with_layer_spacing(self.layer_spacing)
-                    .with_node_spacing(self.node_spacing);
-                self.engine
-                    .run_layout(graphene_layout::LayoutCommand::Sugiyama(sugi));
-            }
-            "ReingoldTilford" => {
-                let rt = ReingoldTilfordLayout::default();
-                self.engine
-                    .run_layout(graphene_layout::LayoutCommand::ReingoldTilford(rt));
-            }
-            "MDS" => {
-                let mds = MdsLayout {
-                    iterations: self.iterations,
-                    base_dist: self.mds_base_dist,
-                };
-                self.engine
-                    .run_layout(graphene_layout::LayoutCommand::Mds(mds));
-            }
-            "Grid" => {
-                let grid = GridLayout::default();
-                self.engine
-                    .run_layout(graphene_layout::LayoutCommand::Grid(grid));
-            }
-            "Concentric" => {
-                let concentric = ConcentricHubLayout::default();
-                self.engine
-                    .run_layout(graphene_layout::LayoutCommand::Concentric(concentric));
-            }
-            "Bipartite" => {
-                let node_partitions = vec![0, 0, 1, 1];
-                let node_keys_map = self.state.node_keys.clone();
-                let bipartite = BipartiteLayout {
-                    partition_fn: move |id| {
-                        let idx = *node_keys_map.get(id).unwrap_or(&0);
-                        node_partitions[idx % 4]
-                    },
-                    column_spacing: self.bipartite_col_spacing,
-                    vertical_spacing: self.bipartite_vert_spacing,
-                };
-                // For bipartite, we need to dispatch via a mechanism that supports it.
-                // Assuming it's not wrapped in a command natively yet, we can wrap it as required
-                // but since the original didn't include it in `LayoutCommand`, we might need to rely on
-                // its direct computation or assume it gets added.
-            }
-            "WeightedForce" => {
-                let weights = self.fixtures[self.selected_fixture_idx].weights.clone();
-                let edge_keys = self.state.edge_keys.clone();
-                let weighted = WeightedForceDirectedLayout {
-                    iterations: self.iterations,
-                    gravity: self.gravity,
-                    k_rep: self.k_rep,
-                    k_att: self.k_att,
-                    weight_fn: move |edge| {
-                        if let Some(&idx) = edge_keys.get(edge) {
-                            *weights.get(&idx).unwrap_or(&1.0)
-                        } else {
-                            1.0
-                        }
-                    },
-                };
-                // WeightedForce doesn't exist in the LayoutCommand enum, so it's skipped here for brevity
-            }
-            "CollisionForce" => {
-                let collision = CollisionForceDirectedLayout {
-                    iterations: self.iterations,
-                    gravity: self.gravity,
-                    ideal_length: 50.0,
-                };
-                // CollisionForce is omitted from LayoutCommand enum natively
-            }
-            "fCoSE" => {
-                let fcose = FCoseLayout::default();
-                self.engine
-                    .run_layout(graphene_layout::LayoutCommand::FCose(fcose));
-            }
-            "FruchtermanReingold" => {
-                use graphene_layout::FruchtermanReingoldLayout;
-                let fr = FruchtermanReingoldLayout::default().with_iterations(self.iterations);
-                self.engine
-                    .run_layout(graphene_layout::LayoutCommand::FruchtermanReingold(fr));
-            }
-            "Tutte" => {
-                use graphene_layout::TutteBarycentricLayout;
-                let boundary: Vec<_> = self.state.node_index_to_id.iter().take(3).copied().collect();
-                let tutte = TutteBarycentricLayout::default()
-                    .with_fixed_boundary(boundary)
-                    .with_max_iterations(self.iterations);
-                self.engine
-                    .run_layout(graphene_layout::LayoutCommand::Tutte(tutte));
-            }
-            "MultilevelForce" => {
-                use graphene_layout::{ForceDirectedLayout, MultilevelLayout};
-                let force = ForceDirectedLayout::default().with_iterations(20);
-                let ml = MultilevelLayout::new(force).with_min_graph_size(5);
-                self.engine
-                    .run_layout(graphene_layout::LayoutCommand::MultilevelForce(ml));
-            }
-            _ => {}
+        if let Some(cmd) =
+            graphene_layout::LayoutCommand::from_name(&self.selected_layout, self.iterations)
+        {
+            self.engine.run_layout(cmd);
         }
     }
 

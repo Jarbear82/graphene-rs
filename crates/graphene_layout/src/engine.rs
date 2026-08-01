@@ -37,6 +37,55 @@ pub enum LayoutCommand {
     MultilevelForce(MultilevelLayout<ForceDirectedLayout>),
 }
 
+impl LayoutCommand {
+    pub const ALL_NAMES: &'static [&'static str] = &[
+        "Circle",
+        "ForceDirected",
+        "CoSE",
+        "KamadaKawai",
+        "Sugiyama",
+        "ReingoldTilford",
+        "MDS",
+        "Grid",
+        "Concentric",
+        "fCoSE",
+        "FruchtermanReingold",
+        "Tutte",
+        "MultilevelForce",
+    ];
+
+    pub fn from_name(name: &str, iterations: usize) -> Option<Self> {
+        match name {
+            "Circle" => Some(Self::Circle(CircleLayout::default())),
+            "ForceDirected" => Some(Self::ForceDirected(
+                ForceDirectedLayout::default().with_iterations(iterations),
+            )),
+            "CoSE" => Some(Self::Cose(CoseLayout::default())),
+            "KamadaKawai" => Some(Self::KamadaKawai(
+                KamadaKawaiLayout::default().with_iterations(iterations),
+            )),
+            "Sugiyama" => Some(Self::Sugiyama(SugiyamaLayout::default())),
+            "ReingoldTilford" => Some(Self::ReingoldTilford(ReingoldTilfordLayout::default())),
+            "MDS" => Some(Self::Mds(MdsLayout::default().with_iterations(iterations))),
+            "Grid" => Some(Self::Grid(GridLayout::default())),
+            "Concentric" => Some(Self::Concentric(ConcentricHubLayout::default())),
+            "fCoSE" => Some(Self::FCose(
+                FCoseLayout::default().with_iterations(iterations),
+            )),
+            "FruchtermanReingold" => Some(Self::FruchtermanReingold(
+                FruchtermanReingoldLayout::default().with_iterations(iterations),
+            )),
+            "Tutte" => Some(Self::Tutte(
+                TutteBarycentricLayout::default().with_max_iterations(iterations),
+            )),
+            "MultilevelForce" => Some(Self::MultilevelForce(MultilevelLayout::new(
+                ForceDirectedLayout::default().with_iterations(20),
+            ))),
+            _ => None,
+        }
+    }
+}
+
 /// Asynchronous commands sent from the main UI thread to the GraphEngine thread.
 pub enum GraphCommand<S: Copy + Send + 'static> {
     AddNode {
