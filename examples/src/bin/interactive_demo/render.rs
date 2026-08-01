@@ -46,8 +46,12 @@ impl Render for DemoApp {
 
         let snap = self.engine.latest_snapshot();
         if snap.version > 0 && snap.positions.len() == self.state.node_index_to_id.len() {
+            let drag_node_id = self.interaction_state.drag_start.map(|(id, _, _)| id);
             for (i, &pos) in snap.positions.iter().enumerate() {
-                self.state.positions.set(i, pos);
+                let id = self.state.node_index_to_id[i];
+                if Some(id) != drag_node_id {
+                    self.state.positions.set(i, pos);
+                }
             }
         }
 
@@ -332,7 +336,16 @@ impl DemoApp {
                 this.viewport = vp_mut;
                 this.state = st_mut;
 
-                if this.interaction_state.drag_start.is_some() {
+                if let Some((drag_id, _, _)) = this.interaction_state.drag_start {
+                    if let Some(&drag_idx) = this.state.node_keys.get(drag_id) {
+                        let dragged_pos = *this.state.positions.get(drag_idx);
+                        this.engine
+                            .send_command(graphene_layout::GraphCommand::SetPosition {
+                                id: drag_id,
+                                pos: dragged_pos,
+                            })
+                            .ok();
+                    }
                     this.resolve_collisions();
                     graphene_layout::resolve_compound_bounds(
                         &mut this.state,
@@ -346,6 +359,17 @@ impl DemoApp {
             .on_mouse_up(
                 gpui::MouseButton::Left,
                 cx.listener(|this, _, _, cx| {
+                    if let Some((drag_id, _, _)) = this.interaction_state.drag_start {
+                        if let Some(&drag_idx) = this.state.node_keys.get(drag_id) {
+                            let final_pos = *this.state.positions.get(drag_idx);
+                            this.engine
+                                .send_command(graphene_layout::GraphCommand::SetPosition {
+                                    id: drag_id,
+                                    pos: final_pos,
+                                })
+                                .ok();
+                        }
+                    }
                     let mut is_mut = this.interaction_state.clone();
                     is_mut.on_mouse_up();
                     this.interaction_state = is_mut;
