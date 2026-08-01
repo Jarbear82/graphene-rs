@@ -51,19 +51,23 @@ impl<S: Copy, F: Fn(NodeId) -> usize> Layout<S> for BipartiteLayout<F> {
         }
 
         for (&col, nodes) in &sets {
-            let col_height = (nodes.len() - 1) as f32 * self.vertical_spacing;
-            let start_y = -col_height / 2.0;
             let x = (col as f32) * self.column_spacing;
+            let mut curr_y = 0.0f32;
 
             for (idx, &id) in nodes.iter().enumerate() {
                 if let Some(&node_idx) = state.node_keys.get(id) {
-                    let y = start_y + (idx as f32) * self.vertical_spacing;
-                    state.positions.set(node_idx, Vec2::new(x, y));
+                    let size = *state.sizes.get(node_idx);
+                    if idx > 0 {
+                        let prev_idx = state.node_keys.get(nodes[idx - 1]).copied().unwrap();
+                        let prev_h = state.sizes.get(prev_idx).h;
+                        curr_y += (prev_h + size.h) * 0.5 + self.vertical_spacing;
+                    }
+                    state.positions.set(node_idx, Vec2::new(x, curr_y));
                 }
             }
         }
 
-        resolve_overlaps(state, 10.0);
-        state.dirty_flags |= graphene_core::DirtyFlags::POSITION_DIRTY;
+        let collapsed = std::collections::HashSet::new();
+        crate::collision::finish_layout_epilogue(state, &collapsed, 10.0, 20.0);
     }
 }

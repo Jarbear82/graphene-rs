@@ -158,7 +158,7 @@ impl<S: Copy> Layout<S> for ReingoldTilfordLayout {
             }
         }
 
-        crate::collision::resolve_overlaps(state, 10.0);
-        state.dirty_flags |= graphene_core::DirtyFlags::POSITION_DIRTY;
+        let collapsed = std::collections::HashSet::new();
+        crate::collision::finish_layout_epilogue(state, &collapsed, 10.0, 20.0);
     }
 }

@@ -76,6 +76,61 @@ pub fn compute_taxi_path(source: Vec2, target: Vec2) -> (Vec2, Vec2) {
     (Vec2::new(mid_x, source.y), Vec2::new(mid_x, target.y))
 }
 
+/// Compute the minimum distance between two rectangular bounding boxes (0.0 if overlapping).
+pub fn aabb_min_distance(pos1: Vec2, size1: Size2, pos2: Vec2, size2: Size2) -> f32 {
+    let hw1 = size1.w / 2.0;
+    let hh1 = size1.h / 2.0;
+    let hw2 = size2.w / 2.0;
+    let hh2 = size2.h / 2.0;
+
+    let dx = (pos1.x - pos2.x).abs() - (hw1 + hw2);
+    let dy = (pos1.y - pos2.y).abs() - (hh1 + hh2);
+
+    if dx <= 0.0 && dy <= 0.0 {
+        0.0
+    } else if dx > 0.0 && dy > 0.0 {
+        (dx * dx + dy * dy).sqrt()
+    } else {
+        dx.max(dy)
+    }
+}
+
+/// Compute the minimum translation vector (MTV) required to separate two AABBs with padding.
+pub fn aabb_separation_vector(
+    pos1: Vec2,
+    size1: Size2,
+    pos2: Vec2,
+    size2: Size2,
+    padding: f32,
+) -> Vec2 {
+    let hw1 = size1.w / 2.0;
+    let hh1 = size1.h / 2.0;
+    let hw2 = size2.w / 2.0;
+    let hh2 = size2.h / 2.0;
+
+    let min_dist_x = hw1 + hw2 + padding;
+    let min_dist_y = hh1 + hh2 + padding;
+
+    let diff = pos2 - pos1;
+    let dx = diff.x.abs();
+    let dy = diff.y.abs();
+
+    if dx < min_dist_x && dy < min_dist_y {
+        let overlap_x = min_dist_x - dx;
+        let overlap_y = min_dist_y - dy;
+
+        if overlap_x < overlap_y {
+            let sign_x = if diff.x >= 0.0 { 1.0 } else { -1.0 };
+            Vec2::new(overlap_x * sign_x, 0.0)
+        } else {
+            let sign_y = if diff.y >= 0.0 { 1.0 } else { -1.0 };
+            Vec2::new(0.0, overlap_y * sign_y)
+        }
+    } else {
+        Vec2::default()
+    }
+}
+
 /// Compute perpendicular offset for bezier curve control point calculation.
 pub fn compute_perpendicular_offset(source: Vec2, target: Vec2, magnitude: f32) -> Vec2 {
     let dx = target.x - source.x;
@@ -87,6 +142,21 @@ pub fn compute_perpendicular_offset(source: Vec2, target: Vec2, magnitude: f32) 
     } else {
         Vec2::default()
     }
+}
+
+/// Compute the ideal center-to-center edge length based on a base length and node extents.
+pub fn size_aware_ideal_length(base_length: f32, size1: Size2, size2: Size2, direction: Vec2) -> f32 {
+    let len = direction.len();
+    if len <= 1e-4 {
+        return base_length + (size1.w + size2.w) * 0.5;
+    }
+    let norm = direction / len;
+
+    // Projected extents along direction vector
+    let proj1 = (size1.w * 0.5 * norm.x.abs()) + (size1.h * 0.5 * norm.y.abs());
+    let proj2 = (size2.w * 0.5 * norm.x.abs()) + (size2.h * 0.5 * norm.y.abs());
+
+    base_length + proj1 + proj2
 }
 
 #[cfg(test)]

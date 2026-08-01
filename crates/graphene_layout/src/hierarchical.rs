@@ -196,20 +196,23 @@ impl<S: Copy> Layout<S> for SugiyamaLayout {
                 if nodes_in_layer.is_empty() {
                     continue;
                 }
-                let layer_width = (nodes_in_layer.len() - 1) as f32 * self.node_spacing;
-                let start_x = -layer_width / 2.0;
-                let y = (layer as f32) * self.layer_spacing;
-
-                for (idx, &id) in nodes_in_layer.iter().enumerate() {
-                    if let Some(&node_idx) = state.node_keys.get(id) {
-                        let x = start_x + (idx as f32) * self.node_spacing;
-                        state.positions.set(node_idx, Vec2::new(x, y));
+                let y = layer as f32 * self.layer_spacing;
+                let mut curr_x = 0.0f32;
+                for (i, &id) in nodes_in_layer.iter().enumerate() {
+                    let Some(&idx) = state.node_keys.get(id) else { continue };
+                    let size = *state.sizes.get(idx);
+                    if i > 0 {
+                        let prev_idx = *state.node_keys.get(nodes_in_layer[i - 1]).unwrap();
+                        let prev_w = state.sizes.get(prev_idx).w;
+                        curr_x += (prev_w + size.w) * 0.5 + self.node_spacing;
                     }
+                    state.positions.set(idx, Vec2::new(curr_x, y));
                 }
             }
         }
 
-        crate::collision::resolve_overlaps(state, 10.0);
+        let collapsed = std::collections::HashSet::new();
+        crate::collision::finish_layout_epilogue(state, &collapsed, 10.0, 20.0);
         state.dirty_flags |= graphene_core::DirtyFlags::POSITION_DIRTY;
         self.current_phase_idx = 4;
     }

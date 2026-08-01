@@ -146,8 +146,8 @@ impl<S: Copy> Layout<S> for KamadaKawaiLayout {
             }
         }
 
-        resolve_overlaps(state, 20.0);
-        state.dirty_flags |= graphene_core::DirtyFlags::POSITION_DIRTY;
+        let collapsed = std::collections::HashSet::new();
+        crate::collision::finish_layout_epilogue(state, &collapsed, 20.0, 20.0);
     }
 }
 
@@ -281,9 +281,18 @@ impl<S: Copy> Layout<S> for MdsLayout {
             }
         }
 
-        let delta: Vec<Vec<f32>> = d
-            .iter()
-            .map(|row| row.iter().map(|&x| x * self.base_dist).collect())
+        let delta: Vec<Vec<f32>> = (0..n)
+            .map(|i| {
+                (0..n)
+                    .map(|j| {
+                        let size_i = *state.sizes.get(i);
+                        let size_j = *state.sizes.get(j);
+                        let pos_i = *state.positions.get(i);
+                        let pos_j = *state.positions.get(j);
+                        crate::geometry::size_aware_ideal_length(self.base_dist * d[i][j], size_i, size_j, pos_i - pos_j)
+                    })
+                    .collect()
+            })
             .collect();
 
         let w: Vec<Vec<f32>> = delta
@@ -324,7 +333,7 @@ impl<S: Copy> Layout<S> for MdsLayout {
             }
         }
 
-        resolve_overlaps(state, 20.0);
-        state.dirty_flags |= graphene_core::DirtyFlags::POSITION_DIRTY;
+        let collapsed = std::collections::HashSet::new();
+        crate::collision::finish_layout_epilogue(state, &collapsed, 20.0, 20.0);
     }
 }

@@ -67,6 +67,8 @@ impl<S: Copy + Default, L: Layout<S>> Layout<S> for CompoundLayout<L> {
         }
 
         self.sub_layout.compute(state);
+        let collapsed = HashSet::new();
+        crate::collision::finish_layout_epilogue(state, &collapsed, 10.0, self.padding);
     }
 }
 
@@ -144,7 +146,8 @@ impl<S: Copy> Layout<S> for ConcentricHubLayout {
             }
         }
 
-        state.dirty_flags |= graphene_core::DirtyFlags::POSITION_DIRTY;
+        let collapsed = HashSet::new();
+        crate::collision::finish_layout_epilogue(state, &collapsed, 10.0, 20.0);
     }
 }
 
@@ -253,6 +256,7 @@ impl<S: Copy + Default, F: Fn(NodeId) -> usize, L: Layout<S>> Layout<S> for Regi
             }
         }
 
-        state.dirty_flags |= graphene_core::DirtyFlags::POSITION_DIRTY;
+        let collapsed = HashSet::new();
+        crate::collision::finish_layout_epilogue(state, &collapsed, 10.0, 20.0);
     }
 }

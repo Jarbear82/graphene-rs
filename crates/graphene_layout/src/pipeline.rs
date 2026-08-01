@@ -113,9 +113,11 @@ impl LayoutPipeline {
         }
 
         if let Some(padding) = phase.resolve_overlaps_padding {
-            resolve_overlaps(state, padding);
+            let collapsed = std::collections::HashSet::new();
+            crate::collision::finish_layout_epilogue(state, &collapsed, padding, 20.0);
+        } else {
+            state.dirty_flags |= graphene_core::DirtyFlags::POSITION_DIRTY;
         }
-        state.dirty_flags |= graphene_core::DirtyFlags::POSITION_DIRTY;
     }
 }
 
@@ -136,9 +138,11 @@ fn apply_spring_forces<S: Copy>(
             continue;
         }
         let (pu, pv) = (*state.positions.get(u), *state.positions.get(v));
+        let (su, sv) = (*state.sizes.get(u), *state.sizes.get(v));
         let delta = pv - pu;
         let dist = delta.len().max(0.01);
-        let force = k * (dist - ideal_length);
+        let ideal = crate::geometry::size_aware_ideal_length(ideal_length, su, sv, delta);
+        let force = k * (dist - ideal);
         let dir = delta.normalize() * force;
         disp[u] += dir;
         disp[v] -= dir;
@@ -154,6 +158,7 @@ fn apply_direct_repulsion_parallel<S: Copy + Sync>(
 
     let n = state.node_index_to_id.len();
     let positions: Vec<Vec2> = (0..n).map(|i| *state.positions.get(i)).collect();
+    let sizes: Vec<graphene_core::math::Size2> = (0..n).map(|i| *state.sizes.get(i)).collect();
 
     positions
         .par_iter()
@@ -166,7 +171,9 @@ fn apply_direct_repulsion_parallel<S: Copy + Sync>(
                 }
                 let delta = pi - pj;
                 let dist = delta.len().max(0.01);
-                force += delta.normalize() * (strength / (dist * dist));
+                let min_extent = (sizes[i].w + sizes[j].w).max(sizes[i].h + sizes[j].h) * 0.5;
+                let eff_dist = dist.max(min_extent * 0.5);
+                force += delta.normalize() * (strength / (eff_dist * eff_dist));
             }
             force
         })
@@ -190,11 +197,15 @@ fn apply_direct_repulsion<S: Copy + Sync>(
         let n = disp.len();
         for i in 0..n {
             let pi = *state.positions.get(i);
+            let si = *state.sizes.get(i);
             for j in (i + 1)..n {
                 let pj = *state.positions.get(j);
+                let sj = *state.sizes.get(j);
                 let delta = pi - pj;
                 let dist = delta.len().max(0.01);
-                let force = strength / (dist * dist);
+                let min_extent = (si.w + sj.w).max(si.h + sj.h) * 0.5;
+                let eff_dist = dist.max(min_extent * 0.5);
+                let force = strength / (eff_dist * eff_dist);
                 let dir = delta.normalize() * force;
                 disp[i] += dir;
                 disp[j] -= dir;

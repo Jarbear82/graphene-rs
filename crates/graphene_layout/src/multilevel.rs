@@ -99,7 +99,8 @@ impl<S: Copy + Default, L: Layout<S>> Layout<S> for MultilevelLayout<L> {
         }
 
         self.sub_layout.compute(state);
-        state.dirty_flags |= graphene_core::DirtyFlags::POSITION_DIRTY;
+        let collapsed = std::collections::HashSet::new();
+        crate::collision::finish_layout_epilogue(state, &collapsed, 10.0, 20.0);
     }
 }
 

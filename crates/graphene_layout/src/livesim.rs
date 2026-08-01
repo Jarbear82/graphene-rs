@@ -145,8 +145,9 @@ impl LiveForceSimulation {
             }
         }
 
-        // Apply collision resolution
-        self.resolve_collisions(state, 2.0);
+        // Apply collision resolution and compound parent bounds resolution
+        let collapsed = std::collections::HashSet::new();
+        crate::collision::finish_layout_epilogue(state, &collapsed, 10.0, 20.0);
 
         // Cool down
         self.temperature *= self.cooling_rate;

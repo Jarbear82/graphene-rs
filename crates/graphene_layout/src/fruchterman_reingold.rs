@@ -72,14 +72,18 @@ impl<S: Copy> Layout<S> for FruchtermanReingoldLayout {
 
             for v in 0..n {
                 let pv = *state.positions.get(v);
+                let sv = *state.sizes.get(v);
                 for u in 0..n {
                     if u == v {
                         continue;
                     }
                     let pu = *state.positions.get(u);
+                    let su = *state.sizes.get(u);
                     let delta = pv - pu;
                     let dist = delta.len().max(1e-4);
-                    let f = fr(dist);
+                    let min_extent = (sv.w + su.w).max(sv.h + su.h) * 0.5;
+                    let eff_dist = dist.max(min_extent * 0.5);
+                    let f = fr(eff_dist);
                     disp[v] += delta.normalize() * f;
                 }
             }
@@ -92,9 +96,11 @@ impl<S: Copy> Layout<S> for FruchtermanReingoldLayout {
                     continue;
                 };
                 let (pv, pu) = (*state.positions.get(v), *state.positions.get(u));
+                let (sv, su) = (*state.sizes.get(v), *state.sizes.get(u));
                 let delta = pv - pu;
                 let dist = delta.len().max(1e-4);
-                let f = fa(dist);
+                let ideal_k = crate::geometry::size_aware_ideal_length(k, sv, su, delta);
+                let f = fa(dist) * (ideal_k / k);
                 disp[v] -= delta.normalize() * f;
                 disp[u] += delta.normalize() * f;
             }
@@ -112,6 +118,7 @@ impl<S: Copy> Layout<S> for FruchtermanReingoldLayout {
 
             temp = (temp - temp_step).max(0.01);
         }
-        state.dirty_flags |= graphene_core::DirtyFlags::POSITION_DIRTY;
+        let collapsed = std::collections::HashSet::new();
+        crate::collision::finish_layout_epilogue(state, &collapsed, 10.0, 20.0);
     }
 }

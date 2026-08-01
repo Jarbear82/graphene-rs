@@ -63,6 +63,16 @@ impl<S: Copy> Layout<S> for TutteBarycentricLayout {
             return;
         }
 
+        let mut max_extent = 0.0f32;
+        for &id in &self.fixed_boundary {
+            if let Some(&idx) = state.node_keys.get(id) {
+                let size = *state.sizes.get(idx);
+                max_extent = max_extent.max(size.w.max(size.h));
+            }
+        }
+        let req_circ = k as f32 * (max_extent + 10.0);
+        let eff_radius = self.polygon_radius.max(req_circ / (2.0 * std::f32::consts::PI));
+
         let mut is_fixed = vec![false; n];
         for (i, &id) in self.fixed_boundary.iter().enumerate() {
             let Some(&idx) = state.node_keys.get(id) else {
@@ -70,8 +80,8 @@ impl<S: Copy> Layout<S> for TutteBarycentricLayout {
             };
             let angle = (i as f32 / k as f32) * TAU;
             let pos = Vec2::new(
-                self.polygon_radius * angle.cos(),
-                self.polygon_radius * angle.sin(),
+                eff_radius * angle.cos(),
+                eff_radius * angle.sin(),
             );
             state.positions.set(idx, pos);
             is_fixed[idx] = true;
@@ -109,6 +119,7 @@ impl<S: Copy> Layout<S> for TutteBarycentricLayout {
                 break;
             }
         }
-        state.dirty_flags |= graphene_core::DirtyFlags::POSITION_DIRTY;
+        let collapsed = std::collections::HashSet::new();
+        crate::collision::finish_layout_epilogue(state, &collapsed, 10.0, 20.0);
     }
 }

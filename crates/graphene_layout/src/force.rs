@@ -102,5 +102,7 @@ impl<S: Copy + Sync> Layout<S> for ForceDirectedLayout {
             }],
         };
         pipeline.run(state);
+        let collapsed = std::collections::HashSet::new();
+        crate::collision::finish_layout_epilogue(state, &collapsed, 10.0, 20.0);
     }
 }

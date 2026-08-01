@@ -105,6 +105,7 @@ impl<S: Copy + Default, L: Layout<S>> Layout<S> for DisconnectedPacker<L> {
             current_offset.x += comp_w + self.spacing;
         }
 
-        state.dirty_flags |= graphene_core::DirtyFlags::POSITION_DIRTY;
+        let collapsed = std::collections::HashSet::new();
+        crate::collision::finish_layout_epilogue(state, &collapsed, 10.0, 20.0);
     }
 }

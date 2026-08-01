@@ -283,6 +283,8 @@ impl<S: Copy + Default + Send + Sync + 'static> GraphEngineHandle<S> {
                     LayoutCommand::Tutte(mut l) => l.compute(state),
                     LayoutCommand::MultilevelForce(mut l) => l.compute(state),
                 }
+                let collapsed = std::collections::HashSet::new();
+                crate::collision::finish_layout_epilogue(state, &collapsed, 10.0, 20.0);
                 *version += 1;
                 Self::publish_snapshot(state, snapshot, *version);
             }

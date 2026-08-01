@@ -123,10 +123,20 @@ impl<S: Copy + Default> Layout<S> for GridLayout {
         }
         let cols = self.columns.max(1);
 
+        let mut max_w = 0.0f32;
+        let mut max_h = 0.0f32;
+        for idx in 0..num_nodes {
+            let size = *state.sizes.get(idx);
+            max_w = max_w.max(size.w);
+            max_h = max_h.max(size.h);
+        }
+        let col_step = self.spacing_x.max(max_w + 10.0);
+        let row_step = self.spacing_y.max(max_h + 10.0);
+
         for (idx, &id) in state.node_index_to_id.iter().enumerate() {
             let r = idx / cols;
             let c = idx % cols;
-            let target = Vec2::new(c as f32 * self.spacing_x, r as f32 * self.spacing_y);
+            let target = Vec2::new(c as f32 * col_step, r as f32 * row_step);
 
             if self.animate {
                 let from = *state.positions.get(idx);
@@ -143,14 +153,14 @@ impl<S: Copy + Default> Layout<S> for GridLayout {
                 state.positions.set(idx, target);
             }
         }
-        resolve_overlaps(state, 10.0);
-        state.dirty_flags |= graphene_core::DirtyFlags::POSITION_DIRTY;
+        let collapsed = std::collections::HashSet::new();
+        crate::collision::finish_layout_epilogue(state, &collapsed, 10.0, 20.0);
     }
 }
 
-/// Circle graph layout.
+/// Circular graph layout.
 ///
-/// Reference: Circular perimeter coordinate assignment.
+/// Reference: Circular layout placement algorithm.
 pub struct CircleLayout {
     pub radius: f32,
     pub center: Vec2,
@@ -160,7 +170,7 @@ pub struct CircleLayout {
 impl Default for CircleLayout {
     fn default() -> Self {
         Self {
-            radius: 300.0,
+            radius: 150.0,
             center: Vec2::default(),
             animate: false,
         }
@@ -191,11 +201,19 @@ impl<S: Copy + Default> Layout<S> for CircleLayout {
             return;
         }
 
+        let mut max_extent = 0.0f32;
+        for idx in 0..num_nodes {
+            let size = *state.sizes.get(idx);
+            max_extent = max_extent.max(size.w.max(size.h));
+        }
+        let required_circumference = num_nodes as f32 * (max_extent + 10.0);
+        let effective_radius = self.radius.max(required_circumference / (2.0 * std::f32::consts::PI));
+
         for (idx, &id) in state.node_index_to_id.iter().enumerate() {
             let angle = (idx as f32 / num_nodes as f32) * 2.0 * std::f32::consts::PI;
             let target = Vec2::new(
-                self.center.x + self.radius * angle.cos(),
-                self.center.y + self.radius * angle.sin(),
+                self.center.x + effective_radius * angle.cos(),
+                self.center.y + effective_radius * angle.sin(),
             );
 
             if self.animate {
@@ -213,8 +231,8 @@ impl<S: Copy + Default> Layout<S> for CircleLayout {
                 state.positions.set(idx, target);
             }
         }
-        resolve_overlaps(state, 10.0);
-        state.dirty_flags |= graphene_core::DirtyFlags::POSITION_DIRTY;
+        let collapsed = std::collections::HashSet::new();
+        crate::collision::finish_layout_epilogue(state, &collapsed, 10.0, 20.0);
     }
 }
 
