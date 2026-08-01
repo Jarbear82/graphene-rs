@@ -1,4 +1,4 @@
-/// Distance metrics used in clustering algorithms.
+/// Distance metrics used in clustering algorithms using enum dispatch.
 pub enum Metric {
     SquaredEuclidean,
     Euclidean,
@@ -6,16 +6,15 @@ pub enum Metric {
     Max, // Chebyshev distance
 }
 
-/// Wraps a closure for use as a custom distance method.
-pub struct CustomFn<F>(pub F);
-
-impl<F> std::ops::Deref for CustomFn<F>
-where
-    F: Fn(&[f64], &[f64]) -> f64 + 'static,
-{
-    type Target = dyn Fn(&[f64], &[f64]) -> f64;
-    fn deref(&self) -> &Self::Target {
-        &self.0
+impl Metric {
+    #[inline(always)]
+    pub fn evaluate(&self, a: &[f64], b: &[f64]) -> f64 {
+        match self {
+            Metric::SquaredEuclidean => squared_euclidean(a, b),
+            Metric::Euclidean => euclidean(a, b),
+            Metric::Manhattan => manhattan(a, b),
+            Metric::Max => max_distance(a, b),
+        }
     }
 }
 
@@ -40,20 +39,11 @@ fn max_distance(a: &[f64], b: &[f64]) -> f64 {
         .fold(f64::NEG_INFINITY, f64::max)
 }
 
-/// Generic dispatcher that calls the correct metric.
-fn compute_generic(method: &Metric, a: &[f64], b: &[f64]) -> f64 {
-    match method {
-        Metric::SquaredEuclidean => squared_euclidean(a, b),
-        Metric::Euclidean => euclidean(a, b),
-        Metric::Manhattan => manhattan(a, b),
-        Metric::Max => max_distance(a, b),
-    }
-}
-
 /// Compute the distance between two points.
 ///
-/// * `method` – a built-in [`Metric`] or a custom distance function (via [`CustomFn`]).
+/// * `method` – a built-in [`Metric`].
 /// * `a`, `b` – slices of coordinate values.
+#[inline(always)]
 pub fn compute_distance(method: &Metric, a: &[f64], b: &[f64]) -> f64 {
-    compute_generic(method, a, b)
+    method.evaluate(a, b)
 }

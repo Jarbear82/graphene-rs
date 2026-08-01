@@ -1,5 +1,22 @@
 use std::collections::HashMap;
 
+/// Enum dispatch provider for edge weight metrics in PageRank.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum EdgeWeightMetric {
+    Uniform(f64),
+    Scaled(f64),
+}
+
+impl EdgeWeightMetric {
+    #[inline(always)]
+    pub fn evaluate(&self, _edge: &Edge) -> f64 {
+        match self {
+            EdgeWeightMetric::Uniform(w) => *w,
+            EdgeWeightMetric::Scaled(s) => *s,
+        }
+    }
+}
+
 /// Represents a directed edge in the graph.
 #[derive(Debug, Clone)]
 pub struct Edge {
@@ -7,33 +24,13 @@ pub struct Edge {
     pub target: String,
 }
 
-/// Configuration options for the PageRank algorithm.
+/// Configuration options for the PageRank algorithm using Enum Dispatch.
+#[derive(Debug, Clone)]
 pub struct PageRankConfig {
     pub damping_factor: f64,
     pub precision: f64,
     pub max_iterations: usize,
-    pub weight_fn: std::sync::Arc<dyn Fn(&Edge) -> f64 + Send + Sync>,
-}
-
-impl std::fmt::Debug for PageRankConfig {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("PageRankConfig")
-            .field("damping_factor", &self.damping_factor)
-            .field("precision", &self.precision)
-            .field("max_iterations", &self.max_iterations)
-            .finish()
-    }
-}
-
-impl Clone for PageRankConfig {
-    fn clone(&self) -> Self {
-        Self {
-            damping_factor: self.damping_factor,
-            precision: self.precision,
-            max_iterations: self.max_iterations,
-            weight_fn: self.weight_fn.clone(),
-        }
-    }
+    pub weight_metric: EdgeWeightMetric,
 }
 
 impl Default for PageRankConfig {
@@ -42,18 +39,15 @@ impl Default for PageRankConfig {
             damping_factor: 0.8,
             precision: 1e-6,
             max_iterations: 200,
-            weight_fn: std::sync::Arc::new(|_edge| 1.0),
+            weight_metric: EdgeWeightMetric::Uniform(1.0),
         }
     }
 }
 
 impl PageRankConfig {
-    /// Override the default edge weight function.
-    pub fn with_weight<F>(mut self, f: F) -> Self
-    where
-        F: Fn(&Edge) -> f64 + Send + Sync + 'static,
-    {
-        self.weight_fn = std::sync::Arc::new(f);
+    /// Override the default edge weight metric using Enum Dispatch.
+    pub fn with_weight_metric(mut self, metric: EdgeWeightMetric) -> Self {
+        self.weight_metric = metric;
         self
     }
 
@@ -76,7 +70,7 @@ impl PageRankConfig {
     }
 
     fn weight(&self, edge: &Edge) -> f64 {
-        (self.weight_fn)(edge)
+        self.weight_metric.evaluate(edge)
     }
 }
 

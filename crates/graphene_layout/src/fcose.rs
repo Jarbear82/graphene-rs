@@ -88,9 +88,45 @@ pub struct FCoseLayout {
 
     pub constraints: FCoseConstraints,
 
-    pub node_repulsion_fn: Option<Box<dyn Fn(NodeId) -> f32 + Send + Sync>>,
-    pub ideal_edge_length_fn: Option<Box<dyn Fn(EdgeId) -> f32 + Send + Sync>>,
-    pub edge_elasticity_fn: Option<Box<dyn Fn(EdgeId) -> f32 + Send + Sync>>,
+    pub node_repulsion_metric: Option<NodeRepulsionMetric>,
+    pub ideal_edge_length_metric: Option<EdgeMetric>,
+    pub edge_elasticity_metric: Option<EdgeMetric>,
+}
+
+/// Enum dispatch provider for node repulsion metrics in fCoSE.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum NodeRepulsionMetric {
+    Constant(f32),
+    NodePinned { target_id: NodeId, pinned_val: f32, default_val: f32 },
+}
+
+impl NodeRepulsionMetric {
+    #[inline(always)]
+    pub fn evaluate(&self, id: NodeId) -> f32 {
+        match self {
+            NodeRepulsionMetric::Constant(val) => *val,
+            NodeRepulsionMetric::NodePinned { target_id, pinned_val, default_val } => {
+                if id == *target_id { *pinned_val } else { *default_val }
+            }
+        }
+    }
+}
+
+/// Enum dispatch provider for edge metrics in fCoSE.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum EdgeMetric {
+    Constant(f32),
+    Scaled { base: f32, scale: f32 },
+}
+
+impl EdgeMetric {
+    #[inline(always)]
+    pub fn evaluate(&self, _id: EdgeId) -> f32 {
+        match self {
+            EdgeMetric::Constant(val) => *val,
+            EdgeMetric::Scaled { base, scale } => base * scale,
+        }
+    }
 }
 
 impl Default for FCoseLayout {
@@ -115,9 +151,9 @@ impl Default for FCoseLayout {
             node_dimensions_include_labels: false,
             current_phase_idx: 0,
             constraints: FCoseConstraints::default(),
-            node_repulsion_fn: None,
-            ideal_edge_length_fn: None,
-            edge_elasticity_fn: None,
+            node_repulsion_metric: None,
+            ideal_edge_length_metric: None,
+            edge_elasticity_metric: None,
         }
     }
 }
@@ -228,18 +264,18 @@ impl FCoseLayout {
         self
     }
 
-    pub fn with_node_repulsion_fn<F: Fn(NodeId) -> f32 + Send + Sync + 'static>(mut self, f: F) -> Self {
-        self.node_repulsion_fn = Some(Box::new(f));
+    pub fn with_node_repulsion_metric(mut self, metric: NodeRepulsionMetric) -> Self {
+        self.node_repulsion_metric = Some(metric);
         self
     }
 
-    pub fn with_ideal_edge_length_fn<F: Fn(EdgeId) -> f32 + Send + Sync + 'static>(mut self, f: F) -> Self {
-        self.ideal_edge_length_fn = Some(Box::new(f));
+    pub fn with_ideal_edge_length_metric(mut self, metric: EdgeMetric) -> Self {
+        self.ideal_edge_length_metric = Some(metric);
         self
     }
 
-    pub fn with_edge_elasticity_fn<F: Fn(EdgeId) -> f32 + Send + Sync + 'static>(mut self, f: F) -> Self {
-        self.edge_elasticity_fn = Some(Box::new(f));
+    pub fn with_edge_elasticity_metric(mut self, metric: EdgeMetric) -> Self {
+        self.edge_elasticity_metric = Some(metric);
         self
     }
 }
@@ -631,13 +667,13 @@ impl<S: Copy + Default> Layout<S> for FCoseLayout {
                 let ly = p2.y - p1.y;
                 let l = (lx * lx + ly * ly).sqrt().max(0.01);
 
-                let custom_ideal = if let Some(ref ideal_fn) = self.ideal_edge_length_fn {
-                    ideal_fn(edge_id)
+                let custom_ideal = if let Some(ref ideal_metric) = self.ideal_edge_length_metric {
+                    ideal_metric.evaluate(edge_id)
                 } else {
                     self.ideal_edge_length
                 };
-                let custom_elasticity = if let Some(ref elasticity_fn) = self.edge_elasticity_fn {
-                    elasticity_fn(edge_id)
+                let custom_elasticity = if let Some(ref elasticity_metric) = self.edge_elasticity_metric {
+                    elasticity_metric.evaluate(edge_id)
                 } else {
                     32.0
                 };
@@ -1059,7 +1095,7 @@ fn spectral_placement_landmark<S: Copy>(
         (seed >> 32) as f32 / u32::MAX as f32
     };
 
-    let power_iteration_k = |matrix: &[f32], sz: usize, rand_fn: &mut dyn FnMut() -> f32| -> (f32, Vec<f32>) {
+    fn power_iteration_k<R: FnMut() -> f32>(matrix: &[f32], sz: usize, rand_fn: &mut R) -> (f32, Vec<f32>) {
         let mut u_vec = vec![0.0f32; sz];
         for val in u_vec.iter_mut() {
             *val = rand_fn() - 0.5;
@@ -1095,7 +1131,7 @@ fn spectral_placement_landmark<S: Copy>(
         }
 
         (lamb, u_vec)
-    };
+    }
 
     let (lambda_1, v_1) = power_iteration_k(&k_mat, sample_size, &mut lcg_rand);
     let mut k_deflated = k_mat.clone();
@@ -1163,9 +1199,9 @@ mod tests {
                 right: n2,
                 gap: 30.0,
             })
-            .with_node_repulsion_fn(|_id| 6000.0)
-            .with_ideal_edge_length_fn(|_id| 80.0)
-            .with_edge_elasticity_fn(|_id| 1.5);
+            .with_node_repulsion_metric(NodeRepulsionMetric::Constant(6000.0))
+            .with_ideal_edge_length_metric(EdgeMetric::Constant(80.0))
+            .with_edge_elasticity_metric(EdgeMetric::Constant(1.5));
 
         assert_eq!(layout.iterations, 300);
         assert_eq!(layout.ideal_edge_length, 75.0);
@@ -1187,8 +1223,8 @@ mod tests {
         assert_eq!(layout.constraints.fixed_nodes.len(), 1);
         assert_eq!(layout.constraints.alignment.horizontal.len(), 1);
         assert_eq!(layout.constraints.relative_placement.len(), 1);
-        assert!(layout.node_repulsion_fn.is_some());
-        assert!(layout.ideal_edge_length_fn.is_some());
-        assert!(layout.edge_elasticity_fn.is_some());
+        assert!(layout.node_repulsion_metric.is_some());
+        assert!(layout.ideal_edge_length_metric.is_some());
+        assert!(layout.edge_elasticity_metric.is_some());
     }
 }

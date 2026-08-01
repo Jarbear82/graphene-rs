@@ -14,14 +14,15 @@ use std::collections::HashMap;
 ///
 /// # Returns
 /// A `HashMap` mapping each node ID to its betweenness centrality score.
-pub fn betweenness_centrality<NodeId>(
+pub fn betweenness_centrality<NodeId, I>(
     nodes: &[NodeId],
-    get_neighbors: impl Fn(&NodeId) -> Box<dyn Iterator<Item = NodeId>>,
+    get_neighbors: impl Fn(&NodeId) -> I,
     _edge_weight: Option<impl Fn(&NodeId, &NodeId) -> f64>,
     _directed: bool,
 ) -> HashMap<NodeId, f64>
 where
     NodeId: Eq + Ord + std::hash::Hash + Clone + Copy,
+    I: IntoIterator<Item = NodeId>,
 {
     let mut state = graphene_core::GraphState::<()>::new();
     let mut node_to_id = HashMap::new();
@@ -63,14 +64,15 @@ where
 // Convenience wrapper: returns a normalized score map where each value is
 // betweenness / max_betweenness (0.0 if all scores are 0).
 // ---------------------------------------------------------------------------
-pub fn betweenness_centrality_normalized<NodeId>(
+pub fn betweenness_centrality_normalized<NodeId, I>(
     nodes: &[NodeId],
-    get_neighbors: impl Fn(&NodeId) -> Box<dyn Iterator<Item = NodeId>>,
+    get_neighbors: impl Fn(&NodeId) -> I,
     edge_weight: Option<impl Fn(&NodeId, &NodeId) -> f64>,
     directed: bool,
 ) -> (HashMap<NodeId, f64>, HashMap<NodeId, f64>)
 where
     NodeId: Eq + Ord + std::hash::Hash + Clone + Copy,
+    I: IntoIterator<Item = NodeId>,
 {
     let raw = betweenness_centrality(nodes, get_neighbors, edge_weight, directed);
 

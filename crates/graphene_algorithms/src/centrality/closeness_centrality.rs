@@ -1,37 +1,39 @@
 use std::collections::HashMap;
 
+/// Enum dispatch provider for edge weight metrics in closeness centrality.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum EdgeWeightMetric {
+    Uniform(f64),
+    Scaled(f64),
+}
+
+impl EdgeWeightMetric {
+    #[inline(always)]
+    pub fn evaluate(&self, _edge: &Edge) -> f64 {
+        match self {
+            EdgeWeightMetric::Uniform(w) => *w,
+            EdgeWeightMetric::Scaled(s) => *s,
+        }
+    }
+}
+
+impl Default for EdgeWeightMetric {
+    fn default() -> Self {
+        EdgeWeightMetric::Uniform(1.0)
+    }
+}
+
 /// Configuration options for closeness centrality calculations.
-#[derive(Clone)]
+#[derive(Clone, Debug, Default)]
 pub struct ClosenessCentralityOptions {
     /// Use harmonic mean (1/d) instead of reciprocal of total distance.
     pub harmonic: bool,
-    /// Weight function applied to each edge when traversing.
-    pub weight_fn: std::sync::Arc<dyn Fn(&Edge) -> f64 + Send + Sync>,
+    /// Weight metric applied to each edge when traversing.
+    pub weight_metric: EdgeWeightMetric,
     /// Whether the graph is directed.
     pub directed: bool,
     /// Root node for single-source calculations (if any).
     pub root: Option<NodeId>,
-}
-
-impl std::fmt::Debug for ClosenessCentralityOptions {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ClosenessCentralityOptions")
-            .field("harmonic", &self.harmonic)
-            .field("directed", &self.directed)
-            .field("root", &self.root)
-            .finish()
-    }
-}
-
-impl Default for ClosenessCentralityOptions {
-    fn default() -> Self {
-        ClosenessCentralityOptions {
-            harmonic: true,
-            weight_fn: std::sync::Arc::new(|_edge| 1.0),
-            directed: false,
-            root: None,
-        }
-    }
 }
 
 /// Result of `closeness_centralities` for all nodes.
@@ -68,7 +70,7 @@ pub fn closeness_centralities(
 
     let fw = floyd_warshall(graph, &options);
 
-    let node_ids: Vec<NodeId> = graph.node_ids().collect();
+    let node_ids: Vec<NodeId> = graph.node_ids();
 
     for i in 0..node_ids.len() {
         let curr_node = &node_ids[i];
@@ -157,7 +159,7 @@ pub struct Edge {
 
 /// Minimal interface expected by these functions.
 pub trait Graph {
-    fn node_ids(&self) -> Box<dyn Iterator<Item = NodeId> + '_>;
+    fn node_ids(&self) -> Vec<NodeId>;
     fn adjacency_list(&self) -> &HashMap<NodeId, Vec<(NodeId, f64)>>;
     fn is_directed(&self) -> bool;
 }
@@ -186,7 +188,7 @@ pub fn floyd_warshall(graph: &impl Graph, options: &ClosenessCentralityOptions) 
         dists.entry((n, n)).or_insert(0.0);
     }
 
-    let nodes: Vec<NodeId> = graph.node_ids().collect();
+    let nodes: Vec<NodeId> = graph.node_ids();
 
     for &k in &nodes {
         for &i in &nodes {

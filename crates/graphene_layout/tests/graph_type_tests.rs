@@ -565,12 +565,17 @@ fn test_fcose_constraints_and_callbacks() {
         relative_placement: vec![relative],
     };
 
-    // Per-element callbacks
+    use graphene_layout::fcose::{EdgeMetric, NodeRepulsionMetric};
+
     let mut fcose = FCoseLayout::default()
         .with_constraints(constraints)
-        .with_node_repulsion_fn(move |id| if id == id_a { 10000.0 } else { 4500.0 })
-        .with_ideal_edge_length_fn(|_edge| 60.0)
-        .with_edge_elasticity_fn(|_edge| 20.0);
+        .with_node_repulsion_metric(NodeRepulsionMetric::NodePinned {
+            target_id: id_a,
+            pinned_val: 10000.0,
+            default_val: 4500.0,
+        })
+        .with_ideal_edge_length_metric(EdgeMetric::Constant(60.0))
+        .with_edge_elasticity_metric(EdgeMetric::Constant(20.0));
 
     fcose.compute(&mut state);
 
