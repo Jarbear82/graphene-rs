@@ -20,4 +20,7 @@ pub use search_traversal::graph_state_search::{
     a_star, bfs, dfs, dijkstra, AStarResult, AdjacencyList, BfsIter, DfsIter, EdgeTopology,
     HierarchyWalk,
 };
+pub use search_traversal::hopcroft_tarjan_biconnected::{
+    hopcroft_tarjan_biconnected, BiconnectedResult,
+};
 pub use search_traversal::matrix::{laplacian, to_csr, CsrMatrix};

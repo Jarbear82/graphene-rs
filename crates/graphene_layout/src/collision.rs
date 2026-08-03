@@ -328,16 +328,23 @@ pub fn resolve_overlaps<S: Copy>(state: &mut GraphState<S>, padding: f32) {
     // Phase 2: Minimum Translation Vector (MTV) Overlap Resolution with Quadtree acceleration
     let max_iterations = if n > 500 { 50 } else { 200 };
     let mut candidates = Vec::with_capacity(32);
+    let mut pos_buf = if n > 50 {
+        Some(vec![Vec2::default(); n])
+    } else {
+        None
+    };
 
     for _iter in 0..max_iterations {
         let mut overlap_found = false;
 
-        let positions: Option<Vec<Vec2>> = if n > 50 {
-            Some((0..n).map(|i| *state.positions.get(i)).collect())
+        let quadtree = if let Some(ref mut pos) = pos_buf {
+            for i in 0..n {
+                pos[i] = *state.positions.get(i);
+            }
+            Some(crate::quadtree::Quadtree::build(pos))
         } else {
             None
         };
-        let quadtree = positions.as_ref().map(|p| crate::quadtree::Quadtree::build(p));
 
         for i in 0..n {
             let pos_i = *state.positions.get(i);
@@ -346,7 +353,8 @@ pub fn resolve_overlaps<S: Copy>(state: &mut GraphState<S>, padding: f32) {
             let hh_i = size_i.h / 2.0;
 
             candidates.clear();
-            if _iter < max_iterations - 5 {
+            let use_quadtree = quadtree.is_some() && _iter < max_iterations - 5;
+            if use_quadtree {
                 if let Some(ref qt) = quadtree {
                     qt.query_overlapping_candidates(pos_i, hw_i, hh_i, padding + 30.0, &mut candidates);
                 }
@@ -394,7 +402,7 @@ pub fn resolve_overlaps<S: Copy>(state: &mut GraphState<S>, padding: f32) {
                 }
             };
 
-            if quadtree.is_some() {
+            if use_quadtree {
                 for &j in &candidates {
                     process_pair(state, j, &mut overlap_found);
                 }

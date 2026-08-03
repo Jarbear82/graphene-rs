@@ -50,27 +50,33 @@ impl<S: Copy> Layout<S> for KamadaKawaiLayout {
             return;
         }
 
-        let mut d = vec![vec![f32::INFINITY; n]; n];
+        let mut d = vec![f32::INFINITY; n * n];
         for i in 0..n {
-            d[i][i] = 0.0;
+            d[i * n + i] = 0.0;
         }
 
         for idx in 0..state.edges.len() {
             let src = *state.edge_sources.get(idx);
             let tgt = *state.edge_targets.get(idx);
             if let (Some(&u), Some(&v)) = (state.node_keys.get(src), state.node_keys.get(tgt)) {
-                d[u][v] = 1.0;
-                d[v][u] = 1.0;
+                d[u * n + v] = 1.0;
+                d[v * n + u] = 1.0;
             }
         }
 
         for k in 0..n {
+            let kn = k * n;
             for i in 0..n {
-                for j in 0..n {
-                    if d[i][k] != f32::INFINITY && d[k][j] != f32::INFINITY {
-                        let new_d = d[i][k] + d[k][j];
-                        if new_d < d[i][j] {
-                            d[i][j] = new_d;
+                let in_idx = i * n;
+                let dik = d[in_idx + k];
+                if dik != f32::INFINITY {
+                    for j in 0..n {
+                        let dkj = d[kn + j];
+                        if dkj != f32::INFINITY {
+                            let new_d = dik + dkj;
+                            if new_d < d[in_idx + j] {
+                                d[in_idx + j] = new_d;
+                            }
                         }
                     }
                 }
@@ -79,9 +85,8 @@ impl<S: Copy> Layout<S> for KamadaKawaiLayout {
 
         let max_finite_dist = d
             .iter()
-            .flatten()
-            .filter(|&&x| x != f32::INFINITY)
             .copied()
+            .filter(|&x| x != f32::INFINITY)
             .fold(0.0f32, |m, x| m.max(x));
         let disconnect_dist = if max_finite_dist > 0.0 {
             max_finite_dist * 2.0
@@ -89,20 +94,23 @@ impl<S: Copy> Layout<S> for KamadaKawaiLayout {
             4.0
         };
         for i in 0..n {
+            let in_idx = i * n;
             for j in 0..n {
-                if d[i][j] == f32::INFINITY {
-                    d[i][j] = disconnect_dist;
+                if d[in_idx + j] == f32::INFINITY {
+                    d[in_idx + j] = disconnect_dist;
                 }
             }
         }
 
-        let mut l = vec![vec![0.0f32; n]; n];
-        let mut k = vec![vec![0.0f32; n]; n];
+        let mut l = vec![0.0f32; n * n];
+        let mut k = vec![0.0f32; n * n];
         for i in 0..n {
+            let in_idx = i * n;
             for j in 0..n {
                 if i != j {
-                    l[i][j] = self.l_0 * d[i][j];
-                    k[i][j] = self.k / (d[i][j] * d[i][j]);
+                    let dij = d[in_idx + j];
+                    l[in_idx + j] = self.l_0 * dij;
+                    k[in_idx + j] = self.k / (dij * dij);
                 }
             }
         }
@@ -154,21 +162,24 @@ impl<S: Copy> Layout<S> for KamadaKawaiLayout {
 fn partial_derivatives<S: Copy>(
     state: &GraphState<S>,
     m: usize,
-    l: &[Vec<f32>],
-    k: &[Vec<f32>],
+    l: &[f32],
+    k: &[f32],
     n: usize,
 ) -> (f32, f32) {
     let pm = *state.positions.get(m);
     let (mut dex, mut dey) = (0.0, 0.0);
+    let mn = m * n;
     for i in 0..n {
-        if i == m || l[m][i] <= 0.0 {
+        let l_mi = l[mn + i];
+        if i == m || l_mi <= 0.0 {
             continue;
         }
         let pi = *state.positions.get(i);
         let (dx, dy) = (pm.x - pi.x, pm.y - pi.y);
         let dist = (dx * dx + dy * dy).sqrt().max(0.01);
-        dex += k[m][i] * (dx - (l[m][i] * dx) / dist);
-        dey += k[m][i] * (dy - (l[m][i] * dy) / dist);
+        let k_mi = k[mn + i];
+        dex += k_mi * (dx - (l_mi * dx) / dist);
+        dey += k_mi * (dy - (l_mi * dy) / dist);
     }
     (dex, dey)
 }
@@ -176,23 +187,26 @@ fn partial_derivatives<S: Copy>(
 fn second_partials<S: Copy>(
     state: &GraphState<S>,
     m: usize,
-    l: &[Vec<f32>],
-    k: &[Vec<f32>],
+    l: &[f32],
+    k: &[f32],
     n: usize,
 ) -> (f32, f32, f32) {
     let pm = *state.positions.get(m);
     let (mut a, mut b, mut c) = (0.0, 0.0, 0.0);
+    let mn = m * n;
     for i in 0..n {
-        if i == m || l[m][i] <= 0.0 {
+        let l_mi = l[mn + i];
+        if i == m || l_mi <= 0.0 {
             continue;
         }
         let pi = *state.positions.get(i);
         let (dx, dy) = (pm.x - pi.x, pm.y - pi.y);
         let dist = (dx * dx + dy * dy).sqrt().max(0.01);
         let dist3 = dist * dist * dist;
-        a += k[m][i] * (1.0 - (l[m][i] * dy * dy) / dist3);
-        b += k[m][i] * (l[m][i] * dx * dy) / dist3;
-        c += k[m][i] * (1.0 - (l[m][i] * dx * dx) / dist3);
+        let k_mi = k[mn + i];
+        a += k_mi * (1.0 - (l_mi * dy * dy) / dist3);
+        b += k_mi * (l_mi * dx * dy) / dist3;
+        c += k_mi * (1.0 - (l_mi * dx * dx) / dist3);
     }
     (a, b, c)
 }
@@ -236,26 +250,32 @@ impl<S: Copy> Layout<S> for MdsLayout {
             return;
         }
 
-        let mut d = vec![vec![f32::INFINITY; n]; n];
+        let mut d = vec![f32::INFINITY; n * n];
         for i in 0..n {
-            d[i][i] = 0.0;
+            d[i * n + i] = 0.0;
         }
         for idx in 0..state.edges.len() {
             let src = *state.edge_sources.get(idx);
             let tgt = *state.edge_targets.get(idx);
             if let (Some(&u), Some(&v)) = (state.node_keys.get(src), state.node_keys.get(tgt)) {
-                d[u][v] = 1.0;
-                d[v][u] = 1.0;
+                d[u * n + v] = 1.0;
+                d[v * n + u] = 1.0;
             }
         }
 
         for k in 0..n {
+            let kn = k * n;
             for i in 0..n {
-                for j in 0..n {
-                    if d[i][k] != f32::INFINITY && d[k][j] != f32::INFINITY {
-                        let new_d = d[i][k] + d[k][j];
-                        if new_d < d[i][j] {
-                            d[i][j] = new_d;
+                let in_idx = i * n;
+                let dik = d[in_idx + k];
+                if dik != f32::INFINITY {
+                    for j in 0..n {
+                        let dkj = d[kn + j];
+                        if dkj != f32::INFINITY {
+                            let new_d = dik + dkj;
+                            if new_d < d[in_idx + j] {
+                                d[in_idx + j] = new_d;
+                            }
                         }
                     }
                 }
@@ -264,9 +284,8 @@ impl<S: Copy> Layout<S> for MdsLayout {
 
         let max_finite_dist = d
             .iter()
-            .flatten()
-            .filter(|&&x| x != f32::INFINITY)
             .copied()
+            .filter(|&x| x != f32::INFINITY)
             .fold(0.0f32, |m, x| m.max(x));
         let disconnect_dist = if max_finite_dist > 0.0 {
             max_finite_dist * 2.0
@@ -274,31 +293,37 @@ impl<S: Copy> Layout<S> for MdsLayout {
             4.0
         };
         for i in 0..n {
+            let in_idx = i * n;
             for j in 0..n {
-                if d[i][j] == f32::INFINITY {
-                    d[i][j] = disconnect_dist;
+                if d[in_idx + j] == f32::INFINITY {
+                    d[in_idx + j] = disconnect_dist;
                 }
             }
         }
 
-        let delta: Vec<Vec<f32>> = (0..n)
-            .map(|i| {
-                (0..n)
-                    .map(|j| {
-                        let size_i = *state.sizes.get(i);
-                        let size_j = *state.sizes.get(j);
-                        let pos_i = *state.positions.get(i);
-                        let pos_j = *state.positions.get(j);
-                        crate::geometry::size_aware_ideal_length(self.base_dist * d[i][j], size_i, size_j, pos_i - pos_j)
-                    })
-                    .collect()
-            })
+        let base_dist = self.base_dist;
+        let mut delta = vec![0.0f32; n * n];
+        for i in 0..n {
+            let in_idx = i * n;
+            let size_i = *state.sizes.get(i);
+            let pos_i = *state.positions.get(i);
+            for j in 0..n {
+                let size_j = *state.sizes.get(j);
+                let pos_j = *state.positions.get(j);
+                delta[in_idx + j] = crate::geometry::size_aware_ideal_length(
+                    base_dist * d[in_idx + j],
+                    size_i,
+                    size_j,
+                    pos_i - pos_j,
+                );
+            }
+        }
+
+        let w: Vec<f32> = delta
+            .iter()
+            .map(|&x| if x > 0.0 { 1.0 / (x * x) } else { 0.0 })
             .collect();
 
-        let w: Vec<Vec<f32>> = delta
-            .iter()
-            .map(|row| row.iter().map(|&x| if x > 0.0 { 1.0 / (x * x) } else { 0.0 }).collect())
-            .collect();
 
         for _iter in 0..self.iterations {
             let positions: Vec<Vec2> = (0..n).map(|i| *state.positions.get(i)).collect();
@@ -307,14 +332,17 @@ impl<S: Copy> Layout<S> for MdsLayout {
             for i in 0..n {
                 let mut sum = Vec2::default();
                 let mut w_row_sum = 0.0f32;
+                let in_idx = i * n;
                 for j in 0..n {
-                    if i == j || w[i][j] == 0.0 {
+                    let w_ij = w[in_idx + j];
+                    if i == j || w_ij == 0.0 {
                         continue;
                     }
                     let dist = (positions[i] - positions[j]).len().max(1e-6);
-                    let b_ij = w[i][j] * delta[i][j] / dist;
-                    sum += (positions[i] - positions[j]) * b_ij + positions[j] * w[i][j];
-                    w_row_sum += w[i][j];
+                    let delta_ij = delta[in_idx + j];
+                    let b_ij = w_ij * delta_ij / dist;
+                    sum += (positions[i] - positions[j]) * b_ij + positions[j] * w_ij;
+                    w_row_sum += w_ij;
                 }
                 new_positions[i] = if w_row_sum > 1e-9 {
                     sum / w_row_sum
