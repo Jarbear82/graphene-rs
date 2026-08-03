@@ -386,12 +386,20 @@ impl<S: Copy + Default + Send + Sync + 'static> GraphEngineHandle<S> {
         version: u64,
     ) {
         let n = state.node_index_to_id.len();
-        let positions: Vec<Vec2> = (0..n).map(|i| *state.positions.get(i)).collect();
-        let sizes: Vec<Size2> = (0..n).map(|i| *state.sizes.get(i)).collect();
 
         if let Ok(mut lock) = snapshot.write() {
-            lock.positions = positions;
-            lock.sizes = sizes;
+            lock.positions.clear();
+            lock.positions.reserve(n);
+            for i in 0..n {
+                lock.positions.push(*state.positions.get(i));
+            }
+
+            lock.sizes.clear();
+            lock.sizes.reserve(n);
+            for i in 0..n {
+                lock.sizes.push(*state.sizes.get(i));
+            }
+
             lock.version = version;
             lock.is_ui_mode = state.is_ui_mode;
         }
