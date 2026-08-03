@@ -285,7 +285,13 @@ impl<'a> IntoElement for GraphCanvas<'a> {
             };
             let pos_src = *state.positions.get(src_idx);
             let pos_tgt = *state.positions.get(tgt_idx);
+            let src_size = *state.sizes.get(src_idx);
             let tgt_size = *state.sizes.get(tgt_idx);
+
+            // Frustum Culling: Skip offscreen edges when both endpoints are outside the viewport
+            if !viewport.is_visible(pos_src, src_size) && !viewport.is_visible(pos_tgt, tgt_size) {
+                continue;
+            }
 
             let src_screen = viewport.model_to_screen(pos_src);
 

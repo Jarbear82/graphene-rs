@@ -49,6 +49,19 @@ impl SpatialHashGrid {
         let cell = self.hash(pos);
         self.cells.get(&cell).cloned().unwrap_or_default()
     }
+
+    pub fn query_neighborhood(&self, pos: Vec2) -> Vec<NodeId> {
+        let (cx, cy) = self.hash(pos);
+        let mut candidates = Vec::new();
+        for dx in -1..=1 {
+            for dy in -1..=1 {
+                if let Some(list) = self.cells.get(&(cx + dx, cy + dy)) {
+                    candidates.extend_from_slice(list);
+                }
+            }
+        }
+        candidates
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -106,21 +119,24 @@ impl InteractionState {
         let mut best_match = None;
         let mut max_depth = 0;
 
-        let candidates: Vec<NodeId> = if physics_active {
-            // During active physics simulation positions update continuously;
-            // scan visible nodes to guarantee 100% accurate hit-testing without stale cell misses.
-            state
-                .node_index_to_id
-                .iter()
-                .copied()
-                .filter(|&id| {
-                    if let Some(&idx) = state.node_keys.get(id) {
-                        viewport.is_visible(*state.positions.get(idx), *state.sizes.get(idx))
-                    } else {
-                        false
-                    }
-                })
-                .collect()
+        let candidates = if physics_active || self.spatial_grid.cells.is_empty() {
+            let neighborhood = self.spatial_grid.query_neighborhood(model_pos);
+            if neighborhood.is_empty() {
+                state
+                    .node_index_to_id
+                    .iter()
+                    .copied()
+                    .filter(|&id| {
+                        if let Some(&idx) = state.node_keys.get(id) {
+                            viewport.is_visible(*state.positions.get(idx), *state.sizes.get(idx))
+                        } else {
+                            false
+                        }
+                    })
+                    .collect()
+            } else {
+                neighborhood
+            }
         } else {
             self.spatial_grid.query(model_pos)
         };
