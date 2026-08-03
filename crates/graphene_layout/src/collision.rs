@@ -421,14 +421,37 @@ pub fn resolve_overlaps<S: Copy>(state: &mut GraphState<S>, padding: f32) {
     state.dirty_flags |= graphene_core::DirtyFlags::POSITION_DIRTY;
 }
 
+/// Translates the layout centroid of all nodes to origin (0, 0).
+pub fn center_layout_at_origin<S: Copy>(state: &mut GraphState<S>) {
+    let n = state.node_index_to_id.len();
+    if n == 0 {
+        return;
+    }
+    let mut sum_x = 0.0f32;
+    let mut sum_y = 0.0f32;
+    for i in 0..n {
+        let pos = state.positions.get(i);
+        sum_x += pos.x;
+        sum_y += pos.y;
+    }
+    let cx = sum_x / n as f32;
+    let cy = sum_y / n as f32;
+    for i in 0..n {
+        let pos = state.positions.get_mut(i);
+        pos.x -= cx;
+        pos.y -= cy;
+    }
+}
+
 /// Universal size-aware post-processing epilogue for all layout algorithms.
-/// Enforces AABB node-node overlap resolution and updates compound parent bounding boxes.
+/// Centers layout at origin, enforces AABB overlap resolution, and updates compound parent bounds.
 pub fn finish_layout_epilogue<S: Copy>(
     state: &mut GraphState<S>,
     collapsed_parents: &std::collections::HashSet<graphene_core::NodeId>,
     overlap_padding: f32,
     compound_padding: f32,
 ) {
+    center_layout_at_origin(state);
     resolve_overlaps(state, overlap_padding);
     crate::traits::resolve_compound_bounds(state, collapsed_parents, compound_padding);
     state.dirty_flags |= graphene_core::DirtyFlags::POSITION_DIRTY;

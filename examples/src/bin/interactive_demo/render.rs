@@ -45,7 +45,10 @@ impl Render for DemoApp {
         }
 
         let snap = self.engine.latest_snapshot();
-        if snap.version > 0 && snap.positions.len() == self.state.node_index_to_id.len() {
+        if snap.version > self.snapshot_version
+            && snap.positions.len() == self.state.node_index_to_id.len()
+        {
+            self.snapshot_version = snap.version;
             let drag_node_id = self.interaction_state.drag_start.map(|(id, _, _)| id);
             for (i, &pos) in snap.positions.iter().enumerate() {
                 let id = self.state.node_index_to_id[i];
@@ -56,8 +59,9 @@ impl Render for DemoApp {
         }
 
         let is_animating = !self.state.animations.tracks.is_empty();
+        let sim_converged = self.live_sim.is_converged();
         let needs_physics = self.physics_enabled
-            && (self.physics_temperature > 0.05 || self.interaction_state.drag_start.is_some());
+            && (!sim_converged || self.interaction_state.drag_start.is_some());
         let needs_tick = is_animating || needs_physics;
 
         if needs_tick {
@@ -68,7 +72,8 @@ impl Render for DemoApp {
                     self.interaction_state.rebuild_grid(&self.state);
                 }
             } else if needs_physics {
-                self.engine.send_command(graphene_layout::GraphCommand::StepLiveSim).ok();
+                self.run_physics_step();
+                self.interaction_state.rebuild_grid(&self.state);
             }
 
             cx.spawn(async move |this, cx| {

@@ -126,124 +126,155 @@ impl DemoApp {
                             .text_size(px(12.0))
                             .child("3. INSPECTOR"),
                     )
-                    .child(if let Some(node_id) = self.state.selected.primary_node().or(self.selected_node) {
-                        let label = self.state.get_node_label(node_id)
-                            .map(|s| s.to_string())
-                            .or_else(|| self.fixtures[self.selected_fixture_idx].node_labels.get(&node_id).cloned())
-                            .unwrap_or_else(|| format!("N{}", self.state.node_keys[node_id]));
-                        let uuid_str = self.state.get_node_uuid(node_id).unwrap_or("N/A").to_string();
-                        let sec_node = self.state.selected.secondary_node();
+                    .child(
+                        if let Some(node_id) =
+                            self.state.selected.primary_node().or(self.selected_node)
+                        {
+                            let label = self
+                                .state
+                                .get_node_label(node_id)
+                                .map(|s| s.to_string())
+                                .or_else(|| {
+                                    self.fixtures[self.selected_fixture_idx]
+                                        .node_labels
+                                        .get(&node_id)
+                                        .cloned()
+                                })
+                                .unwrap_or_else(|| format!("N{}", self.state.node_keys[node_id]));
+                            let uuid_str = self
+                                .state
+                                .get_node_uuid(node_id)
+                                .unwrap_or("N/A")
+                                .to_string();
+                            let sec_node = self.state.selected.secondary_node();
 
-                        gpui::div()
-                            .flex()
-                            .flex_col()
-                            .gap_2()
-                            .p_2()
-                            .bg(theme.bg)
-                            .rounded_md()
-                            .border(px(1.0))
-                            .border_color(theme.border)
-                            .child(
-                                gpui::div()
-                                    .text_color(theme.text)
-                                    .font_weight(gpui::FontWeight::BOLD)
-                                    .text_size(px(11.0))
-                                    .child(format!("Primary Selected: {}", label)),
-                            )
-                            .child(
-                                gpui::div()
-                                    .text_color(theme.text_dim)
-                                    .text_size(px(10.0))
-                                    .child(format!("Node UUID (Read-Only):\n{}", uuid_str)),
-                            )
-                            .when_some(sec_node, |parent, sec_id| {
-                                let sec_label = self.state.get_node_label(sec_id)
-                                    .map(|s| s.to_string())
-                                    .or_else(|| self.fixtures[self.selected_fixture_idx].node_labels.get(&sec_id).cloned())
-                                    .unwrap_or_else(|| format!("N{}", self.state.node_keys[sec_id]));
-                                let sec_uuid = self.state.get_node_uuid(sec_id).unwrap_or("N/A").to_string();
-                                parent.child(
+                            gpui::div()
+                                .flex()
+                                .flex_col()
+                                .gap_2()
+                                .p_2()
+                                .bg(theme.bg)
+                                .rounded_md()
+                                .border(px(1.0))
+                                .border_color(theme.border)
+                                .child(
                                     gpui::div()
-                                        .p_2()
-                                        .bg(theme.panel_bg)
-                                        .rounded_md()
-                                        .border(px(1.0))
-                                        .border_color(theme.accent)
+                                        .text_color(theme.text)
+                                        .font_weight(gpui::FontWeight::BOLD)
+                                        .text_size(px(11.0))
+                                        .child(format!("Primary Selected: {}", label)),
+                                )
+                                .child(
+                                    gpui::div()
+                                        .text_color(theme.text_dim)
+                                        .text_size(px(10.0))
+                                        .child(format!("Node UUID (Read-Only):\n{}", uuid_str)),
+                                )
+                                .when_some(sec_node, |parent, sec_id| {
+                                    let sec_label = self
+                                        .state
+                                        .get_node_label(sec_id)
+                                        .map(|s| s.to_string())
+                                        .or_else(|| {
+                                            self.fixtures[self.selected_fixture_idx]
+                                                .node_labels
+                                                .get(&sec_id)
+                                                .cloned()
+                                        })
+                                        .unwrap_or_else(|| {
+                                            format!("N{}", self.state.node_keys[sec_id])
+                                        });
+                                    let sec_uuid = self
+                                        .state
+                                        .get_node_uuid(sec_id)
+                                        .unwrap_or("N/A")
+                                        .to_string();
+                                    parent.child(
+                                        gpui::div()
+                                            .p_2()
+                                            .bg(theme.panel_bg)
+                                            .rounded_md()
+                                            .border(px(1.0))
+                                            .border_color(theme.accent)
+                                            .flex()
+                                            .flex_col()
+                                            .gap_1()
+                                            .child(
+                                                gpui::div()
+                                                    .text_color(theme.accent)
+                                                    .font_weight(gpui::FontWeight::BOLD)
+                                                    .text_size(px(11.0))
+                                                    .child(format!(
+                                                        "Secondary Selected: {}",
+                                                        sec_label
+                                                    )),
+                                            )
+                                            .child(
+                                                gpui::div()
+                                                    .text_color(theme.text_dim)
+                                                    .text_size(px(10.0))
+                                                    .child(format!("UUID: {}", sec_uuid)),
+                                            )
+                                            .child(
+                                                Button::new("connect-pri-sec-btn")
+                                                    .primary()
+                                                    .label("CONNECT PRIMARY ➔ SECONDARY")
+                                                    .on_click(cx.listener(move |this, _, _, _| {
+                                                        this.create_edge_between_nodes(
+                                                            node_id, sec_id,
+                                                        );
+                                                    })),
+                                            ),
+                                    )
+                                })
+                                .child(
+                                    gpui::div()
                                         .flex()
                                         .flex_col()
                                         .gap_1()
                                         .child(
                                             gpui::div()
-                                                .text_color(theme.accent)
-                                                .font_weight(gpui::FontWeight::BOLD)
-                                                .text_size(px(11.0))
-                                                .child(format!("Secondary Selected: {}", sec_label)),
-                                        )
-                                        .child(
-                                            gpui::div()
                                                 .text_color(theme.text_dim)
                                                 .text_size(px(10.0))
-                                                .child(format!("UUID: {}", sec_uuid)),
+                                                .child("Edit Primary Node Label"),
                                         )
+                                        .child(Input::new(&self.node_name_state))
                                         .child(
-                                            Button::new("connect-pri-sec-btn")
+                                            Button::new("update-node-label-btn")
                                                 .primary()
-                                                .label("CONNECT PRIMARY ➔ SECONDARY")
-                                                .on_click(cx.listener(move |this, _, _, _| {
-                                                    this.create_edge_between_nodes(node_id, sec_id);
+                                                .label("UPDATE NODE LABEL")
+                                                .on_click(cx.listener(|this, _, window, cx| {
+                                                    this.update_selected_node_label(window, cx);
                                                 })),
                                         ),
                                 )
-                            })
-                            .child(
-                                gpui::div()
-                                    .flex()
-                                    .flex_col()
-                                    .gap_1()
-                                    .child(
-                                        gpui::div()
-                                            .text_color(theme.text_dim)
-                                            .text_size(px(10.0))
-                                            .child("Edit Primary Node Label"),
-                                    )
-                                    .child(Input::new(&self.node_name_state))
-                                    .child(
-                                        Button::new("update-node-label-btn")
-                                            .primary()
-                                            .label("UPDATE NODE LABEL")
-                                            .on_click(cx.listener(|this, _, window, cx| {
-                                                this.update_selected_node_label(window, cx);
-                                            })),
-                                    ),
-                            )
-                            .child(
-                                gpui::div()
-                                    .flex()
-                                    .flex_col()
-                                    .gap_1()
-                                    .child(
-                                        gpui::div()
-                                            .text_color(theme.text)
-                                            .text_size(px(11.0))
-                                            .child("Shape"),
-                                    )
-                                    .child(
-                                        gpui::div().flex().flex_col().gap_1().children(
-                                            vec![
-                                                NodeShape::Ellipse,
-                                                NodeShape::Rectangle,
-                                                NodeShape::Square,
-                                                NodeShape::Triangle,
-                                                NodeShape::Diamond,
-                                                NodeShape::Pentagon,
-                                                NodeShape::Hexagon,
-                                                NodeShape::Octagon,
-                                                NodeShape::Star,
-                                                NodeShape::Ribbon,
-                                            ]
-                                            .into_iter()
-                                            .map(
-                                                |shape| {
+                                .child(
+                                    gpui::div()
+                                        .flex()
+                                        .flex_col()
+                                        .gap_1()
+                                        .child(
+                                            gpui::div()
+                                                .text_color(theme.text)
+                                                .text_size(px(11.0))
+                                                .child("Shape"),
+                                        )
+                                        .child(
+                                            gpui::div().flex().flex_col().gap_1().children(
+                                                vec![
+                                                    NodeShape::Ellipse,
+                                                    NodeShape::Rectangle,
+                                                    NodeShape::Square,
+                                                    NodeShape::Triangle,
+                                                    NodeShape::Diamond,
+                                                    NodeShape::Pentagon,
+                                                    NodeShape::Hexagon,
+                                                    NodeShape::Octagon,
+                                                    NodeShape::Star,
+                                                    NodeShape::Ribbon,
+                                                ]
+                                                .into_iter()
+                                                .map(|shape| {
                                                     let label = format!("{:?}", shape);
                                                     Button::new(SharedString::from(format!(
                                                         "shape-btn-{}",
@@ -252,111 +283,118 @@ impl DemoApp {
                                                     .label(label)
                                                     .on_click(cx.listener(move |this, _, _, cx| {
                                                         if let Some(id) = this.selected_node {
-                                                            graphene_gpui::update_node_shape(&mut this.state, id, shape);
+                                                            graphene_gpui::update_node_shape(
+                                                                &mut this.state,
+                                                                id,
+                                                                shape,
+                                                            );
                                                             cx.notify();
                                                         }
                                                     }))
-                                                },
+                                                }),
                                             ),
                                         ),
-                                    ),
-                            )
-                            .child(
-                                gpui::div()
-                                    .id("delete-node-container")
-                                    .p_1()
-                                    .rounded_md()
-                                    .child(
-                                        Button::new("delete-node-btn")
-                                            .danger()
-                                            .label("DELETE NODE")
-                                            .on_click(cx.listener(|this, _, _, _| {
-                                                this.delete_selected_node();
-                                            })),
-                                    ),
-                            )
-                    } else if let Some(edge_idx) = self.selected_edge {
-                        gpui::div()
-                            .flex()
-                            .flex_col()
-                            .gap_2()
-                            .p_2()
-                            .bg(theme.bg)
-                            .rounded_md()
-                            .border(px(1.0))
-                            .border_color(theme.border)
-                            .child(
-                                gpui::div()
-                                    .text_color(theme.text)
-                                    .text_size(px(11.0))
-                                    .child(format!("Selected Edge: idx={}", edge_idx)),
-                            )
-                            .child(
-                                gpui::div()
-                                    .flex()
-                                    .flex_col()
-                                    .gap_1()
-                                    .child(
-                                        gpui::div()
-                                            .text_color(theme.text)
-                                            .text_size(px(11.0))
-                                            .child("Width"),
-                                    )
-                                    .child(gpui::div().flex().gap_1().children(
-                                        vec![1.5, 3.0, 5.0].into_iter().map(|w| {
-                                            Button::new(SharedString::from(format!(
-                                                "width-btn-{}",
-                                                w
-                                            )))
-                                            .label(format!("{}px", w))
-                                            .on_click(cx.listener(move |this, _, _, _| {
-                                                if let Some(edge_idx) = this.selected_edge {
-                                                    let style = this
-                                                        .state
-                                                        .edge_computed_styles
-                                                        .get_mut(edge_idx);
-                                                    if let StylingTarget::Edge(ref mut edge_style) =
-                                                        style.target
-                                                    {
-                                                        edge_style.line_width =
-                                                            graphene_style::LengthValue::Pixels(w);
+                                )
+                                .child(
+                                    gpui::div()
+                                        .id("delete-node-container")
+                                        .p_1()
+                                        .rounded_md()
+                                        .child(
+                                            Button::new("delete-node-btn")
+                                                .danger()
+                                                .label("DELETE NODE")
+                                                .on_click(cx.listener(|this, _, _, _| {
+                                                    this.delete_selected_node();
+                                                })),
+                                        ),
+                                )
+                        } else if let Some(edge_idx) = self.selected_edge {
+                            gpui::div()
+                                .flex()
+                                .flex_col()
+                                .gap_2()
+                                .p_2()
+                                .bg(theme.bg)
+                                .rounded_md()
+                                .border(px(1.0))
+                                .border_color(theme.border)
+                                .child(
+                                    gpui::div()
+                                        .text_color(theme.text)
+                                        .text_size(px(11.0))
+                                        .child(format!("Selected Edge: idx={}", edge_idx)),
+                                )
+                                .child(
+                                    gpui::div()
+                                        .flex()
+                                        .flex_col()
+                                        .gap_1()
+                                        .child(
+                                            gpui::div()
+                                                .text_color(theme.text)
+                                                .text_size(px(11.0))
+                                                .child("Width"),
+                                        )
+                                        .child(gpui::div().flex().gap_1().children(
+                                            vec![1.5, 3.0, 5.0].into_iter().map(|w| {
+                                                Button::new(SharedString::from(format!(
+                                                    "width-btn-{}",
+                                                    w
+                                                )))
+                                                .label(format!("{}px", w))
+                                                .on_click(cx.listener(move |this, _, _, _| {
+                                                    if let Some(edge_idx) = this.selected_edge {
+                                                        let style = this
+                                                            .state
+                                                            .edge_computed_styles
+                                                            .get_mut(edge_idx);
+                                                        if let StylingTarget::Edge(
+                                                            ref mut edge_style,
+                                                        ) = style.target
+                                                        {
+                                                            edge_style.line_width =
+                                                                graphene_style::LengthValue::Pixels(
+                                                                    w,
+                                                                );
+                                                        }
                                                     }
-                                                }
-                                            }))
-                                        }),
-                                    )),
-                            )
-                            .child(
-                                gpui::div()
-                                    .id("delete-edge-container")
-                                    .p_1()
-                                    .rounded_md()
-                                    .child(
-                                        Button::new("delete-edge-btn")
-                                            .danger()
-                                            .label("DELETE EDGE")
-                                            .on_click(cx.listener(|this, _, _, _| {
-                                                if let Some(edge_idx) = this.selected_edge {
-                                                    this.undo_redo.record_state(&this.state);
-                                                    let id = this.state.edge_index_to_id[edge_idx];
-                                                    this.state.remove_edge(id);
-                                                    this.selected_edge = None;
-                                                    this.state.dirty_flags |=
+                                                }))
+                                            }),
+                                        )),
+                                )
+                                .child(
+                                    gpui::div()
+                                        .id("delete-edge-container")
+                                        .p_1()
+                                        .rounded_md()
+                                        .child(
+                                            Button::new("delete-edge-btn")
+                                                .danger()
+                                                .label("DELETE EDGE")
+                                                .on_click(cx.listener(|this, _, _, _| {
+                                                    if let Some(edge_idx) = this.selected_edge {
+                                                        this.undo_redo.record_state(&this.state);
+                                                        let id =
+                                                            this.state.edge_index_to_id[edge_idx];
+                                                        this.state.remove_edge(id);
+                                                        this.selected_edge = None;
+                                                        this.state.dirty_flags |=
                                                         graphene_core::DirtyFlags::TOPOLOGY_DIRTY;
-                                                    this.interaction_state
-                                                        .rebuild_grid(&this.state);
-                                                }
-                                            })),
-                                    ),
-                            )
-                    } else {
-                        gpui::div()
-                            .text_color(theme.text_dim)
-                            .text_size(px(11.0))
-                            .child("Select a node or edge to inspect.")
-                    }),
+                                                        this.interaction_state
+                                                            .rebuild_grid(&this.state);
+                                                    }
+                                                })),
+                                        ),
+                                )
+                        } else {
+                            gpui::div()
+                                .text_color(theme.text_dim)
+                                .text_size(px(11.0))
+                                .child("Select a node or edge to inspect.")
+                        },
+                    ),
             )
-
             .child(
                 gpui::div()
                     .flex()
@@ -438,13 +476,27 @@ impl DemoApp {
                                             .label("USE SELECTED SOURCE")
                                             .on_click(cx.listener(|this, _, window, cx| {
                                                 if let Some(id) = this.selected_node {
-                                                    let label = this.state.get_node_label(id)
+                                                    let label = this
+                                                        .state
+                                                        .get_node_label(id)
                                                         .map(|s| s.to_string())
-                                                        .or_else(|| this.fixtures[this.selected_fixture_idx].node_labels.get(&id).cloned())
-                                                        .unwrap_or_else(|| format!("N{}", this.state.node_keys[id]));
+                                                        .or_else(|| {
+                                                            this.fixtures[this.selected_fixture_idx]
+                                                                .node_labels
+                                                                .get(&id)
+                                                                .cloned()
+                                                        })
+                                                        .unwrap_or_else(|| {
+                                                            format!("N{}", this.state.node_keys[id])
+                                                        });
                                                     this.edge_src_state.update(cx, |input, cx| {
                                                         let len = input.text().len();
-                                                        input.replace_text_in_range(Some(0..len), &label, window, cx);
+                                                        input.replace_text_in_range(
+                                                            Some(0..len),
+                                                            &label,
+                                                            window,
+                                                            cx,
+                                                        );
                                                     });
                                                 }
                                             })),
@@ -454,13 +506,27 @@ impl DemoApp {
                                             .label("USE SELECTED TARGET")
                                             .on_click(cx.listener(|this, _, window, cx| {
                                                 if let Some(id) = this.selected_node {
-                                                    let label = this.state.get_node_label(id)
+                                                    let label = this
+                                                        .state
+                                                        .get_node_label(id)
                                                         .map(|s| s.to_string())
-                                                        .or_else(|| this.fixtures[this.selected_fixture_idx].node_labels.get(&id).cloned())
-                                                        .unwrap_or_else(|| format!("N{}", this.state.node_keys[id]));
+                                                        .or_else(|| {
+                                                            this.fixtures[this.selected_fixture_idx]
+                                                                .node_labels
+                                                                .get(&id)
+                                                                .cloned()
+                                                        })
+                                                        .unwrap_or_else(|| {
+                                                            format!("N{}", this.state.node_keys[id])
+                                                        });
                                                     this.edge_tgt_state.update(cx, |input, cx| {
                                                         let len = input.text().len();
-                                                        input.replace_text_in_range(Some(0..len), &label, window, cx);
+                                                        input.replace_text_in_range(
+                                                            Some(0..len),
+                                                            &label,
+                                                            window,
+                                                            cx,
+                                                        );
                                                     });
                                                 }
                                             })),

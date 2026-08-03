@@ -8,7 +8,7 @@ use graphene_gpui::{
     interaction::state::InteractionState, render::draw_pipeline::Viewport, CanvasConfig,
 };
 use graphene_layout::{
-    CircleLayout, CoseLayout, FCoseLayout, GraphEngineHandle, LayoutCommand, SugiyamaLayout,
+    CircleLayout, CoseLayout, FCoseLayout, GraphEngineHandle, LayoutCommand, LiveForceSimulation, SugiyamaLayout,
 };
 use graphene_style::{ColorValue, ComputedStyle, NodeShape, StylingTarget, ThemeRegistry};
 use std::{
@@ -94,6 +94,17 @@ pub struct DemoApp {
     pub physics_enabled: bool,
     pub physics_temperature: f32,
     pub use_barnes_hut: bool,
+    pub fa2_lin_log: bool,
+    pub fa2_outbound: bool,
+    pub fa2_strong_gravity: bool,
+    pub fa2_adjust_sizes: bool,
+    pub fa2_scaling_ratio: f64,
+    pub fa2_stop_mode: usize,
+    pub fa2_max_iterations: usize,
+    pub input_fa2_scaling: Entity<InputState>,
+    pub input_fa2_iterations: Entity<InputState>,
+    pub live_sim: LiveForceSimulation,
+    pub snapshot_version: u64,
 
     pub is_directed: bool,
     pub active_heatmap: Option<String>,
@@ -609,6 +620,36 @@ impl DemoApp {
         })
         .detach();
 
+        let input_fa2_scaling = cx.new(|cx| {
+            let mut s = InputState::new(window, cx).validate(|s, _| s.parse::<f64>().is_ok());
+            s.replace_text_in_range(None, "0.02", window, cx);
+            s
+        });
+
+        cx.subscribe_in(&input_fa2_scaling, window, |this, state, event, _window, cx| {
+            if let InputEvent::Change = event {
+                if let Ok(v) = state.read(cx).value().parse::<f64>() {
+                    this.fa2_scaling_ratio = v;
+                }
+            }
+        })
+        .detach();
+
+        let input_fa2_iterations = cx.new(|cx| {
+            let mut s = InputState::new(window, cx).validate(|s, _| s.parse::<usize>().is_ok());
+            s.replace_text_in_range(None, "100", window, cx);
+            s
+        });
+
+        cx.subscribe_in(&input_fa2_iterations, window, |this, state, event, _window, cx| {
+            if let InputEvent::Change = event {
+                if let Ok(v) = state.read(cx).value().parse::<usize>() {
+                    this.fa2_max_iterations = v;
+                }
+            }
+        })
+        .detach();
+
         let mut app = Self {
             gravity: cfg.gravity,
             k_rep: cfg.k_rep,
@@ -670,9 +711,20 @@ impl DemoApp {
             current_theme_idx: 3,
             input_max_len,
 
-            physics_enabled: true,
+            physics_enabled: false,
             physics_temperature: 10.0,
             use_barnes_hut: false,
+            fa2_lin_log: false,
+            fa2_outbound: false,
+            fa2_strong_gravity: false,
+            fa2_adjust_sizes: true,
+            fa2_scaling_ratio: 0.02,
+            fa2_stop_mode: 0,
+            fa2_max_iterations: 100,
+            input_fa2_scaling,
+            input_fa2_iterations,
+            live_sim: LiveForceSimulation::new(),
+            snapshot_version: 0,
 
             is_directed: true,
             active_heatmap: None,

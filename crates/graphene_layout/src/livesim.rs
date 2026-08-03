@@ -1,6 +1,27 @@
-use crate::quadtree::Quadtree;
+use crate::force_atlas2::{self, force_atlas2_step, Edge as FA2Edge, Node as FA2Node, Settings as FA2Settings};
 use graphene_core::{math::Vec2, GraphState, HierarchyExt};
-use std::cell::RefCell;
+
+/// Simulation termination conditions
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum StopCondition {
+    /// Auto stop when node displacement / kinetic energy drops below threshold
+    Auto { min_energy: f64 },
+    /// Temperature cooled simulated annealing stopping condition
+    TempCooled { temperature: f64, cooling_rate: f64, min_temp: f64 },
+    /// Run for a fixed number of iterations
+    Iterations { max_iterations: usize },
+}
+
+impl Default for StopCondition {
+    fn default() -> Self {
+        Self::TempCooled {
+            temperature: 10.0,
+            cooling_rate: 0.95,
+            min_temp: 0.05,
+        }
+    }
+}
+
 /// Tunable parameters for live force-directed simulation
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum LiveSimParam {
@@ -11,146 +32,216 @@ pub enum LiveSimParam {
     Temperature(f32),
     CoolingRate(f32),
     BarnesHut { enabled: bool, theta: f32 },
+    // ForceAtlas2 specific settings
+    ScalingRatio(f64),
+    LinLog(bool),
+    OutboundAttraction(bool),
+    AdjustSizes(bool),
+    EdgeWeightInfluence(f64),
+    JitterTolerance(f64),
+    StrongGravity(bool),
+    SlowDown(f64),
+    FixedNode(Option<usize>),
+    StopCondition(StopCondition),
 }
 
-/// Live force-directed simulation that can be advanced frame-by-frame
-///
-/// This struct maintains internal state for the simulation and allows
-/// incremental updates via the `tick()` method.
+/// Live force-directed simulation powered by ForceAtlas2
 pub struct LiveForceSimulation {
-    /// Simulation parameters
+    /// ForceAtlas2 algorithm settings
+    pub settings: FA2Settings,
+    /// ForceAtlas2 adaptive speed
+    pub speed: f64,
+    pub speed_efficiency: f64,
+    /// Backward-compatibility parameters
     pub k_rep: f32,
     pub k_att: f32,
     pub gravity: f32,
     pub ideal_length: f32,
-    /// Temperature for simulated annealing
     pub temperature: f32,
     pub cooling_rate: f32,
     pub use_barnes_hut: bool,
     pub theta: f32,
+    /// Simulation termination condition
+    pub stop_condition: StopCondition,
+    pub iteration_count: usize,
+    pub last_displacement: f64,
+    /// Cached node state (for old force retention)
+    cached_nodes: Vec<FA2Node>,
 }
 
 impl LiveForceSimulation {
     /// Create a new live force simulation with default parameters
     pub fn new() -> Self {
+        let settings = FA2Settings::default();
         Self {
-            k_rep: 2500.0,
+            settings: settings.clone(),
+            speed: 1.0,
+            speed_efficiency: 1.0,
+            k_rep: (settings.scaling_ratio * 1000.0) as f32,
             k_att: 0.06,
-            gravity: 0.3,
+            gravity: settings.gravity as f32,
             ideal_length: 50.0,
             temperature: 10.0,
             cooling_rate: 0.95,
-            use_barnes_hut: true,
-            theta: 0.5,
+            use_barnes_hut: settings.barnes_hut_optimize,
+            theta: settings.barnes_hut_theta as f32,
+            stop_condition: StopCondition::default(),
+            iteration_count: 0,
+            last_displacement: 1.0,
+            cached_nodes: Vec::new(),
         }
+    }
+
+    /// Reset internal step counters and temperature
+    pub fn reset_simulation(&mut self) {
+        self.iteration_count = 0;
+        self.speed = 1.0;
+        self.speed_efficiency = 1.0;
+        self.temperature = 10.0;
+        self.last_displacement = 1.0;
+        self.cached_nodes.clear();
+    }
+
+    /// Automatically infer optimal ForceAtlas2 settings from the target graph state
+    pub fn infer_settings_from_state(&mut self, state: &GraphState<impl Copy + Default>) {
+        let n = state.node_index_to_id.len();
+        let e = state.edges.len();
+        let avg_radius = if n > 0 {
+            let sum_r: f32 = (0..n)
+                .map(|i| {
+                    let s = *state.sizes.get(i);
+                    s.w.max(s.h) / 2.0
+                })
+                .sum();
+            (sum_r / n as f32) as f64
+        } else {
+            20.0
+        };
+
+        self.settings = FA2Settings::infer_settings(n, e, avg_radius);
+        self.use_barnes_hut = self.settings.barnes_hut_optimize;
+        self.theta = self.settings.barnes_hut_theta as f32;
+        self.gravity = self.settings.gravity as f32;
     }
 
     /// Update a simulation parameter live without resetting state
     pub fn update_param(&mut self, param: LiveSimParam) {
         match param {
-            LiveSimParam::Repulsion(v) => self.k_rep = v,
+            LiveSimParam::Repulsion(v) => {
+                self.k_rep = v;
+                self.settings.scaling_ratio = (v / 1000.0).max(0.1) as f64;
+            }
             LiveSimParam::Attraction(v) => self.k_att = v,
-            LiveSimParam::Gravity(v) => self.gravity = v,
+            LiveSimParam::Gravity(v) => {
+                self.gravity = v;
+                self.settings.gravity = v as f64;
+            }
             LiveSimParam::IdealLength(v) => self.ideal_length = v,
             LiveSimParam::Temperature(v) => self.temperature = v,
             LiveSimParam::CoolingRate(v) => self.cooling_rate = v,
             LiveSimParam::BarnesHut { enabled, theta } => {
                 self.use_barnes_hut = enabled;
                 self.theta = theta;
+                self.settings.barnes_hut_optimize = enabled;
+                self.settings.barnes_hut_theta = theta as f64;
             }
+            LiveSimParam::ScalingRatio(v) => self.settings.scaling_ratio = v,
+            LiveSimParam::LinLog(v) => self.settings.lin_log_mode = v,
+            LiveSimParam::OutboundAttraction(v) => self.settings.outbound_attraction_distribution = v,
+            LiveSimParam::AdjustSizes(v) => self.settings.adjust_sizes = v,
+            LiveSimParam::EdgeWeightInfluence(v) => self.settings.edge_weight_influence = v,
+            LiveSimParam::JitterTolerance(v) => self.settings.jitter_tolerance = v,
+            LiveSimParam::StrongGravity(v) => self.settings.strong_gravity_mode = v,
+            LiveSimParam::SlowDown(v) => self.settings.slow_down = v,
+            LiveSimParam::FixedNode(idx) => self.settings.fixed_node_idx = idx,
+            LiveSimParam::StopCondition(cond) => self.stop_condition = cond,
         }
     }
 
-    /// Advance the simulation by one step
+    /// Advance the simulation by one ForceAtlas2 step
     pub fn tick(&mut self, state: &mut GraphState<impl Copy + Default>) {
         let n = state.node_index_to_id.len();
         if n == 0 {
             return;
         }
 
-        // Use RefCell pattern to get mutable references to positions
-        // This is safe because we're not aliasing during the tick
-        let positions: Vec<Vec2> = (0..n).map(|i| *state.positions.get(i)).collect();
+        // Calculate node degrees and build FA2 edges
+        let mut degrees = vec![0usize; n];
+        let mut edges = Vec::new();
 
-        let mut displacements = vec![Vec2::default(); n];
-
-        // Barnes-Hut approximation for repulsion
-        if self.use_barnes_hut && n > 100 {
-            let quadtree = Quadtree::build(&positions);
-            for i in 0..n {
-                let pos_i = positions[i];
-                let force =
-                    quadtree.accumulate_repulsion(i, pos_i, &positions, self.k_rep, self.theta);
-                displacements[i] += force;
-            }
-        } else {
-            // Direct N-body calculation
-            for i in 0..n {
-                let pos_i = positions[i];
-                for j in 0..n {
-                    if i == j {
-                        continue;
-                    }
-                    let pos_j = positions[j];
-                    let delta = pos_i - pos_j;
-                    let dist = delta.len();
-                    if dist > 0.1 {
-                        let force = self.k_rep / (dist * dist);
-                        let dir = delta.normalize();
-                        displacements[i] += dir * force;
-                    }
-                }
-            }
-        }
-
-        // Edge attractions
         for i in 0..state.edges.len() {
             let src = *state.edge_sources.get(i);
             let tgt = *state.edge_targets.get(i);
             if let (Some(&u), Some(&v)) = (state.node_keys.get(src), state.node_keys.get(tgt)) {
-                let pos_u = positions[u];
-                let pos_v = positions[v];
-                let delta = pos_v - pos_u;
-                let dist = delta.len();
-                if dist > 0.1 {
-                    let force = self.k_att * (dist - self.ideal_length);
-                    let dir = delta.normalize();
-                    displacements[u] += dir * force;
-                    displacements[v] -= dir * force;
+                if u < n && v < n {
+                    degrees[u] += 1;
+                    degrees[v] += 1;
+                    edges.push(FA2Edge {
+                        source: u,
+                        target: v,
+                        weight: 1.0,
+                    });
                 }
             }
         }
 
-        // Gravity towards center
-        let mut center = Vec2::default();
-        for i in 0..n {
-            center += positions[i];
-        }
-        center = center / n as f32;
-
-        for i in 0..n {
-            let pos = positions[i];
-            let delta = center - pos;
-            displacements[i] += delta * self.gravity;
-        }
-
-        // Apply displacements with temperature cap
-        for i in 0..n {
-            let disp = displacements[i];
-            let disp_len = disp.len();
-            if disp_len > 0.01 {
-                let capped_disp = disp.normalize() * disp_len.min(self.temperature);
-                let old_pos = *state.positions.get(i);
-                state.positions.set(i, old_pos + capped_disp);
+        // Sync cached nodes
+        if self.cached_nodes.len() != n {
+            self.cached_nodes = (0..n)
+                .map(|i| {
+                    let pos = *state.positions.get(i);
+                    let size = *state.sizes.get(i);
+                    let radius = (size.w.max(size.h) / 2.0) as f64 + 5.0;
+                    let mass = (degrees[i] + 1) as f64;
+                    let mut node = FA2Node::new(pos.x as f64, pos.y as f64, mass);
+                    node.size = radius;
+                    node
+                })
+                .collect();
+        } else {
+            for i in 0..n {
+                let pos = *state.positions.get(i);
+                let size = *state.sizes.get(i);
+                self.cached_nodes[i].pos = force_atlas2::Vec2::new(pos.x as f64, pos.y as f64);
+                self.cached_nodes[i].mass = (degrees[i] + 1) as f64;
+                self.cached_nodes[i].size = (size.w.max(size.h) / 2.0) as f64 + 5.0;
             }
         }
 
-        // Apply collision resolution and compound parent bounds resolution
+        // Dynamic Kinetic Energy Theta Ramping:
+        // Start theta at 0.5 during initial chaotic movements for high long-range precision,
+        // then smoothly ramp theta up to 1.2 as kinetic displacement cools down.
+        if self.settings.barnes_hut_optimize {
+            let cool_ratio = (1.0 - (self.last_displacement / 10.0).min(1.0)).max(0.0);
+            self.settings.barnes_hut_theta = 0.5 + 0.7 * cool_ratio;
+        }
+
+        // Execute ForceAtlas2 iteration
+        let disp = force_atlas2_step(
+            &mut self.cached_nodes,
+            &edges,
+            &self.settings,
+            &mut self.speed,
+            &mut self.speed_efficiency,
+        );
+
+        self.last_displacement = disp;
+        self.iteration_count += 1;
+
+        // Sync positions back to GraphState
+        for i in 0..n {
+            let p = self.cached_nodes[i].pos;
+            state.positions.set(i, Vec2::new(p.x as f32, p.y as f32));
+        }
+
         let collapsed = std::collections::HashSet::new();
         crate::collision::finish_layout_epilogue(state, &collapsed, 10.0, 20.0);
 
-        // Cool down
-        self.temperature *= self.cooling_rate;
+        if matches!(self.stop_condition, StopCondition::TempCooled { .. }) {
+            self.temperature *= self.cooling_rate;
+        }
+
+        state.dirty_flags |= graphene_core::DirtyFlags::POSITION_DIRTY;
     }
 
     /// Resolve node collisions to prevent overlap
@@ -160,9 +251,7 @@ impl LiveForceSimulation {
             return;
         }
 
-        // Get current positions and sizes
         let positions: Vec<Vec2> = (0..n).map(|i| *state.positions.get(i)).collect();
-
         let sizes: Vec<(f32, f32)> = (0..n)
             .map(|i| {
                 let size = *state.sizes.get(i);
@@ -170,7 +259,6 @@ impl LiveForceSimulation {
             })
             .collect();
 
-        // Simple overlap resolution using hierarchy-aware collision detection
         for i in 0..n {
             let pos_i = positions[i];
             let (w_i, h_i) = sizes[i];
@@ -179,7 +267,6 @@ impl LiveForceSimulation {
                 let pos_j = positions[j];
                 let (w_j, h_j) = sizes[j];
 
-                // Check if nodes overlap
                 let dx = pos_i.x - pos_j.x;
                 let dy = pos_i.y - pos_j.y;
                 let dist_sq = dx * dx + dy * dy;
@@ -192,32 +279,25 @@ impl LiveForceSimulation {
                     let overlap_x = min_dist_x - dist.abs();
                     let overlap_y = min_dist_y - dist.abs();
 
-                    // Calculate repulsion direction
                     let fx = dx / dist * overlap_x;
                     let fy = dy / dist * overlap_y;
 
-                    // Apply repulsion with hierarchy awareness
                     if let (Some(&idx_i), Some(&idx_j)) = (
                         state.node_keys.get(state.node_index_to_id[i]),
                         state.node_keys.get(state.node_index_to_id[j]),
                     ) {
-                        // Check hierarchy relationship
                         let is_parent_child =
                             state.is_ancestor(idx_i, idx_j) || state.is_ancestor(idx_j, idx_i);
 
                         if is_parent_child {
-                            // Parent-child: move child away from parent
                             if state.is_ancestor(idx_j, idx_i) {
-                                // j is child of i - move j away
                                 let curr_pos = *state.positions.get(idx_j);
                                 state.positions.set(idx_j, curr_pos + Vec2::new(fx, fy));
                             } else if state.is_ancestor(idx_i, idx_j) {
-                                // i is child of j - move i away
                                 let curr_pos = *state.positions.get(idx_i);
                                 state.positions.set(idx_i, curr_pos + Vec2::new(-fx, -fy));
                             }
                         } else {
-                            // Independent nodes: repel both
                             let curr_pos_i = *state.positions.get(idx_i);
                             state.positions.set(idx_i, curr_pos_i + Vec2::new(fx, fy));
 
@@ -225,7 +305,6 @@ impl LiveForceSimulation {
                             state.positions.set(idx_j, curr_pos_j + Vec2::new(-fx, -fy));
                         }
                     } else {
-                        // Fallback: move both nodes
                         let curr_pos_i = *state.positions.get(i);
                         state.positions.set(i, curr_pos_i + Vec2::new(fx, fy));
 
@@ -238,6 +317,15 @@ impl LiveForceSimulation {
 
         state.dirty_flags |= graphene_core::DirtyFlags::POSITION_DIRTY;
     }
+
+    /// Check if simulation has converged according to active StopCondition
+    pub fn is_converged(&self) -> bool {
+        match self.stop_condition {
+            StopCondition::Auto { min_energy } => self.last_displacement < min_energy,
+            StopCondition::TempCooled { min_temp, .. } => (self.temperature as f64) < min_temp,
+            StopCondition::Iterations { max_iterations } => self.iteration_count >= max_iterations,
+        }
+    }
 }
 
 impl Default for LiveForceSimulation {
@@ -248,15 +336,15 @@ impl Default for LiveForceSimulation {
 
 impl<S: Copy + Default> crate::traits::IterativeLayout<S> for LiveForceSimulation {
     fn step(&mut self, state: &mut GraphState<S>) -> bool {
-        if self.temperature < 0.01 {
+        if self.is_converged() {
             return false;
         }
         self.tick(state);
-        self.temperature >= 0.01
+        !self.is_converged()
     }
 
     fn is_converged(&self) -> bool {
-        self.temperature < 0.01
+        LiveForceSimulation::is_converged(self)
     }
 }
 
@@ -270,7 +358,6 @@ pub struct RenderSnapshot {
 }
 
 /// Handle managing a background simulation worker thread.
-/// Communicates via `Arc<RwLock<RenderSnapshot>>` for zero-lock-contention UI frame rendering.
 pub struct AsyncLiveSimulationHandle {
     snapshot: std::sync::Arc<std::sync::RwLock<RenderSnapshot>>,
     stop_signal: std::sync::Arc<std::sync::atomic::AtomicBool>,
@@ -278,7 +365,6 @@ pub struct AsyncLiveSimulationHandle {
 }
 
 impl AsyncLiveSimulationHandle {
-    /// Spawn a background worker thread that executes `LiveForceSimulation::tick` iterations asynchronously.
     pub fn spawn<S: Copy + Default + Send + Sync + 'static>(
         mut sim: LiveForceSimulation,
         mut state: GraphState<S>,
@@ -301,7 +387,7 @@ impl AsyncLiveSimulationHandle {
 
         let thread_handle = std::thread::spawn(move || {
             for step in 1..=max_iterations {
-                if stop_clone.load(std::sync::atomic::Ordering::Relaxed) {
+                if stop_clone.load(std::sync::atomic::Ordering::Relaxed) || sim.is_converged() {
                     break;
                 }
 
@@ -327,8 +413,6 @@ impl AsyncLiveSimulationHandle {
         }
     }
 
-    /// Read the latest snapshot frame buffer using Arc read-lock.
-    /// Fast and non-blocking for UI frame rendering.
     pub fn latest_snapshot(&self) -> RenderSnapshot {
         self.snapshot
             .read()
@@ -336,12 +420,10 @@ impl AsyncLiveSimulationHandle {
             .unwrap_or_default()
     }
 
-    /// Signal the background simulation worker to stop.
     pub fn stop(&self) {
         self.stop_signal.store(true, std::sync::atomic::Ordering::Relaxed);
     }
 
-    /// Wait for the background simulation thread to finish.
     pub fn join(mut self) {
         self.stop();
         if let Some(handle) = self.thread_handle.take() {
@@ -349,7 +431,6 @@ impl AsyncLiveSimulationHandle {
         }
     }
 
-    /// Synchronize the latest background positions back into a GraphState instance on the main thread.
     pub fn apply_to_graph_state<S: Copy + Default>(&self, state: &mut GraphState<S>) {
         let snap = self.latest_snapshot();
         for (i, &pos) in snap.positions.iter().enumerate() {

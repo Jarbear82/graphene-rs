@@ -23,7 +23,7 @@ impl Default for ForceDirectedLayout {
             iterations: 150,
             ideal_length: 50.0,
             gravity: 0.1,
-            k_rep: 2000.0,
+            k_rep: 500.0,
             k_att: 0.05,
             initial_temp: 10.0,
             use_barnes_hut: true,

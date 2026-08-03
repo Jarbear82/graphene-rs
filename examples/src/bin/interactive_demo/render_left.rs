@@ -7,12 +7,15 @@ use gpui::{
 };
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::input::Input;
+use gpui_component::scroll::ScrollableElement;
 
 impl DemoApp {
     pub fn render_sidebar_left(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
         gpui::div()
-            .flex_col()
+            .id("sidebar-left-scroll")
+            .w(px(280.0))
             .h_full()
+            .overflow_y_scroll()
             .bg(theme.panel_bg)
             .border_r(px(1.0))
             .border_color(theme.border)
@@ -39,6 +42,9 @@ impl DemoApp {
                             .flex_col()
                             .h(px(150.0))
                             .overflow_y_scroll()
+                            .on_scroll_wheel(cx.listener(|_, _, _, cx| {
+                                cx.stop_propagation();
+                            }))
                             .border(px(1.0))
                             .border_color(theme.border)
                             .bg(theme.bg)
@@ -95,6 +101,9 @@ impl DemoApp {
                             .gap_2()
                             .h(px(280.0))
                             .overflow_y_scroll()
+                            .on_scroll_wheel(cx.listener(|_, _, _, cx| {
+                                cx.stop_propagation();
+                            }))
                             .children(LAYOUT_NAMES.iter().map(|&name| {
                                 let is_selected = self.selected_layout == name;
                                 let is_expanded = self.expanded_layout.as_deref() == Some(name);
@@ -204,7 +213,26 @@ impl DemoApp {
                             .text_color(theme.text)
                             .font_weight(gpui::FontWeight::BOLD)
                             .text_size(px(12.0))
-                            .child("3. LIVE PHYSICS ENGINE"),
+                            .child("3. LIVE PHYSICS (FORCEATLAS2)"),
+                    )
+                    .child(
+                        Button::new("run-physics-toggle-btn")
+                            .primary()
+                            .label(if self.physics_enabled {
+                                "STOP PHYSICS"
+                            } else {
+                                "RUN PHYSICS"
+                            })
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.physics_enabled = !this.physics_enabled;
+                                if this.physics_enabled {
+                                    this.physics_temperature = 10.0;
+                                    this.reset_physics();
+                                } else {
+                                    this.engine.load_preset(this.state.clone());
+                                }
+                                cx.notify();
+                            })),
                     )
                     .child(
                         gpui::div()
@@ -218,29 +246,20 @@ impl DemoApp {
                             .border_color(theme.border)
                             .child(
                                 gpui::div()
-                                    .text_color(theme.text)
+                                    .text_color(theme.text_dim)
                                     .text_size(px(11.0))
-                                    .child(if self.physics_enabled {
-                                        format!(
-                                            "Status: Active (Temp: {:.2})",
-                                            self.physics_temperature
-                                        )
-                                    } else {
-                                        "Status: Disabled".to_string()
-                                    }),
+                                    .child("Stop Condition"),
                             )
                             .child(
-                                Button::new("toggle-physics-btn")
-                                    .label(if self.physics_enabled {
-                                        "DISABLE"
-                                    } else {
-                                        "ENABLE"
+                                Button::new("stop-condition-mode-btn")
+                                    .label(match self.fa2_stop_mode {
+                                        0 => "Auto Stop",
+                                        1 => "Temp-Cooled",
+                                        2 => "Iterations",
+                                        _ => "Auto Stop",
                                     })
                                     .on_click(cx.listener(|this, _, _, cx| {
-                                        this.physics_enabled = !this.physics_enabled;
-                                        if this.physics_enabled {
-                                            this.physics_temperature = 10.0;
-                                        }
+                                        this.fa2_stop_mode = (this.fa2_stop_mode + 1) % 3;
                                         cx.notify();
                                     })),
                             ),
@@ -257,21 +276,135 @@ impl DemoApp {
                             .border_color(theme.border)
                             .child(
                                 gpui::div()
-                                    .text_color(theme.text)
+                                    .text_color(theme.text_dim)
                                     .text_size(px(11.0))
-                                    .child(if self.use_barnes_hut {
-                                        "Barnes-Hut: ON"
-                                    } else {
-                                        "Barnes-Hut: OFF"
-                                    }),
+                                    .child("Scaling Ratio"),
+                            )
+                            .child(
+                                gpui::div()
+                                    .w(px(50.0))
+                                    .child(Input::new(&self.input_fa2_scaling)),
+                            ),
+                    )
+                    .child(
+                        gpui::div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .p_2()
+                            .bg(theme.bg)
+                            .rounded_md()
+                            .border(px(1.0))
+                            .border_color(theme.border)
+                            .child(
+                                gpui::div()
+                                    .text_color(theme.text_dim)
+                                    .text_size(px(11.0))
+                                    .child("LinLog Mode"),
+                            )
+                            .child(
+                                Button::new("toggle-linlog-btn")
+                                    .label(if self.fa2_lin_log { "ON" } else { "OFF" })
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.fa2_lin_log = !this.fa2_lin_log;
+                                        cx.notify();
+                                    })),
+                            ),
+                    )
+                    .child(
+                        gpui::div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .p_2()
+                            .bg(theme.bg)
+                            .rounded_md()
+                            .border(px(1.0))
+                            .border_color(theme.border)
+                            .child(
+                                gpui::div()
+                                    .text_color(theme.text_dim)
+                                    .text_size(px(11.0))
+                                    .child("Dissuade Hubs"),
+                            )
+                            .child(
+                                Button::new("toggle-outbound-btn")
+                                    .label(if self.fa2_outbound { "ON" } else { "OFF" })
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.fa2_outbound = !this.fa2_outbound;
+                                        cx.notify();
+                                    })),
+                            ),
+                    )
+                    .child(
+                        gpui::div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .p_2()
+                            .bg(theme.bg)
+                            .rounded_md()
+                            .border(px(1.0))
+                            .border_color(theme.border)
+                            .child(
+                                gpui::div()
+                                    .text_color(theme.text_dim)
+                                    .text_size(px(11.0))
+                                    .child("Strong Gravity"),
+                            )
+                            .child(
+                                Button::new("toggle-strong-gravity-btn")
+                                    .label(if self.fa2_strong_gravity { "ON" } else { "OFF" })
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.fa2_strong_gravity = !this.fa2_strong_gravity;
+                                        cx.notify();
+                                    })),
+                            ),
+                    )
+                    .child(
+                        gpui::div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .p_2()
+                            .bg(theme.bg)
+                            .rounded_md()
+                            .border(px(1.0))
+                            .border_color(theme.border)
+                            .child(
+                                gpui::div()
+                                    .text_color(theme.text_dim)
+                                    .text_size(px(11.0))
+                                    .child("Adjust Sizes"),
+                            )
+                            .child(
+                                Button::new("toggle-adjust-sizes-btn")
+                                    .label(if self.fa2_adjust_sizes { "ON" } else { "OFF" })
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.fa2_adjust_sizes = !this.fa2_adjust_sizes;
+                                        cx.notify();
+                                    })),
+                            ),
+                    )
+                    .child(
+                        gpui::div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .p_2()
+                            .bg(theme.bg)
+                            .rounded_md()
+                            .border(px(1.0))
+                            .border_color(theme.border)
+                            .child(
+                                gpui::div()
+                                    .text_color(theme.text_dim)
+                                    .text_size(px(11.0))
+                                    .child("Barnes-Hut"),
                             )
                             .child(
                                 Button::new("toggle-barnes-hut-btn")
-                                    .label(if self.use_barnes_hut {
-                                        "CLASSIC"
-                                    } else {
-                                        "BARNES-HUT"
-                                    })
+                                    .label(if self.use_barnes_hut { "ON" } else { "OFF" })
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.use_barnes_hut = !this.use_barnes_hut;
                                         cx.notify();
@@ -347,19 +480,20 @@ impl DemoApp {
     pub fn render_layout_form_fields(&self, layout: &str, theme: &Theme) -> Vec<impl IntoElement> {
         let mut fields = Vec::new();
 
-        let make_field = |label: &'static str, input: &gpui::Entity<gpui_component::input::InputState>| {
-            gpui::div()
-                .flex()
-                .flex_col()
-                .gap_1()
-                .child(
-                    gpui::div()
-                        .text_color(theme.text_dim)
-                        .text_size(px(10.0))
-                        .child(label),
-                )
-                .child(Input::new(input))
-        };
+        let make_field =
+            |label: &'static str, input: &gpui::Entity<gpui_component::input::InputState>| {
+                gpui::div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(
+                        gpui::div()
+                            .text_color(theme.text_dim)
+                            .text_size(px(10.0))
+                            .child(label),
+                    )
+                    .child(Input::new(input))
+            };
 
         let has_force_directed = matches!(
             layout,
@@ -401,8 +535,14 @@ impl DemoApp {
         }
 
         if layout == "Bipartite" {
-            fields.push(make_field("Column Spacing", &self.input_bipartite_col_spacing));
-            fields.push(make_field("Vertical Spacing", &self.input_bipartite_vert_spacing));
+            fields.push(make_field(
+                "Column Spacing",
+                &self.input_bipartite_col_spacing,
+            ));
+            fields.push(make_field(
+                "Vertical Spacing",
+                &self.input_bipartite_vert_spacing,
+            ));
         }
 
         if matches!(layout, "KamadaKawai" | "CollisionForce") {
@@ -420,7 +560,10 @@ impl DemoApp {
 
         if layout == "RegionalPartition" {
             fields.push(make_field("Regional Columns", &self.input_regional_columns));
-            fields.push(make_field("Regional Cell Size", &self.input_regional_cell_size));
+            fields.push(make_field(
+                "Regional Cell Size",
+                &self.input_regional_cell_size,
+            ));
         }
 
         if fields.is_empty() {
