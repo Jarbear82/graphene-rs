@@ -9,10 +9,21 @@ use graphene_gpui::render::graph_canvas::GraphCanvas;
 
 impl Render for DemoApp {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = self.get_theme();
+        let render_start = std::time::Instant::now();
+        let now = std::time::Instant::now();
+        let delta = now.duration_since(self.last_frame_instant).as_secs_f64();
+        self.last_frame_instant = now;
+        if delta > 0.0001 {
+            let current_fps = 1.0 / delta;
+            self.telemetry_fps = self.telemetry_fps * 0.9 + current_fps * 0.1;
+        }
 
+        let theme = self.get_theme();
         let max_len = self.get_max_untruncated_len();
         let fixture = &self.fixtures[self.selected_fixture_idx];
+
+        let mut formatted_count = 0;
+        let mut visible_count = 0;
 
         for (idx, &id) in self.state.node_index_to_id.iter().enumerate() {
             let is_parent_node = self.state.is_parent(idx);
@@ -22,33 +33,52 @@ impl Render for DemoApp {
                 continue;
             }
 
-            let mut label = fixture.node_labels.get(&id).cloned().unwrap_or_default();
-            if is_parent_node && is_collapsed {
-                label = format!("[+] {}", label);
-            }
-            let label_len = label.chars().count();
+            let pos = *self.state.positions.get(idx);
+            let size_curr = *self.state.sizes.get(idx);
 
-            let is_selected = self.selected_node == Some(id);
-            let target_w;
-            if label_len > max_len {
-                if is_selected {
-                    target_w = 40.0 + (label_len as f32) * 6.0;
-                } else {
-                    target_w = 40.0 + (max_len as f32) * 6.0;
+            if self.viewport.is_visible(pos, size_curr) {
+                visible_count += 1;
+                formatted_count += 1;
+
+                let mut label = fixture.node_labels.get(&id).cloned().unwrap_or_default();
+                if is_parent_node && is_collapsed {
+                    label = format!("[+] {}", label);
                 }
-            } else {
-                target_w = 40.0 + (label_len as f32) * 6.0;
-            }
+                let label_len = label.chars().count();
 
-            let size = self.state.sizes.get_mut(idx);
-            size.w = target_w;
+                let is_selected = self.selected_node == Some(id);
+                let target_w = if label_len > max_len {
+                    if is_selected {
+                        40.0 + (label_len as f32) * 6.0
+                    } else {
+                        40.0 + (max_len as f32) * 6.0
+                    }
+                } else {
+                    40.0 + (label_len as f32) * 6.0
+                };
+
+                let size = self.state.sizes.get_mut(idx);
+                size.w = target_w;
+            }
         }
 
+        self.telemetry_visible_nodes = visible_count;
+        self.telemetry_labels_formatted = formatted_count;
+        self.telemetry_render_ms = render_start.elapsed().as_secs_f64() * 1000.0;
+        self.telemetry_worker_threads = self.engine.active_worker_threads();
+        self.telemetry_worker_state = self.engine.worker_state().as_str().to_string();
+
+        let is_animating = !self.state.animations.tracks.is_empty();
         let snap = self.engine.latest_snapshot();
-        if snap.version > self.snapshot_version
+        if !is_animating
+            && !self.is_layout_running
+            && snap.version > self.snapshot_version
             && snap.positions.len() == self.state.node_index_to_id.len()
         {
+            let t_start = std::time::Instant::now();
             self.snapshot_version = snap.version;
+            self.telemetry_is_worker_thread = true;
+            self.is_layout_running = false;
             let drag_node_id = self.interaction_state.drag_start.map(|(id, _, _)| id);
             for (i, &pos) in snap.positions.iter().enumerate() {
                 let id = self.state.node_index_to_id[i];
@@ -56,6 +86,7 @@ impl Render for DemoApp {
                     self.state.positions.set(i, pos);
                 }
             }
+            self.telemetry_physics_ms = t_start.elapsed().as_secs_f64() * 1000.0;
         }
 
         let is_animating = !self.state.animations.tracks.is_empty();
@@ -73,7 +104,6 @@ impl Render for DemoApp {
                 }
             } else if needs_physics {
                 self.run_physics_step();
-                self.interaction_state.rebuild_grid(&self.state);
             }
 
             cx.spawn(async move |this, cx| {
@@ -448,6 +478,80 @@ impl DemoApp {
                 );
                 cx.notify();
             }))
+            .children(self.render_telemetry_hud(theme))
+    }
+
+    fn render_telemetry_hud(&self, theme: &Theme) -> Option<impl IntoElement> {
+        if !self.show_performance_hud {
+            return None;
+        }
+
+        let fps_text = format!("{:.1} FPS ({:.2} ms)", self.telemetry_fps, 1000.0 / self.telemetry_fps.max(1.0));
+        let physics_text = format!("{:.3} ms", self.telemetry_physics_ms);
+        let render_text = format!("{:.3} ms", self.telemetry_render_ms);
+        let mode_text = if self.telemetry_is_worker_thread { "Async Worker Thread" } else { "Sync Main UI Thread" };
+        let scale_text = format!("{} Nodes | {} Edges", self.state.node_count(), self.state.edges.len());
+        let culling_text = format!("{} Visible / {} Formatted Labels", self.telemetry_visible_nodes, self.telemetry_labels_formatted);
+
+        Some(
+            gpui::div()
+                .absolute()
+                .top(px(12.0))
+                .right(px(12.0))
+                .bg(theme.panel_bg)
+                .border(px(1.0))
+                .border_color(theme.border)
+                .px(px(12.0))
+                .py(px(8.0))
+                .rounded_lg()
+                .shadow_md()
+                .flex()
+                .flex_col()
+                .gap_1()
+                .text_size(px(11.0))
+                .child(
+                    gpui::div()
+                        .text_color(theme.accent)
+                        .font_weight(gpui::FontWeight::BOLD)
+                        .child("⚡ Telemetry HUD (Press 'H' to toggle)"),
+                )
+                .child(
+                    gpui::div()
+                        .text_color(theme.text)
+                        .child(format!("⏱️ Frame: {}", fps_text)),
+                )
+                .child(
+                    gpui::div()
+                        .text_color(theme.text)
+                        .child(format!("⚡ Physics: {}", physics_text)),
+                )
+                .child(
+                    gpui::div()
+                        .text_color(theme.text)
+                        .child(format!("🎨 Render Build: {}", render_text)),
+                )
+                .child(
+                    gpui::div()
+                        .text_color(theme.text_dim)
+                        .child(format!("🧵 Thread Pool: {} Active OS Worker Thread(s)", self.telemetry_worker_threads)),
+                )
+                .child(
+                    gpui::div()
+                        .text_color(theme.accent)
+                        .font_weight(gpui::FontWeight::BOLD)
+                        .child(format!("⚙️ Worker Activity: {}", self.telemetry_worker_state)),
+                )
+                .child(
+                    gpui::div()
+                        .text_color(theme.text_dim)
+                        .child(format!("📊 Scale: {}", scale_text)),
+                )
+                .child(
+                    gpui::div()
+                        .text_color(theme.text_dim)
+                        .child(format!("🎯 Viewport: {}", culling_text)),
+                ),
+        )
     }
 
     fn render_bottom_bar(&self, theme: &Theme) -> impl IntoElement {

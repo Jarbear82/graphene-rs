@@ -8,6 +8,7 @@ use gpui::{
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::input::Input;
 use gpui_component::scroll::ScrollableElement;
+use gpui_component::Disableable;
 
 impl DemoApp {
     pub fn render_sidebar_left(&self, theme: &Theme, cx: &mut Context<Self>) -> impl IntoElement {
@@ -167,10 +168,13 @@ impl DemoApp {
                                                 .child(
                                                     Button::new(SharedString::from(format!("run-btn-{}", name)))
                                                         .primary()
-                                                        .label("RUN FULL LAYOUT")
+                                                        .label(if self.is_layout_running && self.selected_layout == name { "COMPUTING..." } else { "RUN FULL LAYOUT" })
+                                                        .disabled(self.is_layout_running)
                                                         .on_click(cx.listener(move |this, _, _, cx| {
-                                                            this.selected_layout = name.to_string();
-                                                            this.trigger_layout(cx);
+                                                            if !this.is_layout_running {
+                                                                this.selected_layout = name.to_string();
+                                                                this.trigger_layout(cx);
+                                                            }
                                                         })),
                                                 )
                                                 .when(!phase_names.is_empty(), |b| {
@@ -191,9 +195,12 @@ impl DemoApp {
                                                                 let btn_id = format!("step-phase-btn-{}-{}", name, phase_idx);
                                                                 Button::new(SharedString::from(btn_id))
                                                                     .label(SharedString::from(format!("▶ {}", phase_name)))
+                                                                    .disabled(self.is_layout_running)
                                                                     .on_click(cx.listener(move |this, _, _, cx| {
-                                                                        this.selected_layout = name.to_string();
-                                                                        this.trigger_step_specific_phase(phase_idx, cx);
+                                                                        if !this.is_layout_running {
+                                                                            this.selected_layout = name.to_string();
+                                                                            this.trigger_step_specific_phase(phase_idx, cx);
+                                                                        }
                                                                     }))
                                                             })),
                                                     )
@@ -218,20 +225,25 @@ impl DemoApp {
                     .child(
                         Button::new("run-physics-toggle-btn")
                             .primary()
-                            .label(if self.physics_enabled {
+                            .label(if self.is_layout_running {
+                                "LAYOUT RUNNING..."
+                            } else if self.physics_enabled {
                                 "STOP PHYSICS"
                             } else {
                                 "RUN PHYSICS"
                             })
+                            .disabled(self.is_layout_running)
                             .on_click(cx.listener(|this, _, _, cx| {
-                                this.physics_enabled = !this.physics_enabled;
-                                if this.physics_enabled {
-                                    this.physics_temperature = 10.0;
-                                    this.reset_physics();
-                                } else {
-                                    this.engine.load_preset(this.state.clone());
+                                if !this.is_layout_running {
+                                    this.physics_enabled = !this.physics_enabled;
+                                    if this.physics_enabled {
+                                        this.physics_temperature = 10.0;
+                                        this.reset_physics();
+                                    } else {
+                                        this.engine.send_command(graphene_layout::GraphCommand::StopLiveSim).ok();
+                                    }
+                                    cx.notify();
                                 }
-                                cx.notify();
                             })),
                     )
                     .child(
@@ -357,6 +369,31 @@ impl DemoApp {
                                     .label(if self.fa2_strong_gravity { "ON" } else { "OFF" })
                                     .on_click(cx.listener(|this, _, _, cx| {
                                         this.fa2_strong_gravity = !this.fa2_strong_gravity;
+                                        cx.notify();
+                                    })),
+                            ),
+                    )
+                    .child(
+                        gpui::div()
+                            .flex()
+                            .items_center()
+                            .justify_between()
+                            .p_2()
+                            .bg(theme.bg)
+                            .rounded_md()
+                            .border(px(1.0))
+                            .border_color(theme.border)
+                            .child(
+                                gpui::div()
+                                    .text_color(theme.text_dim)
+                                    .text_size(px(11.0))
+                                    .child("Telemetry HUD"),
+                            )
+                            .child(
+                                Button::new("toggle-hud-btn")
+                                    .label(if self.show_performance_hud { "ON" } else { "OFF" })
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.show_performance_hud = !this.show_performance_hud;
                                         cx.notify();
                                     })),
                             ),

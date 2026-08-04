@@ -12,6 +12,7 @@ use crate::ReingoldTilfordLayout;
 use graphene_analysis::GraphAnalysisReport;
 use graphene_core::math::{Size2, Vec2};
 use graphene_core::{EdgeData, GraphState, NodeId};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{channel, Sender};
 use std::sync::{Arc, RwLock};
 use std::thread::{spawn, JoinHandle};
@@ -138,6 +139,26 @@ pub enum GraphCommand<S: Copy + Send + 'static> {
     Shutdown,
 }
 
+/// Current execution activity of the background GraphEngine worker thread.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EngineWorkerState {
+    Idle,
+    RunningPhysics,
+    ComputingLayout,
+    AnalyzingGraph,
+}
+
+impl EngineWorkerState {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Idle => "Idle (Thread Waiting)",
+            Self::RunningPhysics => "Running Live Physics",
+            Self::ComputingLayout => "Computing Static Layout",
+            Self::AnalyzingGraph => "Analyzing Graph Topology",
+        }
+    }
+}
+
 /// Handle held by the main UI thread.
 /// Exposes non-blocking snapshot reads and async command dispatching.
 pub struct GraphEngineHandle<S: Copy + Send + 'static> {
@@ -145,6 +166,8 @@ pub struct GraphEngineHandle<S: Copy + Send + 'static> {
     analysis_report: Arc<RwLock<Option<GraphAnalysisReport>>>,
     command_tx: Sender<GraphCommand<S>>,
     engine_thread: Option<JoinHandle<()>>,
+    active_worker_threads: Arc<AtomicUsize>,
+    worker_activity: Arc<AtomicUsize>,
 }
 
 impl<S: Copy + Default + Send + Sync + 'static> GraphEngineHandle<S> {
@@ -164,9 +187,13 @@ impl<S: Copy + Default + Send + Sync + 'static> GraphEngineHandle<S> {
             is_ui_mode: initial_state.is_ui_mode,
         }));
         let analysis_report = Arc::new(RwLock::new(None));
+        let active_worker_threads = Arc::new(AtomicUsize::new(0));
+        let worker_activity = Arc::new(AtomicUsize::new(0));
 
         let snapshot_clone = Arc::clone(&snapshot);
         let analysis_report_clone = Arc::clone(&analysis_report);
+        let threads_counter_clone = Arc::clone(&active_worker_threads);
+        let activity_counter_clone = Arc::clone(&worker_activity);
 
         let engine_thread = spawn(move || {
             let mut state = initial_state;
@@ -175,6 +202,7 @@ impl<S: Copy + Default + Send + Sync + 'static> GraphEngineHandle<S> {
 
             loop {
                 if active_sim.is_some() {
+                    activity_counter_clone.store(1, Ordering::Relaxed);
                     while let Ok(cmd) = command_rx.try_recv() {
                         if !Self::process_command(
                             &mut state,
@@ -182,6 +210,8 @@ impl<S: Copy + Default + Send + Sync + 'static> GraphEngineHandle<S> {
                             cmd,
                             &snapshot_clone,
                             &analysis_report_clone,
+                            &threads_counter_clone,
+                            &activity_counter_clone,
                             &mut version_counter,
                         ) {
                             return;
@@ -193,6 +223,7 @@ impl<S: Copy + Default + Send + Sync + 'static> GraphEngineHandle<S> {
                         Self::publish_snapshot(&state, &snapshot_clone, version_counter);
                     }
                 } else {
+                    activity_counter_clone.store(0, Ordering::Relaxed);
                     match command_rx.recv() {
                         Ok(cmd) => {
                             if !Self::process_command(
@@ -201,6 +232,8 @@ impl<S: Copy + Default + Send + Sync + 'static> GraphEngineHandle<S> {
                                 cmd,
                                 &snapshot_clone,
                                 &analysis_report_clone,
+                                &threads_counter_clone,
+                                &activity_counter_clone,
                                 &mut version_counter,
                             ) {
                                 return;
@@ -217,6 +250,8 @@ impl<S: Copy + Default + Send + Sync + 'static> GraphEngineHandle<S> {
             analysis_report,
             command_tx,
             engine_thread: Some(engine_thread),
+            active_worker_threads,
+            worker_activity,
         }
     }
 
@@ -226,6 +261,8 @@ impl<S: Copy + Default + Send + Sync + 'static> GraphEngineHandle<S> {
         cmd: GraphCommand<S>,
         snapshot: &Arc<RwLock<RenderSnapshot>>,
         analysis_report: &Arc<RwLock<Option<GraphAnalysisReport>>>,
+        active_threads: &Arc<AtomicUsize>,
+        worker_activity: &Arc<AtomicUsize>,
         version: &mut u64,
     ) -> bool {
         match cmd {
@@ -274,6 +311,8 @@ impl<S: Copy + Default + Send + Sync + 'static> GraphEngineHandle<S> {
                 Self::publish_snapshot(state, snapshot, *version);
             }
             GraphCommand::RunLayout(layout_cmd) => {
+                active_threads.fetch_add(1, Ordering::Relaxed);
+                worker_activity.store(2, Ordering::Relaxed);
                 match layout_cmd {
                     LayoutCommand::Cose(mut l) => l.compute(state),
                     LayoutCommand::FCose(mut l) => l.compute(state),
@@ -295,23 +334,34 @@ impl<S: Copy + Default + Send + Sync + 'static> GraphEngineHandle<S> {
                 crate::collision::finish_layout_epilogue(state, &collapsed, 10.0, 20.0);
                 *version += 1;
                 Self::publish_snapshot(state, snapshot, *version);
+                worker_activity.store(if active_sim.is_some() { 1 } else { 0 }, Ordering::Relaxed);
+                active_threads.fetch_sub(1, Ordering::Relaxed);
             }
             GraphCommand::RunAnalysis { is_directed } => {
                 // Spawn a sub-thread off the Engine thread to analyze a state snapshot asynchronously
                 let mut state_snapshot = state.clone();
                 state_snapshot.set_ui_mode(false);
                 let report_arc = Arc::clone(analysis_report);
+                let counter = Arc::clone(active_threads);
+                counter.fetch_add(1, Ordering::Relaxed);
                 spawn(move || {
                     let report = GraphAnalysisReport::analyze(&state_snapshot, is_directed);
                     if let Ok(mut lock) = report_arc.write() {
                         *lock = Some(report);
                     }
+                    counter.fetch_sub(1, Ordering::Relaxed);
                 });
             }
             GraphCommand::StartLiveSim(sim) => {
+                if active_sim.is_none() {
+                    active_threads.fetch_add(1, Ordering::Relaxed);
+                }
                 *active_sim = Some(sim);
             }
             GraphCommand::StopLiveSim => {
+                if active_sim.is_some() {
+                    active_threads.fetch_sub(1, Ordering::Relaxed);
+                }
                 *active_sim = None;
             }
             GraphCommand::StepLiveSim => {
@@ -411,6 +461,21 @@ impl<S: Copy + Default + Send + Sync + 'static> GraphEngineHandle<S> {
             .read()
             .map(|guard| guard.clone())
             .unwrap_or_default()
+    }
+
+    /// Return the number of currently active background worker threads (engine actor + analysis tasks).
+    pub fn active_worker_threads(&self) -> usize {
+        self.active_worker_threads.load(Ordering::Relaxed)
+    }
+
+    /// Return the current activity state of the background worker thread.
+    pub fn worker_state(&self) -> EngineWorkerState {
+        match self.worker_activity.load(Ordering::Relaxed) {
+            1 => EngineWorkerState::RunningPhysics,
+            2 => EngineWorkerState::ComputingLayout,
+            3 => EngineWorkerState::AnalyzingGraph,
+            _ => EngineWorkerState::Idle,
+        }
     }
 
     /// Read the latest analysis report if available. Instantaneous O(1) read lock.

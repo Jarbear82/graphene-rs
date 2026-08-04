@@ -33,7 +33,6 @@ impl DemoApp {
         self.live_sim.reset_simulation();
         self.sync_live_sim_params();
 
-        // Pin the node closest to origin (0,0) when starting physics
         let n = self.state.node_index_to_id.len();
         if n > 0 {
             let closest_idx = (0..n).min_by(|&a, &b| {
@@ -45,6 +44,11 @@ impl DemoApp {
             });
             self.live_sim.update_param(LiveSimParam::FixedNode(closest_idx));
         }
+
+        // Offload state and start live physics on dedicated background worker thread
+        self.engine.load_preset(self.state.clone());
+        self.engine.send_command(graphene_layout::GraphCommand::StartLiveSim(self.live_sim.clone())).ok();
+        self.telemetry_is_worker_thread = true;
     }
 
     pub fn run_physics_step(&mut self) {
@@ -52,20 +56,15 @@ impl DemoApp {
             return;
         }
 
-        self.sync_live_sim_params();
-
-        // Store drag node original position to restore after step if dragging
-        let drag_info = self.interaction_state.drag_start.map(|(drag_id, _, _)| {
-            let idx = *self.state.node_keys.get(drag_id).unwrap();
-            (idx, *self.state.positions.get(idx))
+        let drag_idx = self.interaction_state.drag_start.and_then(|(drag_id, _, _)| {
+            self.state.node_keys.get(drag_id).copied()
         });
 
-        self.live_sim.tick(&mut self.state);
-
-        // Restore position of node currently being dragged
-        if let Some((drag_idx, original_pos)) = drag_info {
-            self.state.positions.set(drag_idx, original_pos);
-        }
+        // Dispatch live sim parameters & fixed drag node pin to background worker thread
+        self.engine.send_command(graphene_layout::GraphCommand::UpdateLiveSimParam(
+            LiveSimParam::FixedNode(drag_idx)
+        )).ok();
+        self.telemetry_is_worker_thread = true;
     }
 
     pub fn resolve_collisions(&mut self) {

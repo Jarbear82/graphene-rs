@@ -57,8 +57,8 @@ impl CircularAdvancedLayout {
         // 2. Compute circular embedding angles around perimeter
         let mut embedding_order = sorted_nodes;
 
-        // 3. Post-processing crossing minimization swaps
-        if self.post_process_iterations > 0 && n > 3 {
+        // 3. Post-processing crossing minimization swaps (limited to N <= 500 for performance)
+        if self.post_process_iterations > 0 && n > 3 && n <= 500 {
             self.post_process_crossing_minimization(state, &mut embedding_order);
         }
 

@@ -96,21 +96,23 @@ impl<S: Copy> Layout<S> for ConcentricHubLayout {
         let n = state.node_index_to_id.len();
         if n == 0 { return; }
 
-        let mut degrees = HashMap::new();
-        for &id in &state.node_index_to_id {
-            degrees.insert(id, 0);
-        }
+        let mut degrees = vec![0usize; n];
         for idx in 0..state.edges.len() {
             let src = *state.edge_sources.get(idx);
             let tgt = *state.edge_targets.get(idx);
-            if let Some(deg) = degrees.get_mut(&src) { *deg += 1; }
-            if let Some(deg) = degrees.get_mut(&tgt) { *deg += 1; }
+            if let (Some(&u), Some(&v)) = (state.node_keys.get(src), state.node_keys.get(tgt)) {
+                if u < n && v < n {
+                    degrees[u] += 1;
+                    degrees[v] += 1;
+                }
+            }
         }
 
         let mut hubs = Vec::new();
         let mut peers = Vec::new();
-        for &id in &state.node_index_to_id {
-            if degrees[&id] >= self.hub_threshold {
+        for i in 0..n {
+            let id = state.node_index_to_id[i];
+            if degrees[i] >= self.hub_threshold {
                 hubs.push(id);
             } else {
                 peers.push(id);

@@ -8,7 +8,8 @@ use graphene_gpui::{
     interaction::state::InteractionState, render::draw_pipeline::Viewport, CanvasConfig,
 };
 use graphene_layout::{
-    CircleLayout, CoseLayout, FCoseLayout, GraphEngineHandle, LayoutCommand, LiveForceSimulation, SugiyamaLayout,
+    CircleLayout, CoseLayout, FCoseLayout, GraphEngineHandle, LayoutCommand, LiveForceSimulation,
+    SugiyamaLayout,
 };
 use graphene_style::{ColorValue, ComputedStyle, NodeShape, StylingTarget, ThemeRegistry};
 use std::{
@@ -105,6 +106,18 @@ pub struct DemoApp {
     pub input_fa2_iterations: Entity<InputState>,
     pub live_sim: LiveForceSimulation,
     pub snapshot_version: u64,
+
+    pub show_performance_hud: bool,
+    pub is_layout_running: bool,
+    pub telemetry_fps: f64,
+    pub telemetry_physics_ms: f64,
+    pub telemetry_render_ms: f64,
+    pub telemetry_visible_nodes: usize,
+    pub telemetry_labels_formatted: usize,
+    pub telemetry_is_worker_thread: bool,
+    pub telemetry_worker_threads: usize,
+    pub telemetry_worker_state: String,
+    pub last_frame_instant: std::time::Instant,
 
     pub is_directed: bool,
     pub active_heatmap: Option<String>,
@@ -566,25 +579,27 @@ impl DemoApp {
         )
         .detach();
 
-        let node_name_state = cx.new(|cx| {
-            InputState::new(window, cx)
-        });
+        let node_name_state = cx.new(|cx| InputState::new(window, cx));
 
-        cx.subscribe_in(&node_name_state, window, |this, state, event, _window, cx| {
-            if let InputEvent::Change = event {
-                if let Some(id) = this.selected_node {
-                    let label = state.read(cx).value().to_string();
-                    if !label.trim().is_empty() {
-                        this.state.set_node_label(id, &label);
-                        this.fixtures[this.selected_fixture_idx]
-                            .node_labels
-                            .insert(id, label);
-                        this.interaction_state.rebuild_grid(&this.state);
-                        cx.notify();
+        cx.subscribe_in(
+            &node_name_state,
+            window,
+            |this, state, event, _window, cx| {
+                if let InputEvent::Change = event {
+                    if let Some(id) = this.selected_node {
+                        let label = state.read(cx).value().to_string();
+                        if !label.trim().is_empty() {
+                            this.state.set_node_label(id, &label);
+                            this.fixtures[this.selected_fixture_idx]
+                                .node_labels
+                                .insert(id, label);
+                            this.interaction_state.rebuild_grid(&this.state);
+                            cx.notify();
+                        }
                     }
                 }
-            }
-        })
+            },
+        )
         .detach();
 
         let edge_src_state = cx.new(|cx| {
@@ -622,17 +637,21 @@ impl DemoApp {
 
         let input_fa2_scaling = cx.new(|cx| {
             let mut s = InputState::new(window, cx).validate(|s, _| s.parse::<f64>().is_ok());
-            s.replace_text_in_range(None, "0.02", window, cx);
+            s.replace_text_in_range(None, "100", window, cx);
             s
         });
 
-        cx.subscribe_in(&input_fa2_scaling, window, |this, state, event, _window, cx| {
-            if let InputEvent::Change = event {
-                if let Ok(v) = state.read(cx).value().parse::<f64>() {
-                    this.fa2_scaling_ratio = v;
+        cx.subscribe_in(
+            &input_fa2_scaling,
+            window,
+            |this, state, event, _window, cx| {
+                if let InputEvent::Change = event {
+                    if let Ok(v) = state.read(cx).value().parse::<f64>() {
+                        this.fa2_scaling_ratio = v;
+                    }
                 }
-            }
-        })
+            },
+        )
         .detach();
 
         let input_fa2_iterations = cx.new(|cx| {
@@ -641,13 +660,17 @@ impl DemoApp {
             s
         });
 
-        cx.subscribe_in(&input_fa2_iterations, window, |this, state, event, _window, cx| {
-            if let InputEvent::Change = event {
-                if let Ok(v) = state.read(cx).value().parse::<usize>() {
-                    this.fa2_max_iterations = v;
+        cx.subscribe_in(
+            &input_fa2_iterations,
+            window,
+            |this, state, event, _window, cx| {
+                if let InputEvent::Change = event {
+                    if let Ok(v) = state.read(cx).value().parse::<usize>() {
+                        this.fa2_max_iterations = v;
+                    }
                 }
-            }
-        })
+            },
+        )
         .detach();
 
         let mut app = Self {
@@ -718,13 +741,25 @@ impl DemoApp {
             fa2_outbound: false,
             fa2_strong_gravity: false,
             fa2_adjust_sizes: true,
-            fa2_scaling_ratio: 0.02,
+            fa2_scaling_ratio: 100.0,
             fa2_stop_mode: 0,
             fa2_max_iterations: 100,
             input_fa2_scaling,
             input_fa2_iterations,
             live_sim: LiveForceSimulation::new(),
             snapshot_version: 0,
+
+            show_performance_hud: true,
+            is_layout_running: false,
+            telemetry_fps: 60.0,
+            telemetry_physics_ms: 0.0,
+            telemetry_render_ms: 0.0,
+            telemetry_visible_nodes: 0,
+            telemetry_labels_formatted: 0,
+            telemetry_is_worker_thread: false,
+            telemetry_worker_threads: 1,
+            telemetry_worker_state: "Idle (Thread Waiting)".to_string(),
+            last_frame_instant: std::time::Instant::now(),
 
             is_directed: true,
             active_heatmap: None,
@@ -758,6 +793,9 @@ impl DemoApp {
         self.physics_enabled = !self.physics_enabled;
         if self.physics_enabled {
             self.physics_temperature = 10.0;
+            self.reset_physics();
+        } else {
+            self.engine.send_command(graphene_layout::GraphCommand::StopLiveSim).ok();
         }
     }
 
@@ -821,6 +859,7 @@ impl DemoApp {
             self.state.edge_computed_styles.set(i, style);
         }
 
+        self.live_sim.reset_simulation();
         self.engine.load_preset(self.state.clone());
         if let Some(cmd) = graphene_layout::LayoutCommand::from_name("Circle", 100) {
             self.engine.run_layout(cmd);
@@ -899,9 +938,10 @@ impl DemoApp {
                                     },
                                 );
                             }
-                            app.state.positions.set(idx, to_pos);
                         }
                     }
+                    app.snapshot_version = app.engine.latest_snapshot().version;
+                    app.is_layout_running = false;
                     app.interaction_state.rebuild_grid(&app.state);
                     cx.notify();
                 });
@@ -911,12 +951,25 @@ impl DemoApp {
     }
 
     pub fn trigger_layout(&mut self, cx: &mut Context<Self>) {
+        if self.is_layout_running {
+            return;
+        }
+
+        if self.physics_enabled {
+            self.physics_enabled = false;
+            self.engine.send_command(graphene_layout::GraphCommand::StopLiveSim).ok();
+        }
+
+        self.live_sim.reset_simulation();
+        self.is_layout_running = true;
+
         self.animate_layout_transition(cx, |app| {
             app.run_layout_internal();
         });
     }
 
     pub fn run_layout_internal(&mut self) {
+        self.live_sim.reset_simulation();
         self.engine.load_preset(self.state.clone());
         if let Some(cmd) =
             graphene_layout::LayoutCommand::from_name(&self.selected_layout, self.iterations)
@@ -1057,7 +1110,9 @@ impl DemoApp {
         if let Some(id) = self.selected_node {
             self.undo_redo.record_state(&self.state);
             self.state.remove_node(id);
-            self.fixtures[self.selected_fixture_idx].node_labels.remove(&id);
+            self.fixtures[self.selected_fixture_idx]
+                .node_labels
+                .remove(&id);
             self.selected_node = None;
             self.interaction_state.rebuild_grid(&self.state);
             self.run_analysis();

@@ -6,6 +6,8 @@ use graphene_core::{math::Vec2, GraphState, HierarchyExt};
 pub enum StopCondition {
     /// Auto stop when node displacement / kinetic energy drops below threshold
     Auto { min_energy: f64 },
+    /// Auto stop when movement drops below a fraction of the analytical resting spring length
+    Equilibrium { relative_tolerance: f64 },
     /// Temperature cooled simulated annealing stopping condition
     TempCooled { temperature: f64, cooling_rate: f64, min_temp: f64 },
     /// Run for a fixed number of iterations
@@ -14,10 +16,8 @@ pub enum StopCondition {
 
 impl Default for StopCondition {
     fn default() -> Self {
-        Self::TempCooled {
-            temperature: 10.0,
-            cooling_rate: 0.95,
-            min_temp: 0.05,
+        Self::Equilibrium {
+            relative_tolerance: 0.005,
         }
     }
 }
@@ -46,6 +46,7 @@ pub enum LiveSimParam {
 }
 
 /// Live force-directed simulation powered by ForceAtlas2
+#[derive(Clone)]
 pub struct LiveForceSimulation {
     /// ForceAtlas2 algorithm settings
     pub settings: FA2Settings,
@@ -129,7 +130,7 @@ impl LiveForceSimulation {
         match param {
             LiveSimParam::Repulsion(v) => {
                 self.k_rep = v;
-                self.settings.scaling_ratio = (v / 1000.0).max(0.1) as f64;
+                self.settings.scaling_ratio = (v as f64).max(0.1);
             }
             LiveSimParam::Attraction(v) => self.k_att = v,
             LiveSimParam::Gravity(v) => {
@@ -165,6 +166,10 @@ impl LiveForceSimulation {
             return;
         }
 
+        if self.iteration_count == 0 {
+            self.infer_settings_from_state(state);
+        }
+
         // Calculate node degrees and build FA2 edges
         let mut degrees = vec![0usize; n];
         let mut edges = Vec::new();
@@ -195,6 +200,7 @@ impl LiveForceSimulation {
                     let mass = (degrees[i] + 1) as f64;
                     let mut node = FA2Node::new(pos.x as f64, pos.y as f64, mass);
                     node.size = radius;
+                    node.size_wh = force_atlas2::Vec2::new(size.w as f64, size.h as f64);
                     node
                 })
                 .collect();
@@ -205,6 +211,7 @@ impl LiveForceSimulation {
                 self.cached_nodes[i].pos = force_atlas2::Vec2::new(pos.x as f64, pos.y as f64);
                 self.cached_nodes[i].mass = (degrees[i] + 1) as f64;
                 self.cached_nodes[i].size = (size.w.max(size.h) / 2.0) as f64 + 5.0;
+                self.cached_nodes[i].size_wh = force_atlas2::Vec2::new(size.w as f64, size.h as f64);
             }
         }
 
@@ -216,6 +223,12 @@ impl LiveForceSimulation {
             self.settings.barnes_hut_theta = 0.5 + 0.7 * cool_ratio;
         }
 
+        // Two-Phase Speed Optimization: Use fast point-repulsion during initial coarse iterations (< 15) for N >= 50
+        let original_adjust_sizes = self.settings.adjust_sizes;
+        if n >= 50 && self.iteration_count < 15 {
+            self.settings.adjust_sizes = false;
+        }
+
         // Execute ForceAtlas2 iteration
         let disp = force_atlas2_step(
             &mut self.cached_nodes,
@@ -224,6 +237,8 @@ impl LiveForceSimulation {
             &mut self.speed,
             &mut self.speed_efficiency,
         );
+
+        self.settings.adjust_sizes = original_adjust_sizes;
 
         self.last_displacement = disp;
         self.iteration_count += 1;
@@ -234,8 +249,7 @@ impl LiveForceSimulation {
             state.positions.set(i, Vec2::new(p.x as f32, p.y as f32));
         }
 
-        let collapsed = std::collections::HashSet::new();
-        crate::collision::finish_layout_epilogue(state, &collapsed, 10.0, 20.0);
+        crate::collision::center_layout_at_origin(state);
 
         if matches!(self.stop_condition, StopCondition::TempCooled { .. }) {
             self.temperature *= self.cooling_rate;
@@ -318,10 +332,56 @@ impl LiveForceSimulation {
         state.dirty_flags |= graphene_core::DirtyFlags::POSITION_DIRTY;
     }
 
+    /// Calculate analytical resting spring length (equilibrium distance) for ForceAtlas2:
+    /// L_rest = sqrt(k_r * m_avg^2 / k_a)
+    pub fn resting_spring_length(&self, state: &GraphState<impl Copy + Default>) -> f64 {
+        let n = state.node_index_to_id.len();
+        if n == 0 {
+            return 50.0;
+        }
+
+        let kr = self.settings.scaling_ratio;
+        let ka = if self.settings.outbound_attraction_distribution {
+            let sum_mass: f64 = (0..n).map(|i| (state.edges.len() / n.max(1) + 1) as f64).sum();
+            sum_mass / n as f64
+        } else {
+            1.0
+        };
+
+        let avg_mass = if n > 0 {
+            (2.0 * state.edges.len() as f64 / n as f64) + 1.0
+        } else {
+            2.0
+        };
+
+        (kr * avg_mass * avg_mass / ka).sqrt().max(1.0)
+    }
+
+    /// Check if simulation has converged for a given GraphState according to active StopCondition
+    pub fn is_converged_for_state(&self, state: &GraphState<impl Copy + Default>) -> bool {
+        match self.stop_condition {
+            StopCondition::Auto { min_energy } => {
+                let threshold = if min_energy > 0.0 {
+                    min_energy
+                } else {
+                    0.005 * self.resting_spring_length(state)
+                };
+                self.last_displacement < threshold
+            }
+            StopCondition::Equilibrium { relative_tolerance } => {
+                let threshold = relative_tolerance * self.resting_spring_length(state);
+                self.last_displacement < threshold
+            }
+            StopCondition::TempCooled { min_temp, .. } => (self.temperature as f64) < min_temp,
+            StopCondition::Iterations { max_iterations } => self.iteration_count >= max_iterations,
+        }
+    }
+
     /// Check if simulation has converged according to active StopCondition
     pub fn is_converged(&self) -> bool {
         match self.stop_condition {
-            StopCondition::Auto { min_energy } => self.last_displacement < min_energy,
+            StopCondition::Auto { min_energy } => self.last_displacement < min_energy.max(0.01),
+            StopCondition::Equilibrium { relative_tolerance } => self.last_displacement < (relative_tolerance * 50.0).max(0.01),
             StopCondition::TempCooled { min_temp, .. } => (self.temperature as f64) < min_temp,
             StopCondition::Iterations { max_iterations } => self.iteration_count >= max_iterations,
         }
@@ -336,11 +396,11 @@ impl Default for LiveForceSimulation {
 
 impl<S: Copy + Default> crate::traits::IterativeLayout<S> for LiveForceSimulation {
     fn step(&mut self, state: &mut GraphState<S>) -> bool {
-        if self.is_converged() {
+        if self.is_converged_for_state(state) {
             return false;
         }
         self.tick(state);
-        !self.is_converged()
+        !self.is_converged_for_state(state)
     }
 
     fn is_converged(&self) -> bool {
@@ -445,5 +505,27 @@ impl AsyncLiveSimulationHandle {
 impl Drop for AsyncLiveSimulationHandle {
     fn drop(&mut self) {
         self.stop_signal.store(true, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use graphene_core::{math::Size2, GraphState};
+
+    #[test]
+    fn test_resting_spring_length_and_auto_stop() {
+        let mut state = GraphState::<()>::default();
+        let n1 = state.add_node(Vec2::new(0.0, 0.0), Size2::new(20.0, 20.0));
+        let n2 = state.add_node(Vec2::new(10.0, 10.0), Size2::new(20.0, 20.0));
+        state.add_edge(n1, n2, graphene_core::EdgeData::default());
+
+        let mut sim = LiveForceSimulation::new();
+        let l_rest = sim.resting_spring_length(&state);
+        assert!(l_rest > 0.0, "Resting spring length must be positive: {}", l_rest);
+
+        sim.stop_condition = StopCondition::Equilibrium { relative_tolerance: 0.01 };
+        sim.last_displacement = 0.0001;
+        assert!(sim.is_converged_for_state(&state), "Simulation should be converged when displacement < tolerance * L_rest");
     }
 }
