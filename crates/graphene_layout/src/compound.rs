@@ -1,5 +1,5 @@
 use crate::traits::Layout;
-use graphene_core::{math::Size2, math::Vec2, GraphState, NodeId};
+use graphene_core::{math::Size2, math::Vec2, GraphState, HierarchyExt, NodeId};
 use std::collections::{HashMap, HashSet};
 
 /// Compound node hierarchical layout.
@@ -69,6 +69,159 @@ impl<S: Copy + Default, L: Layout<S>> Layout<S> for CompoundLayout<L> {
         self.sub_layout.compute(state);
         let collapsed = HashSet::new();
         crate::collision::finish_layout_epilogue(state, &collapsed, 10.0, self.padding);
+    }
+}
+
+/// Generic multi-level recursive hierarchical post-order layout adapter.
+///
+/// Reference: Hierarchical Layout for Compound Graphs (classic post-order inclusion tree layout).
+pub struct HierarchicalLayout<L> {
+    pub sub_layout: L,
+    pub padding: f32,
+}
+
+impl<L> HierarchicalLayout<L> {
+    pub fn new(sub_layout: L) -> Self {
+        Self {
+            sub_layout,
+            padding: 20.0,
+        }
+    }
+
+    pub fn with_padding(mut self, padding: f32) -> Self {
+        self.padding = padding;
+        self
+    }
+}
+
+impl<S: Copy + Default, L: Layout<S>> Layout<S> for HierarchicalLayout<L> {
+    fn compute(&mut self, state: &mut GraphState<S>) {
+        let n = state.node_index_to_id.len();
+        if n == 0 {
+            return;
+        }
+
+        let mut depth_and_parent: Vec<(usize, NodeId)> = Vec::new();
+        for idx in 0..n {
+            let id = state.node_index_to_id[idx];
+            if state.is_parent(idx) {
+                let depth = state.get_nesting_depth(id);
+                depth_and_parent.push((depth, id));
+            }
+        }
+
+        depth_and_parent.sort_by(|a, b| b.0.cmp(&a.0));
+
+        for (_, parent_id) in depth_and_parent {
+            let Some(&p_idx) = state.node_keys.get(parent_id) else { continue };
+
+            let children: Vec<NodeId> = state
+                .node_index_to_id
+                .iter()
+                .enumerate()
+                .filter_map(|(idx, &id)| {
+                    if *state.hierarchy.parent.get(idx) == Some(parent_id) {
+                        Some(id)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+
+            if children.is_empty() {
+                continue;
+            }
+
+            let mut sub_state: GraphState<S> = GraphState::new();
+            let mut mapping = HashMap::new();
+            let mut reverse_mapping = HashMap::new();
+
+            for &c_id in &children {
+                let Some(&c_idx) = state.node_keys.get(c_id) else { continue };
+                let pos = *state.positions.get(c_idx);
+                let size = *state.sizes.get(c_idx);
+                let new_id = sub_state.add_node(pos, size);
+                mapping.insert(c_id, new_id);
+                reverse_mapping.insert(new_id, c_id);
+            }
+
+            for e_idx in 0..state.edges.len() {
+                let src = *state.edge_sources.get(e_idx);
+                let tgt = *state.edge_targets.get(e_idx);
+                if mapping.contains_key(&src) && mapping.contains_key(&tgt) {
+                    let sub_src = mapping[&src];
+                    let sub_tgt = mapping[&tgt];
+                    sub_state.add_edge(sub_src, sub_tgt, state.edges.get(e_idx).clone());
+                }
+            }
+
+            self.sub_layout.compute(&mut sub_state);
+
+            let mut min_x = f32::INFINITY;
+            let mut max_x = -f32::INFINITY;
+            let mut min_y = f32::INFINITY;
+            let mut max_y = -f32::INFINITY;
+
+            for i in 0..sub_state.node_index_to_id.len() {
+                let pos = *sub_state.positions.get(i);
+                let size = *sub_state.sizes.get(i);
+                min_x = min_x.min(pos.x - size.w / 2.0);
+                max_x = max_x.max(pos.x + size.w / 2.0);
+                min_y = min_y.min(pos.y - size.h / 2.0);
+                max_y = max_y.max(pos.y + size.h / 2.0);
+            }
+
+            let center_x = (min_x + max_x) / 2.0;
+            let center_y = (min_y + max_y) / 2.0;
+            let w = (max_x - min_x) + 2.0 * self.padding;
+            let h = (max_y - min_y) + 2.0 * self.padding;
+
+            state.positions.set(p_idx, Vec2::new(center_x, center_y));
+            state.sizes.set(p_idx, Size2::new(w, h));
+
+            for i in 0..sub_state.node_index_to_id.len() {
+                let sub_id = sub_state.node_index_to_id[i];
+                if let Some(&orig_id) = reverse_mapping.get(&sub_id) {
+                    if let Some(&orig_idx) = state.node_keys.get(orig_id) {
+                        state.positions.set(orig_idx, *sub_state.positions.get(i));
+                    }
+                }
+            }
+        }
+
+        self.sub_layout.compute(state);
+        let collapsed = HashSet::new();
+        crate::traits::resolve_compound_bounds(state, &collapsed, self.padding);
+        crate::collision::finish_layout_epilogue(state, &collapsed, 10.0, self.padding);
+    }
+}
+
+/// Hybrid compound layout combining bottom-up hierarchical seeding with global polishing.
+///
+/// Reference: Hybrid Compound Layout with post-order seeding and global polishing.
+pub struct HybridCompoundLayout<L, P> {
+    pub seed_layout: HierarchicalLayout<L>,
+    pub polish_layout: P,
+}
+
+impl<L, P> HybridCompoundLayout<L, P> {
+    pub fn new(seed_layout: L, polish_layout: P) -> Self {
+        Self {
+            seed_layout: HierarchicalLayout::new(seed_layout),
+            polish_layout,
+        }
+    }
+
+    pub fn with_padding(mut self, padding: f32) -> Self {
+        self.seed_layout = self.seed_layout.with_padding(padding);
+        self
+    }
+}
+
+impl<S: Copy + Default, L: Layout<S>, P: Layout<S>> Layout<S> for HybridCompoundLayout<L, P> {
+    fn compute(&mut self, state: &mut GraphState<S>) {
+        self.seed_layout.compute(state);
+        self.polish_layout.compute(state);
     }
 }
 

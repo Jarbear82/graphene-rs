@@ -24,11 +24,20 @@ pub mod traits;
 pub mod tree;
 pub mod tutte;
 
+pub mod compound_forces;
+
 pub use basic::{BreadthFirstLayout, CircleLayout, ConcentricLayout, GridLayout, RandomLayout};
 pub use bipartite::BipartiteLayout;
 pub use circular_advanced::{count_crossings, CircularAdvancedLayout};
 pub use collision::{resolve_overlaps, CollisionForceDirectedLayout, WeightedForceDirectedLayout};
-pub use compound::{star_expand_hypergraph, CompoundLayout, ConcentricHubLayout, RegionalPartitionLayout};
+pub use compound::{
+    star_expand_hypergraph, CompoundLayout, ConcentricHubLayout, HierarchicalLayout,
+    HybridCompoundLayout, RegionalPartitionLayout,
+};
+pub use compound_forces::{
+    apply_compound_parent_gravitational_forces, compute_nesting_edge_length,
+    update_compound_cart_bounds,
+};
 pub use cose::{find_clipping_point, CoseLayout, CosePhase};
 pub use engine::{GraphCommand, GraphEngineHandle, GraphUpdate, LayoutCommand};
 pub use fcose::{
