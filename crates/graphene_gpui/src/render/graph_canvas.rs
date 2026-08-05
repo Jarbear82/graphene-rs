@@ -1,9 +1,10 @@
+use crate::interaction::state::InteractionState;
+use crate::render::draw_pipeline::Viewport;
+use crate::view::GraphView;
 use gpui::prelude::*;
 use gpui::{px, IntoElement, PathBuilder, Point, SharedString, Styled};
-use graphene_core::{GraphState, NodeId};
+use graphene_core::NodeId;
 use graphene_style::{ColorValue, ComputedStyle, EdgeCurveStyle, NodeShape, StylingTarget, Theme};
-use crate::render::draw_pipeline::Viewport;
-use crate::interaction::state::InteractionState;
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -149,7 +150,7 @@ impl RenderOnce for GraphEdgeLabelElement {
 }
 
 pub struct GraphCanvas<'a> {
-    pub state: &'a GraphState<ComputedStyle>,
+    pub view: &'a GraphView<ComputedStyle>,
     pub viewport: &'a Viewport,
     pub interaction_state: &'a InteractionState,
     pub theme: &'a Theme,
@@ -165,7 +166,7 @@ pub struct GraphCanvas<'a> {
 
 impl<'a> GraphCanvas<'a> {
     pub fn new(
-        state: &'a GraphState<ComputedStyle>,
+        view: &'a GraphView<ComputedStyle>,
         viewport: &'a Viewport,
         interaction_state: &'a InteractionState,
         theme: &'a Theme,
@@ -176,7 +177,7 @@ impl<'a> GraphCanvas<'a> {
         collapsed_parents: &'a std::collections::HashSet<NodeId>,
     ) -> Self {
         Self {
-            state,
+            view,
             viewport,
             interaction_state,
             theme,
@@ -211,7 +212,7 @@ impl<'a> IntoElement for GraphCanvas<'a> {
     type Element = gpui::AnyElement;
 
     fn into_element(self) -> Self::Element {
-        let state = self.state;
+        let view = self.view;
         let viewport = self.viewport.clone();
         let theme = *self.theme;
         let selected_node = self.selected_node;
@@ -231,8 +232,8 @@ impl<'a> IntoElement for GraphCanvas<'a> {
 
         let get_visible_rep = |mut curr: NodeId| -> NodeId {
             let mut rep = curr;
-            while let Some(&idx) = state.node_keys.get(curr) {
-                if let Some(parent_id) = *state.hierarchy.parent.get(idx) {
+            while let Some(node) = view.nodes.get(&curr) {
+                if let Some(parent_id) = node.parent {
                     if collapsed_parents.contains(&parent_id) {
                         rep = parent_id;
                     }
@@ -249,121 +250,105 @@ impl<'a> IntoElement for GraphCanvas<'a> {
 
         if let Some(sel_id) = selected_node {
             connected_nodes.insert(sel_id);
-            for i in 0..state.edges.len() {
-                let src = *state.edge_sources.get(i);
-                let tgt = *state.edge_targets.get(i);
-                let src_rep = get_visible_rep(src);
-                let tgt_rep = get_visible_rep(tgt);
-                if src_rep == sel_id || tgt_rep == sel_id {
-                    connected_edge_indices.insert(i);
-                    connected_nodes.insert(src_rep);
-                    connected_nodes.insert(tgt_rep);
+            for (i, &edge_id) in view.edge_order.iter().enumerate() {
+                if let Some(edge) = view.edges.get(&edge_id) {
+                    let src_rep = get_visible_rep(edge.source);
+                    let tgt_rep = get_visible_rep(edge.target);
+                    if src_rep == sel_id || tgt_rep == sel_id {
+                        connected_edge_indices.insert(i);
+                        connected_nodes.insert(src_rep);
+                        connected_nodes.insert(tgt_rep);
+                    }
                 }
             }
         }
 
-        // Precompute edge paths for drawing
         let mut edge_paths = Vec::new();
         let mut edge_labels_to_render = Vec::new();
         let is_panning_active = self.interaction_state.drag_start.is_some() || self.interaction_state.pan_origin.is_some();
         let skip_edges = cfg.hide_edges_during_pan && is_panning_active;
 
         if !skip_edges {
-            for i in 0..state.edges.len() {
-            let src = *state.edge_sources.get(i);
-            let tgt = *state.edge_targets.get(i);
+            for (i, &edge_id) in view.edge_order.iter().enumerate() {
+                let Some(edge) = view.edges.get(&edge_id) else { continue };
 
-            let src_rep = get_visible_rep(src);
-            let tgt_rep = get_visible_rep(tgt);
+                let src_rep = get_visible_rep(edge.source);
+                let tgt_rep = get_visible_rep(edge.target);
 
-            if src_rep == tgt_rep {
-                continue; // Hidden internal edge
-            }
-
-            let (Some(&src_idx), Some(&tgt_idx)) = (state.node_keys.get(src_rep), state.node_keys.get(tgt_rep)) else {
-                continue;
-            };
-            let pos_src = *state.positions.get(src_idx);
-            let pos_tgt = *state.positions.get(tgt_idx);
-            let src_size = *state.sizes.get(src_idx);
-            let tgt_size = *state.sizes.get(tgt_idx);
-
-            // Frustum Culling: Skip offscreen edges when both endpoints are outside the viewport
-            if !viewport.is_visible(pos_src, src_size) && !viewport.is_visible(pos_tgt, tgt_size) {
-                continue;
-            }
-
-            let src_screen = viewport.model_to_screen(pos_src);
-
-            let clipped_tgt = graphene_layout::find_clipping_point(
-                pos_tgt,
-                tgt_size,
-                pos_src.x - pos_tgt.x,
-                pos_src.y - pos_tgt.y,
-            );
-            let tgt_screen = viewport.model_to_screen(clipped_tgt);
-
-            let mut curve_style = EdgeCurveStyle::Straight;
-            let mut label_text = edge_labels.get(&i).cloned();
-
-            let style = state.edge_computed_styles.get(i);
-            if let StylingTarget::Edge(ref edge_style) = style.target {
-                if !edge_style.visible {
+                if src_rep == tgt_rep {
                     continue;
                 }
-                curve_style = edge_style.curve_style;
-                if label_text.is_none() {
-                    if let Some(lbl_id) = edge_style.label {
-                        label_text = state.string_arena.get(lbl_id).map(|s| s.to_string());
+
+                let (Some(src_node), Some(tgt_node)) = (view.nodes.get(&src_rep), view.nodes.get(&tgt_rep)) else {
+                    continue;
+                };
+
+                let pos_src = src_node.pos;
+                let pos_tgt = tgt_node.pos;
+                let src_size = src_node.size;
+                let tgt_size = tgt_node.size;
+
+                if !viewport.is_visible(pos_src, src_size) && !viewport.is_visible(pos_tgt, tgt_size) {
+                    continue;
+                }
+
+                let src_screen = viewport.model_to_screen(pos_src);
+
+                let clipped_tgt = graphene_layout::find_clipping_point(
+                    pos_tgt,
+                    tgt_size,
+                    pos_src.x - pos_tgt.x,
+                    pos_src.y - pos_tgt.y,
+                );
+                let tgt_screen = viewport.model_to_screen(clipped_tgt);
+
+                let curve_style = EdgeCurveStyle::Straight;
+                let label_text = edge_labels.get(&i).cloned();
+
+                let screen_curve_style = match curve_style {
+                    EdgeCurveStyle::UnbundledBezier(cp1, cp2) => {
+                        let s1 = viewport.model_to_screen(cp1);
+                        let s2 = viewport.model_to_screen(cp2);
+                        EdgeCurveStyle::UnbundledBezier(
+                            graphene_core::math::Vec2::new(s1.x, s1.y),
+                            graphene_core::math::Vec2::new(s2.x, s2.y),
+                        )
+                    }
+                    other => other,
+                };
+
+                let (cur_edge_color, stroke_width) = if let Some(_sel_id) = selected_node {
+                    if connected_edge_indices.contains(&i) {
+                        (accent_color, cfg.edge_stroke_width * 1.5)
+                    } else {
+                        let mut faded = edge_color;
+                        faded.a = 0.12;
+                        (faded, cfg.edge_stroke_width)
+                    }
+                } else {
+                    (edge_color, cfg.edge_stroke_width)
+                };
+
+                edge_paths.push((src_screen, tgt_screen, screen_curve_style, cur_edge_color, stroke_width));
+
+                if let Some(lbl) = label_text {
+                    if !lbl.is_empty() {
+                        edge_labels_to_render.push((i, src_screen, tgt_screen, curve_style, lbl));
                     }
                 }
             }
-
-            let screen_curve_style = match curve_style {
-                EdgeCurveStyle::UnbundledBezier(cp1, cp2) => {
-                    let s1 = viewport.model_to_screen(cp1);
-                    let s2 = viewport.model_to_screen(cp2);
-                    EdgeCurveStyle::UnbundledBezier(
-                        graphene_core::math::Vec2::new(s1.x, s1.y),
-                        graphene_core::math::Vec2::new(s2.x, s2.y),
-                    )
-                }
-                other => other,
-            };
-
-            let (cur_edge_color, stroke_width) = if let Some(_sel_id) = selected_node {
-                if connected_edge_indices.contains(&i) {
-                    (accent_color, cfg.edge_stroke_width * 1.5)
-                } else {
-                    let mut faded = edge_color;
-                    faded.a = 0.12;
-                    (faded, cfg.edge_stroke_width)
-                }
-            } else {
-                (edge_color, cfg.edge_stroke_width)
-            };
-
-            edge_paths.push((src_screen, tgt_screen, screen_curve_style, cur_edge_color, stroke_width));
-
-            if let Some(lbl) = label_text {
-                if !lbl.is_empty() {
-                    edge_labels_to_render.push((i, src_screen, tgt_screen, curve_style, lbl));
-                }
-            }
-        }
         }
 
-        let nodes_count = state.node_index_to_id.len();
+        let nodes_count = view.node_order.len();
 
         let mut parent_indices = Vec::new();
         let mut leaf_indices = Vec::new();
-        for idx in 0..nodes_count {
-            let id = state.node_index_to_id[idx];
+        for (idx, &id) in view.node_order.iter().enumerate() {
             if get_visible_rep(id) != id {
-                continue; // Hidden descendant
+                continue;
             }
 
-            let is_parent = state.hierarchy.first_child.get(idx).is_some();
+            let is_parent = view.nodes.get(&id).map_or(false, |n| !n.children.is_empty());
 
             if is_parent {
                 parent_indices.push(idx);
@@ -373,36 +358,27 @@ impl<'a> IntoElement for GraphCanvas<'a> {
         }
 
         let render_node = |idx: usize| -> Option<gpui::AnyElement> {
-            let id = state.node_index_to_id[idx];
-            let pos = *state.positions.get(idx);
-            let size_val = *state.sizes.get(idx);
+            let id = view.node_order[idx];
+            let node = view.nodes.get(&id)?;
+            let pos = node.pos;
+            let size_val = node.size;
 
-            // Frustum Culling: Skip building and rendering nodes outside active viewport
             if !viewport.is_visible(pos, size_val) {
                 return None;
             }
 
-            let mut label = node_labels.get(&id)
+            let mut label = node_labels
+                .get(&id)
                 .cloned()
-                .or_else(|| state.get_node_label(id).map(|s| s.to_string()))
-                .unwrap_or_else(|| format!("N{}", idx));
-
-            let is_compound = {
-                let id = state.node_index_to_id[idx];
-                let mut found = false;
-                for j in 0..nodes_count {
-                    let child_id = state.node_index_to_id[j];
-                    if let Some(p_id) = *state.hierarchy.parent.get(j) {
-                        if p_id == id {
-                            if get_visible_rep(child_id) == child_id {
-                                found = true;
-                                break;
-                            }
-                        }
+                .unwrap_or_else(|| {
+                    if node.label.is_empty() {
+                        format!("N{}", idx)
+                    } else {
+                        node.label.clone()
                     }
-                }
-                found
-            };
+                });
+
+            let is_compound = !node.children.is_empty();
             let is_collapsed = collapsed_parents.contains(&id);
 
             if is_compound {
@@ -413,10 +389,10 @@ impl<'a> IntoElement for GraphCanvas<'a> {
                 }
             }
 
-            let is_primary = state.selected.is_primary(id) || selected_node == Some(id);
-            let is_secondary = state.selected.is_secondary(id);
+            let is_primary = selected_node == Some(id);
+            let is_secondary = false;
             let is_selected = is_primary || is_secondary;
-            let has_selection = state.selected.primary_node().is_some() || selected_node.is_some();
+            let has_selection = selected_node.is_some();
             let is_neighbor = has_selection && connected_nodes.contains(&id);
             let is_faded = has_selection && !is_selected && !is_neighbor;
 
@@ -474,8 +450,8 @@ impl<'a> IntoElement for GraphCanvas<'a> {
                 node_border_color
             };
 
-            if score_opt.is_none() && idx < state.computed_styles.len() {
-                if let StylingTarget::Node(node_style) = state.computed_styles.get(idx).target {
+            if score_opt.is_none() {
+                if let StylingTarget::Node(ref node_style) = node.data.target {
                     if !is_compound {
                         fill_color = color_to_gpui(node_style.fill_color);
                         border_color = color_to_gpui(node_style.border_color);
@@ -537,10 +513,7 @@ impl<'a> IntoElement for GraphCanvas<'a> {
             );
             let (mid_x, mid_y) = (mid.x, mid.y);
 
-            let font_size = match state.edge_computed_styles.get(i).target {
-                StylingTarget::Edge(edge_style) => edge_style.label_font_size,
-                _ => cfg.edge_label_font_size,
-            };
+            let font_size = cfg.edge_label_font_size;
 
             let label_w = cfg.edge_label_width * viewport.zoom;
             let label_h = cfg.edge_label_height * viewport.zoom;
@@ -602,229 +575,97 @@ impl<'a> IntoElement for GraphCanvas<'a> {
                             y += grid_spacing;
                         }
 
-                        // Draw Edges and Arrowheads
-                        for (src_p, tgt_p, curve_style, cur_edge_color, stroke_width) in &edge_paths {
-                            let mut builder = PathBuilder::stroke(px(*stroke_width));
-                            builder.move_to(gpui::point(px(src_p.x), px(src_p.y)));
+                        // Draw Edges
+                        for (src_screen_f, tgt_screen_f, curve_style, cur_edge_color, stroke_w) in edge_paths {
+                            let src_p = gpui::point(px(src_screen_f.x), px(src_screen_f.y));
+                            let tgt_p = gpui::point(px(tgt_screen_f.x), px(tgt_screen_f.y));
+
+                            let mut builder = PathBuilder::stroke(px(stroke_w));
+                            builder.move_to(src_p);
 
                             match curve_style {
                                 EdgeCurveStyle::Straight => {
-                                    builder.line_to(gpui::point(px(tgt_p.x), px(tgt_p.y)));
+                                    builder.line_to(tgt_p);
+                                }
+                                EdgeCurveStyle::Bezier | EdgeCurveStyle::Segmented => {
+                                    let mid_x = (src_screen_f.x + tgt_screen_f.x) / 2.0;
+                                    let mid_y = (src_screen_f.y + tgt_screen_f.y) / 2.0 - cfg.edge_curvature * viewport.zoom;
+                                    let control = gpui::point(px(mid_x), px(mid_y));
+                                    builder.cubic_bezier_to(tgt_p, control, control);
                                 }
                                 EdgeCurveStyle::Taxi => {
-                                    let (wp1, wp2) = graphene_layout::compute_taxi_path(
-                                        graphene_core::Vec2::new(src_p.x, src_p.y),
-                                        graphene_core::Vec2::new(tgt_p.x, tgt_p.y),
-                                    );
-                                    builder.line_to(gpui::point(px(wp1.x), px(wp1.y)));
-                                    builder.line_to(gpui::point(px(wp2.x), px(wp2.y)));
-                                    builder.line_to(gpui::point(px(tgt_p.x), px(tgt_p.y)));
+                                    let mid_x = (src_screen_f.x + tgt_screen_f.x) / 2.0;
+                                    builder.line_to(gpui::point(px(mid_x), px(src_screen_f.y)));
+                                    builder.line_to(gpui::point(px(mid_x), px(tgt_screen_f.y)));
+                                    builder.line_to(tgt_p);
                                 }
                                 EdgeCurveStyle::UnbundledBezier(cp1, cp2) => {
-                                    builder.curve_to(gpui::point(px(cp1.x), px(cp1.y)), gpui::point(px(cp2.x), px(cp2.y)));
-                                    builder.line_to(gpui::point(px(tgt_p.x), px(tgt_p.y)));
-                                }
-                                _ => {
-                                    let mid_x = (src_p.x + tgt_p.x) / 2.0;
-                                    let mid_y = (src_p.y + tgt_p.y) / 2.0;
-                                    let dx = tgt_p.x - src_p.x;
-                                    let dy = tgt_p.y - src_p.y;
-                                    let len = (dx * dx + dy * dy).sqrt();
-                                    let curvature = cfg.edge_curvature;
-                                    let ctrl = if len > 0.0 {
-                                        Point {
-                                            x: px(mid_x - (dy / len) * curvature),
-                                            y: px(mid_y + (dx / len) * curvature),
-                                        }
-                                    } else {
-                                        Point {
-                                            x: px(mid_x),
-                                            y: px(mid_y),
-                                        }
-                                    };
-                                    builder.curve_to(ctrl, gpui::point(px(tgt_p.x), px(tgt_p.y)));
+                                    let control1 = gpui::point(px(cp1.x), px(cp1.y));
+                                    let control2 = gpui::point(px(cp2.x), px(cp2.y));
+                                    builder.cubic_bezier_to(control1, control2, tgt_p);
                                 }
                             }
+
                             if let Ok(path) = builder.build() {
-                                window.paint_path(path, *cur_edge_color);
+                                window.paint_path(path, cur_edge_color);
                             }
 
-                            // Render Directed Arrowhead
                             if is_directed {
-                                let dx = tgt_p.x - src_p.x;
-                                let dy = tgt_p.y - src_p.y;
-                                let len = (dx * dx + dy * dy).sqrt();
-                                if len > 0.1 {
-                                    let u_x = dx / len;
-                                    let u_y = dy / len;
-                                    let v_x = -u_y;
-                                    let v_y = u_x;
+                                let dx = tgt_screen_f.x - src_screen_f.x;
+                                let dy = tgt_screen_f.y - src_screen_f.y;
+                                let len = (dx * dx + dy * dy).sqrt().max(0.001);
+                                let dir_x = dx / len;
+                                let dir_y = dy / len;
+                                let perp_x = -dir_y;
+                                let perp_y = dir_x;
 
-                                    let arrow_len = cfg.arrow_length * viewport.zoom;
-                                    let arrow_width = cfg.arrow_width * viewport.zoom;
+                                let arrow_len = cfg.arrow_length * viewport.zoom;
+                                let arrow_half_w = (cfg.arrow_width / 2.0) * viewport.zoom;
 
-                                    let base_x = tgt_p.x - u_x * arrow_len;
-                                    let base_y = tgt_p.y - u_y * arrow_len;
+                                let p1 = gpui::point(
+                                    px(tgt_screen_f.x - dir_x * arrow_len + perp_x * arrow_half_w),
+                                    px(tgt_screen_f.y - dir_y * arrow_len + perp_y * arrow_half_w),
+                                );
+                                let p2 = gpui::point(
+                                    px(tgt_screen_f.x - dir_x * arrow_len - perp_x * arrow_half_w),
+                                    px(tgt_screen_f.y - dir_y * arrow_len - perp_y * arrow_half_w),
+                                );
 
-                                    let p1 = Point {
-                                        x: px(base_x + v_x * arrow_width / 2.0),
-                                        y: px(base_y + v_y * arrow_width / 2.0),
-                                    };
-                                    let p2 = Point {
-                                        x: px(base_x - v_x * arrow_width / 2.0),
-                                        y: px(base_y - v_y * arrow_width / 2.0),
-                                    };
+                                let mut arrow_builder = PathBuilder::fill();
+                                arrow_builder.move_to(tgt_p);
+                                arrow_builder.line_to(p1);
+                                arrow_builder.line_to(p2);
+                                arrow_builder.close();
 
-                                    let mut arr_builder = PathBuilder::fill();
-                                    arr_builder.move_to(gpui::point(px(tgt_p.x), px(tgt_p.y)));
-                                    arr_builder.line_to(p1);
-                                    arr_builder.line_to(p2);
-                                    arr_builder.line_to(gpui::point(px(tgt_p.x), px(tgt_p.y)));
-                                    if let Ok(arr_path) = arr_builder.build() {
-                                        window.paint_path(arr_path, edge_color);
-                                    }
+                                if let Ok(arrow_path) = arrow_builder.build() {
+                                    window.paint_path(arrow_path, cur_edge_color);
                                 }
                             }
                         }
-                    }
+                    },
                 )
-                .size_full()
                 .absolute()
-            )
-            .child(
-                gpui::div()
-                    .absolute()
-                    .top_3()
-                    .right_3()
-                    .px_2()
-                    .py_1()
-                    .bg(color_to_gpui(theme.panel_bg))
-                    .border(px(1.0))
-                    .border_color(color_to_gpui(theme.accent))
-                    .rounded_md()
-                    .text_color(color_to_gpui(theme.accent))
-                    .text_size(px(10.0))
-                    .font_weight(gpui::FontWeight::BOLD)
-                    .child(graph_type_badge),
+                .inset_0(),
             )
             .children(parent_indices.into_iter().filter_map(render_node))
             .children(leaf_indices.into_iter().filter_map(render_node))
             .children(edge_labels_to_render.into_iter().map(render_edge_label))
+            .child(
+                gpui::div()
+                    .absolute()
+                    .top(px(16.0))
+                    .right(px(16.0))
+                    .px_3()
+                    .py_1()
+                    .bg(gpui::rgba(0x1e1e2eff))
+                    .border(px(1.0))
+                    .border_color(gpui::rgba(0x313244ff))
+                    .rounded_md()
+                    .text_xs()
+                    .font_family("Courier New")
+                    .text_color(accent_color)
+                    .child(graph_type_badge),
+            )
             .into_any_element()
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_graph_node_element_construction() {
-        let elem = GraphNodeElement {
-            id: SharedString::from("test-node-1"),
-            screen_x: 100.0,
-            screen_y: 200.0,
-            width: 50.0,
-            height: 50.0,
-            border_width: 2.0,
-            border_color: gpui::rgba(0xff0000ff),
-            fill_color: gpui::rgba(0x00ff00ff),
-            shape: NodeShape::Ellipse,
-            text_color: gpui::rgba(0xffffffff),
-            font_size: 12.0,
-            label: "Node 1".to_string(),
-        };
-        assert_eq!(elem.label, "Node 1");
-        assert_eq!(elem.screen_x, 100.0);
-        assert_eq!(elem.screen_y, 200.0);
-        assert_eq!(elem.shape, NodeShape::Ellipse);
-    }
-
-    #[test]
-    fn test_graph_edge_label_element_construction() {
-        let elem = GraphEdgeLabelElement {
-            id: SharedString::from("test-edge-1"),
-            screen_x: 50.0,
-            screen_y: 75.0,
-            width: 60.0,
-            height: 20.0,
-            text_color: gpui::rgba(0x0000ffff),
-            font_size: 10.0,
-            label: "Edge A->B".to_string(),
-        };
-        assert_eq!(elem.label, "Edge A->B");
-        assert_eq!(elem.width, 60.0);
-        assert_eq!(elem.height, 20.0);
-    }
-
-    #[test]
-    fn test_color_to_gpui_conversion() {
-        let color_val = ColorValue::Rgba(1.0, 0.0, 0.0, 1.0);
-        let gpui_color = color_to_gpui(color_val);
-        assert_eq!(gpui_color, gpui::rgba(0xff0000ff));
-    }
-
-    #[test]
-    fn test_heatmap_color_bounds() {
-        let min_color = heatmap_color(0.0);
-        let max_color = heatmap_color(1.0);
-        let clamped_low = heatmap_color(-0.5);
-        let clamped_high = heatmap_color(1.5);
-        assert_eq!(clamped_low, min_color);
-        assert_eq!(clamped_high, max_color);
-    }
-
-    #[test]
-    fn test_all_node_shapes_element_construction() {
-        let shapes = [
-            NodeShape::Ellipse,
-            NodeShape::Rectangle,
-            NodeShape::Triangle,
-            NodeShape::Square,
-            NodeShape::Diamond,
-            NodeShape::Pentagon,
-            NodeShape::Hexagon,
-            NodeShape::Octagon,
-            NodeShape::Star,
-            NodeShape::Ribbon,
-        ];
-        for shape in shapes {
-            let elem = GraphNodeElement {
-                id: SharedString::from(format!("node-{:?}", shape)),
-                screen_x: 10.0,
-                screen_y: 20.0,
-                width: 30.0,
-                height: 30.0,
-                border_width: 1.0,
-                border_color: gpui::rgba(0x000000ff),
-                fill_color: gpui::rgba(0xffffffff),
-                shape,
-                text_color: gpui::rgba(0x000000ff),
-                font_size: 10.0,
-                label: "N".to_string(),
-            };
-            assert_eq!(elem.shape, shape);
-        }
-    }
-
-    #[test]
-    fn test_canvas_config_performance_mode_defaults() {
-        let cfg = CanvasConfig::default();
-        assert!(!cfg.hide_edges_during_pan);
-        assert_eq!(cfg.min_visible_font_size, 4.0);
-    }
-
-    #[test]
-    fn test_edge_curve_style_extended_variants() {
-        let taxi = EdgeCurveStyle::Taxi;
-        let bezier = EdgeCurveStyle::UnbundledBezier(
-            graphene_core::math::Vec2::new(10.0, 20.0),
-            graphene_core::math::Vec2::new(30.0, 40.0),
-        );
-        assert_eq!(taxi, EdgeCurveStyle::Taxi);
-        assert_ne!(taxi, bezier);
-    }
-}
-
-
-

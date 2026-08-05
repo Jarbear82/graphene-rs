@@ -4,11 +4,12 @@ use gpui::{
     px, Context, EntityInputHandler, InteractiveElement, IntoElement, MouseDownEvent,
     ParentElement, Render, Styled, Window,
 };
-use graphene_core::HierarchyExt;
+use graphene_core::math::{Size2, Vec2};
+use graphene_core::NodeId;
 use graphene_gpui::render::graph_canvas::GraphCanvas;
 
 impl Render for DemoApp {
-    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let render_start = std::time::Instant::now();
         let now = std::time::Instant::now();
         let delta = now.duration_since(self.last_frame_instant).as_secs_f64();
@@ -18,100 +19,55 @@ impl Render for DemoApp {
             self.telemetry_fps = self.telemetry_fps * 0.9 + current_fps * 0.1;
         }
 
+        self.drain_updates_and_sync();
+
         let theme = self.get_theme();
         let max_len = self.get_max_untruncated_len();
+        self.view.measure_and_cache_node_sizes(
+            cx.text_system(),
+            14.0,
+            max_len,
+            &self.collapsed_parents,
+        );
         let fixture = &self.fixtures[self.selected_fixture_idx];
 
         let mut formatted_count = 0;
         let mut visible_count = 0;
 
-        for (idx, &id) in self.state.node_index_to_id.iter().enumerate() {
-            let is_parent_node = self.state.is_parent(idx);
+        for &id in &self.view.node_order {
+            let Some(node) = self.view.nodes.get(&id) else {
+                continue;
+            };
+            let is_parent_node = !node.children.is_empty();
             let is_collapsed = self.collapsed_parents.contains(&id);
 
             if is_parent_node && !is_collapsed {
                 continue;
             }
 
-            let pos = *self.state.positions.get(idx);
-            let size_curr = *self.state.sizes.get(idx);
-
-            if self.viewport.is_visible(pos, size_curr) {
+            if self.viewport.is_visible(node.pos, node.size) {
                 visible_count += 1;
                 formatted_count += 1;
-
-                let mut label = fixture.node_labels.get(&id).cloned().unwrap_or_default();
-                if is_parent_node && is_collapsed {
-                    label = format!("[+] {}", label);
-                }
-                let label_len = label.chars().count();
-
-                let is_selected = self.selected_node == Some(id);
-                let target_w = if label_len > max_len {
-                    if is_selected {
-                        40.0 + (label_len as f32) * 6.0
-                    } else {
-                        40.0 + (max_len as f32) * 6.0
-                    }
-                } else {
-                    40.0 + (label_len as f32) * 6.0
-                };
-
-                let size = self.state.sizes.get_mut(idx);
-                size.w = target_w;
             }
         }
 
         self.telemetry_visible_nodes = visible_count;
         self.telemetry_labels_formatted = formatted_count;
         self.telemetry_render_ms = render_start.elapsed().as_secs_f64() * 1000.0;
-        self.telemetry_worker_threads = self.engine.active_worker_threads();
-        self.telemetry_worker_state = self.engine.worker_state().as_str().to_string();
 
-        let is_animating = !self.state.animations.tracks.is_empty();
-        let snap = self.engine.latest_snapshot();
-        if !is_animating
-            && !self.is_layout_running
-            && snap.version > self.snapshot_version
-            && snap.positions.len() == self.state.node_index_to_id.len()
-        {
-            let t_start = std::time::Instant::now();
-            self.snapshot_version = snap.version;
-            self.telemetry_is_worker_thread = true;
-            self.is_layout_running = false;
-            let drag_node_id = self.interaction_state.drag_start.map(|(id, _, _)| id);
-            for (i, &pos) in snap.positions.iter().enumerate() {
-                let id = self.state.node_index_to_id[i];
-                if Some(id) != drag_node_id {
-                    self.state.positions.set(i, pos);
-                }
-            }
-            self.telemetry_physics_ms = t_start.elapsed().as_secs_f64() * 1000.0;
-        }
-
-        let is_animating = !self.state.animations.tracks.is_empty();
         let sim_converged = self.live_sim.is_converged();
         let needs_physics = self.physics_enabled
             && (!sim_converged || self.interaction_state.drag_start.is_some());
-        let needs_tick = is_animating || needs_physics;
 
-        if needs_tick {
-            if is_animating {
-                self.state
-                    .tick_animations(std::time::Duration::from_millis(16));
-                if self.state.animations.tracks.is_empty() {
-                    self.interaction_state.rebuild_grid(&self.state);
-                }
-            } else if needs_physics {
-                self.run_physics_step();
-            }
+        if needs_physics {
+            self.run_physics_step();
 
             cx.spawn(async move |this, cx| {
                 cx.background_executor()
                     .timer(std::time::Duration::from_millis(16))
                     .await;
                 this.update(cx, |this, cx| {
-                    if this.physics_enabled && !is_animating {
+                    if this.physics_enabled {
                         if this.interaction_state.drag_start.is_some() {
                             this.physics_temperature = 10.0;
                         } else {
@@ -137,8 +93,8 @@ impl Render for DemoApp {
                     .flex_1()
                     .h(px(0.0))
                     .child(self.render_sidebar_left(&theme, cx))
-                    .child(self.render_canvas_view(&theme, window, cx))
-                    .child(self.render_sidebar_right(&theme, window, cx)),
+                    .child(self.render_canvas_view(&theme, _window, cx))
+                    .child(self.render_sidebar_right(&theme, _window, cx)),
             )
             .child(self.render_bottom_bar(&theme))
     }
@@ -193,7 +149,7 @@ impl DemoApp {
                         gpui::div()
                             .text_color(theme.text_dim)
                             .text_size(px(12.0))
-                            .child("Status: Live (Animated)"),
+                            .child("Status: Live (Message-Passing Engine)"),
                     ),
             )
     }
@@ -201,7 +157,7 @@ impl DemoApp {
     fn render_canvas_view(
         &self,
         theme: &Theme,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
         let weak_entity = cx.weak_entity();
@@ -239,7 +195,7 @@ impl DemoApp {
             )
             .child(
                 GraphCanvas::new(
-                    &self.state,
+                    &self.view,
                     &self.viewport,
                     &self.interaction_state,
                     &self.themes.themes[self.current_theme_idx],
@@ -256,10 +212,11 @@ impl DemoApp {
             .on_mouse_down(
                 gpui::MouseButton::Left,
                 cx.listener(|this, ev: &MouseDownEvent, window, cx| {
+                    let click_pos = gpui::point(f32::from(ev.position.x), f32::from(ev.position.y));
                     let hit_node = this.interaction_state.hit_test(
-                        gpui::point(f32::from(ev.position.x), f32::from(ev.position.y)),
+                        click_pos,
                         &this.viewport,
-                        &this.state,
+                        &this.view,
                         this.physics_enabled,
                     );
                     let now = std::time::Instant::now();
@@ -278,25 +235,18 @@ impl DemoApp {
                         if let Some((prev_id, prev_time)) = this.last_node_click {
                             if prev_id == node_id && now.duration_since(prev_time).as_millis() < 300 {
                                 let is_parent = this
-                                    .state
-                                    .node_keys
-                                    .get(node_id)
-                                    .map(|&idx| this.state.is_parent(idx))
-                                    .unwrap_or(false);
+                                    .view
+                                    .nodes
+                                    .get(&node_id)
+                                    .map_or(false, |n| !n.children.is_empty());
                                 if is_parent {
-                                    this.undo_redo.record_state(&this.state);
                                     if this.collapsed_parents.contains(&node_id) {
                                         this.collapsed_parents.remove(&node_id);
                                     } else {
                                         this.collapsed_parents.insert(node_id);
                                     }
-                                    graphene_layout::resolve_compound_bounds(
-                                        &mut this.state,
-                                        &this.collapsed_parents,
-                                        20.0,
-                                    );
                                     this.physics_temperature = 5.0;
-                                    this.interaction_state.rebuild_grid(&this.state);
+                                    this.interaction_state.rebuild_grid(&this.view);
                                     this.last_node_click = None;
                                     cx.notify();
                                     return;
@@ -304,39 +254,19 @@ impl DemoApp {
                             }
                         }
                         this.last_node_click = Some((node_id, now));
-
-                        this.undo_redo.record_state(&this.state);
-                        this.state.selected.select_node(node_id, &this.state.node_keys);
-                        this.selected_node = this.state.selected.primary_node();
+                        this.selected_node = Some(node_id);
                         this.selected_edge = None;
                         if this.physics_enabled {
                             this.physics_temperature = 5.0;
                         }
 
-                        if let (Some(p_id), Some(s_id)) = (this.state.selected.primary_node(), this.state.selected.secondary_node()) {
-                            let p_label = this.state.get_node_label(p_id)
-                                .map(|s| s.to_string())
-                                .or_else(|| this.fixtures[this.selected_fixture_idx].node_labels.get(&p_id).cloned())
-                                .unwrap_or_else(|| format!("N{}", this.state.node_keys[p_id]));
-
-                            let s_label = this.state.get_node_label(s_id)
-                                .map(|s| s.to_string())
-                                .or_else(|| this.fixtures[this.selected_fixture_idx].node_labels.get(&s_id).cloned())
-                                .unwrap_or_else(|| format!("N{}", this.state.node_keys[s_id]));
-
-                            this.edge_src_state.update(cx, |input, cx| {
-                                let len = input.text().len();
-                                input.replace_text_in_range(Some(0..len), &p_label, window, cx);
-                            });
-                            this.edge_tgt_state.update(cx, |input, cx| {
-                                let len = input.text().len();
-                                input.replace_text_in_range(Some(0..len), &s_label, window, cx);
-                            });
-                        } else if let Some(p_id) = this.state.selected.primary_node() {
-                            let label = this.state.get_node_label(p_id)
-                                .map(|s| s.to_string())
-                                .or_else(|| this.fixtures[this.selected_fixture_idx].node_labels.get(&p_id).cloned())
-                                .unwrap_or_else(|| format!("N{}", this.state.node_keys[p_id]));
+                        if let Some(p_id) = this.selected_node {
+                            let label = this
+                                .view
+                                .nodes
+                                .get(&p_id)
+                                .map(|n| n.label.clone())
+                                .unwrap_or_else(|| format!("N{:?}", p_id));
                             this.node_name_state.update(cx, |input, cx| {
                                 let len = input.text().len();
                                 input.replace_text_in_range(Some(0..len), &label, window, cx);
@@ -345,7 +275,6 @@ impl DemoApp {
                     } else {
                         this.last_node_click = None;
                         let now = std::time::Instant::now();
-                        let click_pos = gpui::point(f32::from(ev.position.x), f32::from(ev.position.y));
                         let is_double_click = if let Some((prev_pos, prev_time)) = this.last_canvas_click {
                             now.duration_since(prev_time).as_millis() < 350
                                 && (prev_pos.x - click_pos.x).abs() < 10.0
@@ -356,26 +285,7 @@ impl DemoApp {
 
                         if is_double_click {
                             this.last_canvas_click = None;
-                            this.undo_redo.record_state(&this.state);
-                            let label = format!("Node {}", this.state.node_count() + 1);
-                            let new_id = this.interaction_state.on_double_click(
-                                click_pos,
-                                &this.viewport,
-                                &mut this.state,
-                                &label,
-                            );
-                            this.fixtures[this.selected_fixture_idx]
-                                .node_labels
-                                .insert(new_id, label.clone());
-                            this.state.selected.select_node(new_id, &this.state.node_keys);
-                            this.selected_node = Some(new_id);
-                            this.selected_edge = None;
-                            this.node_name_state.update(cx, |input, cx| {
-                                let len = input.text().len();
-                                input.replace_text_in_range(Some(0..len), &label, window, cx);
-                            });
-                            this.run_analysis();
-                            this.engine.load_preset(this.state.clone());
+                            this.add_new_node(window, cx);
                             cx.notify();
                             return;
                         } else {
@@ -385,84 +295,50 @@ impl DemoApp {
                         let hit_edge = this.interaction_state.hit_test_edge(
                             click_pos,
                             &this.viewport,
-                            &this.state,
+                            &this.view,
                             8.0,
                         );
 
-                        if let Some(edge_idx) = hit_edge {
-                            this.selected_edge = Some(edge_idx);
-                            this.state.selected.select_edge(edge_idx);
+                        if let Some(edge_id) = hit_edge {
+                            if let Some(pos) = this.view.edge_order.iter().position(|&e| e == edge_id) {
+                                this.selected_edge = Some(pos);
+                            }
                             this.selected_node = None;
                         } else {
                             this.selected_node = None;
                             this.selected_edge = None;
-                            this.state.selected.clear();
                         }
                     }
 
-                    let mut is_mut = this.interaction_state.clone();
-                    is_mut.on_mouse_down(
-                        gpui::point(f32::from(ev.position.x), f32::from(ev.position.y)),
-                        hit_node,
-                        &this.state,
-                    );
-                    this.interaction_state = is_mut;
+                    this.interaction_state.on_mouse_down(click_pos, hit_node, &this.view);
                     cx.notify();
                 }),
             )
             .on_mouse_move(cx.listener(|this, ev: &gpui::MouseMoveEvent, _, cx| {
-                let mut is_mut = this.interaction_state.clone();
-                let mut vp_mut = this.viewport.clone();
-                let mut st_mut = this.state.clone();
+                let mouse_pos = gpui::point(f32::from(ev.position.x), f32::from(ev.position.y));
+                let mut interaction = this.interaction_state.clone();
+                let mut vp = this.viewport.clone();
 
-                is_mut.on_mouse_drag(
-                    gpui::point(f32::from(ev.position.x), f32::from(ev.position.y)),
-                    &mut vp_mut,
-                    &mut st_mut,
-                );
-
-                this.interaction_state = is_mut;
-                this.viewport = vp_mut;
-                this.state = st_mut;
-
-                if let Some((drag_id, _, _)) = this.interaction_state.drag_start {
-                    if let Some(&drag_idx) = this.state.node_keys.get(drag_id) {
-                        let dragged_pos = *this.state.positions.get(drag_idx);
-                        this.engine
-                            .send_command(graphene_layout::GraphCommand::SetPosition {
-                                id: drag_id,
-                                pos: dragged_pos,
-                            })
-                            .ok();
-                    }
-                    this.resolve_collisions();
-                    graphene_layout::resolve_compound_bounds(
-                        &mut this.state,
-                        &this.collapsed_parents,
-                        20.0,
-                    );
-                    this.state.dirty_flags |= graphene_core::DirtyFlags::POSITION_DIRTY;
+                if let Some((drag_id, step_delta)) =
+                    interaction.on_mouse_drag(mouse_pos, &mut vp, &this.view)
+                {
+                    this.engine
+                        .send_command(graphene_layout::GraphCommand::TranslateSubtree {
+                            id: drag_id,
+                            delta: step_delta,
+                        })
+                        .ok();
                 }
+
+                this.interaction_state = interaction;
+                this.viewport = vp;
                 cx.notify();
             }))
             .on_mouse_up(
                 gpui::MouseButton::Left,
                 cx.listener(|this, _, _, cx| {
-                    if let Some((drag_id, _, _)) = this.interaction_state.drag_start {
-                        if let Some(&drag_idx) = this.state.node_keys.get(drag_id) {
-                            let final_pos = *this.state.positions.get(drag_idx);
-                            this.engine
-                                .send_command(graphene_layout::GraphCommand::SetPosition {
-                                    id: drag_id,
-                                    pos: final_pos,
-                                })
-                                .ok();
-                        }
-                    }
-                    let mut is_mut = this.interaction_state.clone();
-                    is_mut.on_mouse_up();
-                    this.interaction_state = is_mut;
-                    this.interaction_state.rebuild_grid(&this.state);
+                    this.interaction_state.on_mouse_up();
+                    this.interaction_state.rebuild_grid(&this.view);
                     cx.notify();
                 }),
             )
@@ -489,8 +365,7 @@ impl DemoApp {
         let fps_text = format!("{:.1} FPS ({:.2} ms)", self.telemetry_fps, 1000.0 / self.telemetry_fps.max(1.0));
         let physics_text = format!("{:.3} ms", self.telemetry_physics_ms);
         let render_text = format!("{:.3} ms", self.telemetry_render_ms);
-        let mode_text = if self.telemetry_is_worker_thread { "Async Worker Thread" } else { "Sync Main UI Thread" };
-        let scale_text = format!("{} Nodes | {} Edges", self.state.node_count(), self.state.edges.len());
+        let scale_text = format!("{} Nodes | {} Edges", self.view.nodes.len(), self.view.edges.len());
         let culling_text = format!("{} Visible / {} Formatted Labels", self.telemetry_visible_nodes, self.telemetry_labels_formatted);
 
         Some(
@@ -518,143 +393,57 @@ impl DemoApp {
                 .child(
                     gpui::div()
                         .text_color(theme.text)
-                        .child(format!("⏱️ Frame: {}", fps_text)),
+                        .child(format!("Frame Rate: {}", fps_text)),
+                )
+                .child(
+                    gpui::div()
+                        .text_color(theme.text_dim)
+                        .child(format!("Physics Tick: {}", physics_text)),
+                )
+                .child(
+                    gpui::div()
+                        .text_color(theme.text_dim)
+                        .child(format!("Render Time: {}", render_text)),
                 )
                 .child(
                     gpui::div()
                         .text_color(theme.text)
-                        .child(format!("⚡ Physics: {}", physics_text)),
-                )
-                .child(
-                    gpui::div()
-                        .text_color(theme.text)
-                        .child(format!("🎨 Render Build: {}", render_text)),
+                        .child(format!("Engine Threads: {} ({})", self.telemetry_worker_threads, self.telemetry_worker_state)),
                 )
                 .child(
                     gpui::div()
                         .text_color(theme.text_dim)
-                        .child(format!("🧵 Thread Pool: {} Active OS Worker Thread(s)", self.telemetry_worker_threads)),
-                )
-                .child(
-                    gpui::div()
-                        .text_color(theme.accent)
-                        .font_weight(gpui::FontWeight::BOLD)
-                        .child(format!("⚙️ Worker Activity: {}", self.telemetry_worker_state)),
+                        .child(scale_text),
                 )
                 .child(
                     gpui::div()
                         .text_color(theme.text_dim)
-                        .child(format!("📊 Scale: {}", scale_text)),
-                )
-                .child(
-                    gpui::div()
-                        .text_color(theme.text_dim)
-                        .child(format!("🎯 Viewport: {}", culling_text)),
+                        .child(culling_text),
                 ),
         )
     }
 
     fn render_bottom_bar(&self, theme: &Theme) -> impl IntoElement {
-        let nodes_count = self.state.node_index_to_id.len();
-        let edges_count = self.state.edges.len();
-
-        let selection_status = if let Some(node_id) = self.selected_node {
-            let label = self.fixtures[self.selected_fixture_idx]
-                .node_labels
-                .get(&node_id)
-                .cloned()
-                .unwrap_or_else(|| format!("N{}", self.state.node_keys[node_id]));
-            format!("Selected: Node {}", label)
-        } else if let Some(edge_idx) = self.selected_edge {
-            format!("Selected: Edge #{}", edge_idx)
-        } else {
-            "Selected: None".to_string()
-        };
-
-        let physics_status = if self.physics_enabled {
-            format!("Physics: Active (T={:.2})", self.physics_temperature)
-        } else {
-            "Physics: Disabled".to_string()
-        };
-
         gpui::div()
-            .flex()
-            .items_center()
-            .justify_between()
-            .h(px(26.0))
-            .px(px(12.0))
+            .h(px(28.0))
             .bg(theme.panel_bg)
             .border_t(px(1.0))
             .border_color(theme.border)
+            .px_3()
+            .flex()
+            .items_center()
+            .justify_between()
+            .text_xs()
+            .text_color(theme.text_dim)
             .child(
                 gpui::div()
                     .flex()
                     .items_center()
-                    .gap_3()
-                    .child(
-                        gpui::div()
-                            .text_color(theme.text_dim)
-                            .text_size(px(11.0))
-                            .child(format!("Nodes: {}  •  Edges: {}", nodes_count, edges_count)),
-                    )
-                    .child(
-                        gpui::div()
-                            .text_color(theme.border)
-                            .text_size(px(11.0))
-                            .child("|"),
-                    )
-                    .child(
-                        gpui::div()
-                            .text_color(theme.accent)
-                            .text_size(px(11.0))
-                            .child(selection_status),
-                    ),
+                    .gap_4()
+                    .child(format!("Nodes: {} | Edges: {}", self.view.nodes.len(), self.view.edges.len()))
+                    .child(format!("Layout: {}", self.selected_layout))
+                    .child(format!("Physics: {}", if self.physics_enabled { "ON" } else { "OFF" })),
             )
-            .child(
-                gpui::div()
-                    .text_color(theme.text_dim)
-                    .text_size(px(11.0))
-                    .italic()
-                    .child("Tips: [Left-drag] nodes to move • [Drag bg] to pan • [Scroll] to zoom"),
-            )
-            .child(
-                gpui::div()
-                    .flex()
-                    .items_center()
-                    .gap_3()
-                    .child(
-                        gpui::div()
-                            .text_color(theme.text_dim)
-                            .text_size(px(11.0))
-                            .child(physics_status),
-                    )
-                    .child(
-                        gpui::div()
-                            .text_color(theme.border)
-                            .text_size(px(11.0))
-                            .child("|"),
-                    )
-                    .child(
-                        gpui::div()
-                            .text_color(theme.text_dim)
-                            .text_size(px(11.0))
-                            .child(format!("Layout: {}", self.selected_layout)),
-                    )
-                    .child(
-                        gpui::div()
-                            .text_color(theme.border)
-                            .text_size(px(11.0))
-                            .child("|"),
-                    )
-                    .child(
-                        gpui::div()
-                            .text_color(theme.text_dim)
-                            .text_size(px(11.0))
-                            .child(format!(
-                                "Theme: {}",
-                                self.themes.themes[self.current_theme_idx].name
-                            )),
-                    ),
-            )
+            .child("Single Source of Truth Engine Active")
     }
 }

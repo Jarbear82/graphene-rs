@@ -11,7 +11,7 @@ use crate::MdsLayout;
 use crate::ReingoldTilfordLayout;
 use graphene_analysis::GraphAnalysisReport;
 use graphene_core::math::{Size2, Vec2};
-use graphene_core::{EdgeData, GraphState, NodeId};
+use graphene_core::{EdgeData, GraphState, NodeId, UndoRedoManager};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{channel, Sender};
 use std::sync::{Arc, RwLock};
@@ -99,6 +99,7 @@ pub enum GraphCommand<S: Copy + Send + 'static> {
         pos: Vec2,
         size: Size2,
         data: S,
+        label: Option<String>,
     },
     AddEdge {
         source: NodeId,
@@ -115,6 +116,24 @@ pub enum GraphCommand<S: Copy + Send + 'static> {
         id: NodeId,
         delta: Vec2,
     },
+    TranslateSubtree {
+        id: NodeId,
+        delta: Vec2,
+    },
+    Reparent {
+        child: NodeId,
+        parent: Option<NodeId>,
+    },
+    SetNodeLabel {
+        id: NodeId,
+        label: String,
+    },
+    SetNodeData {
+        id: NodeId,
+        data: S,
+    },
+    Undo,
+    Redo,
     LoadPreset(GraphState<S>),
     RunLayout(LayoutCommand),
     RunAnalysis {
@@ -127,16 +146,59 @@ pub enum GraphCommand<S: Copy + Send + 'static> {
     StepLayoutPhase(LayoutCommand),
     UpdateLiveSimParam(crate::livesim::LiveSimParam),
     SetUiMode(bool),
-    SetNodeLabel {
-        id: NodeId,
-        label: String,
-    },
     UpdateCachedNodeSize {
         id: NodeId,
         size: Size2,
     },
     QueryState(Sender<GraphState<S>>),
     Shutdown,
+}
+
+/// Reactive updates sent from the GraphEngine thread to the UI thread.
+#[derive(Debug, Clone)]
+pub enum GraphUpdate<S: Copy + Send + 'static> {
+    NodeAdded {
+        id: NodeId,
+        pos: Vec2,
+        size: Size2,
+        data: S,
+        label: String,
+        parent: Option<NodeId>,
+    },
+    NodeRemoved {
+        id: NodeId,
+    },
+    EdgeAdded {
+        id: graphene_core::EdgeId,
+        source: NodeId,
+        target: NodeId,
+        data: EdgeData,
+    },
+    EdgeRemoved {
+        id: graphene_core::EdgeId,
+    },
+    NodeUpdated {
+        id: NodeId,
+        pos: Option<Vec2>,
+        size: Option<Size2>,
+        label: Option<String>,
+        data: Option<S>,
+    },
+    NodeReparented {
+        child: NodeId,
+        parent: Option<NodeId>,
+    },
+    Snapshot(RenderSnapshot),
+    AnalysisReady(GraphAnalysisReport),
+    CommandRejected {
+        reason: String,
+    },
+    StateVersion(u64),
+    PresetLoaded(GraphState<S>),
+    UndoRedoStateChanged {
+        can_undo: bool,
+        can_redo: bool,
+    },
 }
 
 /// Current execution activity of the background GraphEngine worker thread.
@@ -165,6 +227,7 @@ pub struct GraphEngineHandle<S: Copy + Send + 'static> {
     snapshot: Arc<RwLock<RenderSnapshot>>,
     analysis_report: Arc<RwLock<Option<GraphAnalysisReport>>>,
     command_tx: Sender<GraphCommand<S>>,
+    update_rx: std::sync::mpsc::Receiver<GraphUpdate<S>>,
     engine_thread: Option<JoinHandle<()>>,
     active_worker_threads: Arc<AtomicUsize>,
     worker_activity: Arc<AtomicUsize>,
@@ -174,6 +237,7 @@ impl<S: Copy + Default + Send + Sync + 'static> GraphEngineHandle<S> {
     /// Spawn the GraphEngine on a dedicated background thread, taking exclusive ownership of `initial_state`.
     pub fn spawn(initial_state: GraphState<S>) -> Self {
         let (command_tx, command_rx) = channel::<GraphCommand<S>>();
+        let (update_tx, update_rx) = channel::<GraphUpdate<S>>();
 
         let n = initial_state.node_index_to_id.len();
         let initial_positions: Vec<Vec2> =
@@ -197,8 +261,11 @@ impl<S: Copy + Default + Send + Sync + 'static> GraphEngineHandle<S> {
 
         let engine_thread = spawn(move || {
             let mut state = initial_state;
+            let mut undo_redo = UndoRedoManager::<S>::new();
             let mut active_sim: Option<LiveForceSimulation> = None;
             let mut version_counter = 0u64;
+
+            let _ = update_tx.send(GraphUpdate::PresetLoaded(state.clone()));
 
             loop {
                 if active_sim.is_some() {
@@ -206,10 +273,12 @@ impl<S: Copy + Default + Send + Sync + 'static> GraphEngineHandle<S> {
                     while let Ok(cmd) = command_rx.try_recv() {
                         if !Self::process_command(
                             &mut state,
+                            &mut undo_redo,
                             &mut active_sim,
                             cmd,
                             &snapshot_clone,
                             &analysis_report_clone,
+                            &update_tx,
                             &threads_counter_clone,
                             &activity_counter_clone,
                             &mut version_counter,
@@ -228,10 +297,12 @@ impl<S: Copy + Default + Send + Sync + 'static> GraphEngineHandle<S> {
                         Ok(cmd) => {
                             if !Self::process_command(
                                 &mut state,
+                                &mut undo_redo,
                                 &mut active_sim,
                                 cmd,
                                 &snapshot_clone,
                                 &analysis_report_clone,
+                                &update_tx,
                                 &threads_counter_clone,
                                 &activity_counter_clone,
                                 &mut version_counter,
@@ -249,6 +320,7 @@ impl<S: Copy + Default + Send + Sync + 'static> GraphEngineHandle<S> {
             snapshot,
             analysis_report,
             command_tx,
+            update_rx,
             engine_thread: Some(engine_thread),
             active_worker_threads,
             worker_activity,
@@ -257,60 +329,172 @@ impl<S: Copy + Default + Send + Sync + 'static> GraphEngineHandle<S> {
 
     fn process_command(
         state: &mut GraphState<S>,
+        undo_redo: &mut UndoRedoManager<S>,
         active_sim: &mut Option<LiveForceSimulation>,
         cmd: GraphCommand<S>,
         snapshot: &Arc<RwLock<RenderSnapshot>>,
         analysis_report: &Arc<RwLock<Option<GraphAnalysisReport>>>,
+        update_tx: &Sender<GraphUpdate<S>>,
         active_threads: &Arc<AtomicUsize>,
         worker_activity: &Arc<AtomicUsize>,
         version: &mut u64,
     ) -> bool {
         match cmd {
-            GraphCommand::AddNode { pos, size, data: _ } => {
-                let _id = state.add_node(pos, size);
+            GraphCommand::AddNode { pos, size, data, label } => {
+                undo_redo.record_state(state);
+                let id = state.add_node(pos, size);
+                if let Some(ref lbl) = label {
+                    state.set_node_label(id, lbl);
+                }
+                if let Some(&idx) = state.node_keys.get(id) {
+                    state.computed_styles.set(idx, data);
+                }
                 *version += 1;
                 Self::publish_snapshot(state, snapshot, *version);
+                let lbl_val = state
+                    .get_node_label(id)
+                    .map(|s| s.to_string())
+                    .unwrap_or_default();
+                let parent = state
+                    .node_keys
+                    .get(id)
+                    .and_then(|&idx| *state.hierarchy.parent.get(idx));
+                let _ = update_tx.send(GraphUpdate::NodeAdded {
+                    id,
+                    pos,
+                    size,
+                    data,
+                    label: lbl_val,
+                    parent,
+                });
             }
             GraphCommand::AddEdge {
                 source,
                 target,
                 data,
             } => {
-                state.add_edge(source, target, data);
+                undo_redo.record_state(state);
+                let edge_id = state.add_edge(source, target, data.clone());
                 *version += 1;
                 Self::publish_snapshot(state, snapshot, *version);
+                let _ = update_tx.send(GraphUpdate::EdgeAdded {
+                    id: edge_id,
+                    source,
+                    target,
+                    data,
+                });
             }
             GraphCommand::RemoveNode(node_id) => {
+                undo_redo.record_state(state);
                 state.remove_node(node_id);
                 *version += 1;
                 Self::publish_snapshot(state, snapshot, *version);
+                let _ = update_tx.send(GraphUpdate::NodeRemoved { id: node_id });
             }
             GraphCommand::RemoveEdge(edge_id) => {
+                undo_redo.record_state(state);
                 state.remove_edge(edge_id);
                 *version += 1;
                 Self::publish_snapshot(state, snapshot, *version);
+                let _ = update_tx.send(GraphUpdate::EdgeRemoved { id: edge_id });
             }
             GraphCommand::SetPosition { id, pos } => {
                 if let Some(&idx) = state.node_keys.get(id) {
+                    undo_redo.record_state(state);
                     state.positions.set(idx, pos);
                     *version += 1;
                     Self::publish_snapshot(state, snapshot, *version);
+                    let _ = update_tx.send(GraphUpdate::NodeUpdated {
+                        id,
+                        pos: Some(pos),
+                        size: None,
+                        label: None,
+                        data: None,
+                    });
                 }
             }
             GraphCommand::TranslateNode { id, delta } => {
                 if let Some(&idx) = state.node_keys.get(id) {
+                    undo_redo.record_state(state);
                     let old_pos = *state.positions.get(idx);
-                    state.positions.set(idx, old_pos + delta);
+                    let new_pos = old_pos + delta;
+                    state.positions.set(idx, new_pos);
                     *version += 1;
                     Self::publish_snapshot(state, snapshot, *version);
+                    let _ = update_tx.send(GraphUpdate::NodeUpdated {
+                        id,
+                        pos: Some(new_pos),
+                        size: None,
+                        label: None,
+                        data: None,
+                    });
+                }
+            }
+            GraphCommand::TranslateSubtree { id, delta } => {
+                undo_redo.record_state(state);
+                state.translate_node_and_descendants(id, delta);
+                *version += 1;
+                Self::publish_snapshot(state, snapshot, *version);
+                let _ = update_tx.send(GraphUpdate::PresetLoaded(state.clone()));
+            }
+            GraphCommand::Reparent { child, parent } => {
+                undo_redo.record_state(state);
+                state.reparent_node(child, parent);
+                *version += 1;
+                Self::publish_snapshot(state, snapshot, *version);
+                let _ = update_tx.send(GraphUpdate::NodeReparented { child, parent });
+            }
+            GraphCommand::SetNodeLabel { id, label } => {
+                undo_redo.record_state(state);
+                state.set_node_label(id, &label);
+                *version += 1;
+                Self::publish_snapshot(state, snapshot, *version);
+                let _ = update_tx.send(GraphUpdate::NodeUpdated {
+                    id,
+                    pos: None,
+                    size: None,
+                    label: Some(label),
+                    data: None,
+                });
+            }
+            GraphCommand::SetNodeData { id, data } => {
+                if let Some(&idx) = state.node_keys.get(id) {
+                    undo_redo.record_state(state);
+                    state.computed_styles.set(idx, data);
+                    *version += 1;
+                    Self::publish_snapshot(state, snapshot, *version);
+                    let _ = update_tx.send(GraphUpdate::NodeUpdated {
+                        id,
+                        pos: None,
+                        size: None,
+                        label: None,
+                        data: Some(data),
+                    });
+                }
+            }
+            GraphCommand::Undo => {
+                if undo_redo.undo(state) {
+                    *version += 1;
+                    Self::publish_snapshot(state, snapshot, *version);
+                    let _ = update_tx.send(GraphUpdate::PresetLoaded(state.clone()));
+                }
+            }
+            GraphCommand::Redo => {
+                if undo_redo.redo(state) {
+                    *version += 1;
+                    Self::publish_snapshot(state, snapshot, *version);
+                    let _ = update_tx.send(GraphUpdate::PresetLoaded(state.clone()));
                 }
             }
             GraphCommand::LoadPreset(new_state) => {
+                undo_redo.record_state(state);
                 *state = new_state;
                 *version += 1;
                 Self::publish_snapshot(state, snapshot, *version);
+                let _ = update_tx.send(GraphUpdate::PresetLoaded(state.clone()));
             }
             GraphCommand::RunLayout(layout_cmd) => {
+                undo_redo.record_state(state);
                 active_threads.fetch_add(1, Ordering::Relaxed);
                 worker_activity.store(2, Ordering::Relaxed);
                 match layout_cmd {
@@ -334,21 +518,23 @@ impl<S: Copy + Default + Send + Sync + 'static> GraphEngineHandle<S> {
                 crate::collision::finish_layout_epilogue(state, &collapsed, 10.0, 20.0);
                 *version += 1;
                 Self::publish_snapshot(state, snapshot, *version);
+                let _ = update_tx.send(GraphUpdate::PresetLoaded(state.clone()));
                 worker_activity.store(if active_sim.is_some() { 1 } else { 0 }, Ordering::Relaxed);
                 active_threads.fetch_sub(1, Ordering::Relaxed);
             }
             GraphCommand::RunAnalysis { is_directed } => {
-                // Spawn a sub-thread off the Engine thread to analyze a state snapshot asynchronously
                 let mut state_snapshot = state.clone();
                 state_snapshot.set_ui_mode(false);
                 let report_arc = Arc::clone(analysis_report);
+                let update_tx_clone = update_tx.clone();
                 let counter = Arc::clone(active_threads);
                 counter.fetch_add(1, Ordering::Relaxed);
                 spawn(move || {
                     let report = GraphAnalysisReport::analyze(&state_snapshot, is_directed);
                     if let Ok(mut lock) = report_arc.write() {
-                        *lock = Some(report);
+                        *lock = Some(report.clone());
                     }
+                    let _ = update_tx_clone.send(GraphUpdate::AnalysisReady(report));
                     counter.fetch_sub(1, Ordering::Relaxed);
                 });
             }
@@ -401,6 +587,7 @@ impl<S: Copy + Default + Send + Sync + 'static> GraphEngineHandle<S> {
                 }
                 *version += 1;
                 Self::publish_snapshot(state, snapshot, *version);
+                let _ = update_tx.send(GraphUpdate::PresetLoaded(state.clone()));
             }
             GraphCommand::UpdateLiveSimParam(param) => {
                 if let Some(ref mut sim) = active_sim {
@@ -412,15 +599,17 @@ impl<S: Copy + Default + Send + Sync + 'static> GraphEngineHandle<S> {
                 *version += 1;
                 Self::publish_snapshot(state, snapshot, *version);
             }
-            GraphCommand::SetNodeLabel { id, label } => {
-                state.set_node_label(id, &label);
-                *version += 1;
-                Self::publish_snapshot(state, snapshot, *version);
-            }
             GraphCommand::UpdateCachedNodeSize { id, size } => {
                 state.update_cached_node_size(id, size);
                 *version += 1;
                 Self::publish_snapshot(state, snapshot, *version);
+                let _ = update_tx.send(GraphUpdate::NodeUpdated {
+                    id,
+                    pos: None,
+                    size: Some(size),
+                    label: None,
+                    data: None,
+                });
             }
             GraphCommand::QueryState(tx) => {
                 let _ = tx.send(state.clone());
@@ -463,7 +652,21 @@ impl<S: Copy + Default + Send + Sync + 'static> GraphEngineHandle<S> {
             .unwrap_or_default()
     }
 
-    /// Return the number of currently active background worker threads (engine actor + analysis tasks).
+    /// Try receiving a single pending `GraphUpdate` from the engine update channel.
+    pub fn try_recv_update(&self) -> Option<GraphUpdate<S>> {
+        self.update_rx.try_recv().ok()
+    }
+
+    /// Drain all pending `GraphUpdate` messages from the engine update channel.
+    pub fn drain_updates(&self) -> Vec<GraphUpdate<S>> {
+        let mut updates = Vec::new();
+        while let Ok(upd) = self.update_rx.try_recv() {
+            updates.push(upd);
+        }
+        updates
+    }
+
+    /// Return the number of currently active background worker threads.
     pub fn active_worker_threads(&self) -> usize {
         self.active_worker_threads.load(Ordering::Relaxed)
     }
@@ -494,12 +697,12 @@ impl<S: Copy + Default + Send + Sync + 'static> GraphEngineHandle<S> {
         self.command_tx.send(cmd)
     }
 
-    /// Asynchronously trigger graph analysis on a sub-thread spawned by the Engine thread.
+    /// Asynchronously trigger graph analysis on a sub-thread.
     pub fn run_analysis(&self, is_directed: bool) {
         let _ = self.send_command(GraphCommand::RunAnalysis { is_directed });
     }
 
-    /// Asynchronously drag/set position of a node from the UI thread.
+    /// Asynchronously set position of a node.
     pub fn drag_node(&self, id: NodeId, pos: Vec2) {
         let _ = self.send_command(GraphCommand::SetPosition { id, pos });
     }

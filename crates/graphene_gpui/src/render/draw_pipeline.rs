@@ -1,5 +1,6 @@
-use graphene_core::{math::{Size2, Vec2}, DirtyFlags, GraphState};
-use graphene_style::{ComputedStyle, EdgeCurveStyle, ColorValue, LabelId, NodeShape, StylingTarget};
+use crate::view::GraphView;
+use graphene_core::math::{Size2, Vec2};
+use graphene_style::{ColorValue, ComputedStyle, EdgeCurveStyle, LabelId, NodeShape, StylingTarget};
 
 #[derive(Debug, Clone)]
 pub struct Viewport {
@@ -34,9 +35,8 @@ impl Viewport {
 
     pub fn is_visible(&self, pos: Vec2, size: Size2) -> bool {
         let screen_pos = self.model_to_screen(pos);
-        // Size scales with zoom
         let screen_size = gpui::size(size.w * self.zoom, size.h * self.zoom);
-        
+
         let node_bounds = gpui::Bounds {
             origin: gpui::point(screen_pos.x - screen_size.width / 2.0, screen_pos.y - screen_size.height / 2.0),
             size: screen_size,
@@ -45,8 +45,8 @@ impl Viewport {
         self.bounds.intersects(&node_bounds)
     }
 
-    pub fn fit_to_graph(&mut self, state: &GraphState<ComputedStyle>) {
-        if state.node_index_to_id.is_empty() {
+    pub fn fit_to_graph<S: Copy + Send + 'static>(&mut self, view: &GraphView<S>) {
+        if view.node_order.is_empty() {
             self.offset = Vec2::default();
             self.zoom = 1.0;
             return;
@@ -55,14 +55,11 @@ impl Viewport {
         let mut x_max = f32::MIN;
         let mut y_min = f32::MAX;
         let mut y_max = f32::MIN;
-        for &id in &state.node_index_to_id {
-            if let Some(&idx) = state.node_keys.get(id) {
-                let pos = *state.positions.get(idx);
-                x_min = x_min.min(pos.x);
-                x_max = x_max.max(pos.x);
-                y_min = y_min.min(pos.y);
-                y_max = y_max.max(pos.y);
-            }
+        for node in view.nodes.values() {
+            x_min = x_min.min(node.pos.x);
+            x_max = x_max.max(node.pos.x);
+            y_min = y_min.min(node.pos.y);
+            y_max = y_max.max(node.pos.y);
         }
         let cx_graph = (x_min + x_max) / 2.0;
         let cy_graph = (y_min + y_max) / 2.0;
@@ -148,59 +145,24 @@ impl RenderPipeline {
         Self { commands: Vec::new() }
     }
 
-    pub fn update(&mut self, state: &GraphState<ComputedStyle>, viewport: &Viewport) {
-        // Respect dirty flags to avoid redundant work (skip rebuild if nothing changed)
-        if !state.dirty_flags.contains(DirtyFlags::POSITION_DIRTY | DirtyFlags::TOPOLOGY_DIRTY) {
-            return;
-        }
-
+    pub fn update(&mut self, view: &GraphView<ComputedStyle>, viewport: &Viewport) {
         self.commands.clear();
 
-        // 1. Collect and batch edges (Phase 1 accepts linear scan)
         let mut edge_instances = Vec::new();
         let mut label_instances = Vec::new();
 
-        for i in 0..state.edges.len() {
-            let src = *state.edge_sources.get(i);
-            let tgt = *state.edge_targets.get(i);
-
-            let (Some(&src_idx), Some(&tgt_idx)) = (state.node_keys.get(src), state.node_keys.get(tgt)) else {
+        for edge in view.edges.values() {
+            let (Some(src_node), Some(tgt_node)) = (view.nodes.get(&edge.source), view.nodes.get(&edge.target)) else {
                 continue;
             };
 
-            let pos_src = *state.positions.get(src_idx);
-            let pos_tgt = *state.positions.get(tgt_idx);
-
-            // Fetch computed style for edge
-            let style = state.edge_computed_styles.get(i);
-            if let StylingTarget::Edge(ref edge_style) = style.target {
-                if !edge_style.visible {
-                    continue;
-                }
-
-                let width = match edge_style.line_width {
-                    graphene_style::LengthValue::Pixels(px) => px,
-                    graphene_style::LengthValue::Ratio(r) => r * 10.0, // fallback scaling
-                };
-
-                edge_instances.push(EdgeInstance {
-                    source: pos_src,
-                    target: pos_tgt,
-                    curve_style: edge_style.curve_style,
-                    color: edge_style.line_color,
-                    width,
-                });
-
-                if let Some(lbl_id) = edge_style.label {
-                    let mid_point = Vec2::new((pos_src.x + pos_tgt.x) / 2.0, (pos_src.y + pos_tgt.y) / 2.0);
-                    label_instances.push(LabelInstance {
-                        pos: mid_point,
-                        text_id: lbl_id,
-                        font_size: edge_style.label_font_size,
-                        color: edge_style.line_color,
-                    });
-                }
-            }
+            edge_instances.push(EdgeInstance {
+                source: src_node.pos,
+                target: tgt_node.pos,
+                curve_style: EdgeCurveStyle::Straight,
+                color: ColorValue::Rgba(0.5, 0.5, 0.5, 1.0),
+                width: 2.0,
+            });
         }
 
         if !edge_instances.is_empty() {
@@ -209,48 +171,44 @@ impl RenderPipeline {
             }));
         }
 
-        // 2. Frustum culling & batching nodes
         let mut node_instances = Vec::new();
 
-        for (idx, &_id) in state.node_index_to_id.iter().enumerate() {
-            let pos = *state.positions.get(idx);
-            let size = *state.sizes.get(idx);
-
-            // Frustum culling check
-            if !viewport.is_visible(pos, size) {
+        for node in view.nodes.values() {
+            if !viewport.is_visible(node.pos, node.size) {
                 continue;
             }
 
-            let style = state.computed_styles.get(idx);
-            if let StylingTarget::Node(ref node_style) = style.target {
-                if !node_style.visible {
-                    continue;
-                }
-
-                let border_width = match node_style.border_width {
+            let border_width = match node.data.target {
+                StylingTarget::Node(ref node_style) => match node_style.border_width {
                     graphene_style::LengthValue::Pixels(px) => px,
-                    graphene_style::LengthValue::Ratio(r) => r * size.w,
-                };
+                    graphene_style::LengthValue::Ratio(r) => r * node.size.w,
+                },
+                _ => 2.0,
+            };
 
-                node_instances.push(NodeInstance {
-                    pos,
-                    size,
-                    shape: node_style.shape,
-                    color: node_style.fill_color,
-                    border_color: node_style.border_color,
-                    border_width,
-                });
+            let shape = match node.data.target {
+                StylingTarget::Node(ref node_style) => node_style.shape,
+                _ => NodeShape::Ellipse,
+            };
 
-                if let Some(lbl_id) = node_style.label {
-                    // Position label slightly below center or inside the node bounds
-                    label_instances.push(LabelInstance {
-                        pos,
-                        text_id: lbl_id,
-                        font_size: node_style.label_font_size,
-                        color: node_style.border_color,
-                    });
-                }
-            }
+            let fill_color = match node.data.target {
+                StylingTarget::Node(ref node_style) => node_style.fill_color,
+                _ => ColorValue::Rgba(0.2, 0.6, 0.9, 1.0),
+            };
+
+            let border_color = match node.data.target {
+                StylingTarget::Node(ref node_style) => node_style.border_color,
+                _ => ColorValue::Rgba(1.0, 1.0, 1.0, 1.0),
+            };
+
+            node_instances.push(NodeInstance {
+                pos: node.pos,
+                size: node.size,
+                shape,
+                color: fill_color,
+                border_color,
+                border_width,
+            });
         }
 
         if !node_instances.is_empty() {
@@ -309,12 +267,10 @@ mod tests {
         };
         let viewport = Viewport::new(bounds);
 
-        // Position at center of model space (0,0) with size (50,50) should be visible
         let visible_node_pos = Vec2::new(0.0, 0.0);
         let node_size = Size2::new(50.0, 50.0);
         assert!(viewport.is_visible(visible_node_pos, node_size));
 
-        // Far away node (-2000, -2000) should be frustum-culled
         let far_node_pos = Vec2::new(-2000.0, -2000.0);
         assert!(!viewport.is_visible(far_node_pos, node_size));
     }
@@ -329,7 +285,7 @@ mod tests {
             },
         };
         let mut viewport = Viewport::new(bounds);
-        viewport.zoom = 1.0; // 100% Zoom
+        viewport.zoom = 1.0;
 
         let p1_graph = Vec2::new(0.0, 0.0);
         let p2_graph = Vec2::new(150.0, 75.0);
@@ -341,7 +297,6 @@ mod tests {
         let dx_screen = p2_screen.x - p1_screen.x;
         let dy_screen = p2_screen.y - p1_screen.y;
 
-        // At zoom = 1.0 (100%), graph coordinates and UI pixels must have a 1:1 scale ratio
         assert_eq!(dx_screen, 150.0);
         assert_eq!(dy_screen, 75.0);
 
@@ -351,4 +306,3 @@ mod tests {
         assert_eq!(screen_h, 40.0);
     }
 }
-

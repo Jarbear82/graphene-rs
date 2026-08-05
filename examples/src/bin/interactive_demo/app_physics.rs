@@ -33,11 +33,13 @@ impl DemoApp {
         self.live_sim.reset_simulation();
         self.sync_live_sim_params();
 
-        let n = self.state.node_index_to_id.len();
+        let n = self.view.node_order.len();
         if n > 0 {
             let closest_idx = (0..n).min_by(|&a, &b| {
-                let pos_a = self.state.positions.get(a);
-                let pos_b = self.state.positions.get(b);
+                let id_a = self.view.node_order[a];
+                let id_b = self.view.node_order[b];
+                let pos_a = self.view.nodes[&id_a].pos;
+                let pos_b = self.view.nodes[&id_b].pos;
                 let dist_a = pos_a.x * pos_a.x + pos_a.y * pos_a.y;
                 let dist_b = pos_b.x * pos_b.x + pos_b.y * pos_b.y;
                 dist_a.partial_cmp(&dist_b).unwrap_or(std::cmp::Ordering::Equal)
@@ -45,22 +47,19 @@ impl DemoApp {
             self.live_sim.update_param(LiveSimParam::FixedNode(closest_idx));
         }
 
-        // Offload state and start live physics on dedicated background worker thread
-        self.engine.load_preset(self.state.clone());
         self.engine.send_command(graphene_layout::GraphCommand::StartLiveSim(self.live_sim.clone())).ok();
         self.telemetry_is_worker_thread = true;
     }
 
     pub fn run_physics_step(&mut self) {
-        if self.state.node_index_to_id.is_empty() {
+        if self.view.node_order.is_empty() {
             return;
         }
 
         let drag_idx = self.interaction_state.drag_start.and_then(|(drag_id, _, _)| {
-            self.state.node_keys.get(drag_id).copied()
+            self.view.node_order.iter().position(|&id| id == drag_id)
         });
 
-        // Dispatch live sim parameters & fixed drag node pin to background worker thread
         self.engine.send_command(graphene_layout::GraphCommand::UpdateLiveSimParam(
             LiveSimParam::FixedNode(drag_idx)
         )).ok();
@@ -68,19 +67,6 @@ impl DemoApp {
     }
 
     pub fn resolve_collisions(&mut self) {
-        if self.state.node_index_to_id.is_empty() {
-            return;
-        }
-
-        let drag_info = self.interaction_state.drag_start.map(|(drag_id, _, _)| {
-            let idx = *self.state.node_keys.get(drag_id).unwrap();
-            (idx, *self.state.positions.get(idx))
-        });
-
-        self.live_sim.resolve_collisions(&mut self.state, 12.0);
-
-        if let Some((drag_idx, original_pos)) = drag_info {
-            self.state.positions.set(drag_idx, original_pos);
-        }
+        // Epilogue and collision resolution managed inside GraphEngine loop
     }
 }

@@ -1127,12 +1127,14 @@ fn test_graph_engine_decoupled_thread_actor() {
         pos: Vec2::new(0.0, 0.0),
         size: Size2::new(10.0, 10.0),
         data: (),
+        label: None,
     }).unwrap();
 
     engine.send_command(GraphCommand::AddNode {
         pos: Vec2::new(50.0, 50.0),
         size: Size2::new(10.0, 10.0),
         data: (),
+        label: None,
     }).unwrap();
 
     std::thread::sleep(std::time::Duration::from_millis(30));

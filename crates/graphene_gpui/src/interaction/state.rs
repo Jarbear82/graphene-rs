@@ -1,6 +1,9 @@
-use graphene_core::{math::{Size2, Vec2}, GraphState, NodeId};
-use graphene_style::ComputedStyle;
 use crate::render::draw_pipeline::Viewport;
+use crate::view::GraphView;
+use graphene_core::{
+    math::{Size2, Vec2},
+    EdgeId, NodeId,
+};
 use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
@@ -84,29 +87,27 @@ impl InteractionState {
         }
     }
 
-    pub fn rebuild_grid(&mut self, state: &GraphState<ComputedStyle>) {
+    pub fn rebuild_grid<S: Copy + Send + 'static>(&mut self, view: &GraphView<S>) {
         self.spatial_grid.clear();
-        for (idx, &id) in state.node_index_to_id.iter().enumerate() {
-            let pos = *state.positions.get(idx);
-            let size = *state.sizes.get(idx);
-            self.spatial_grid.insert(id, pos, size);
+        for (&id, node) in &view.nodes {
+            self.spatial_grid.insert(id, node.pos, node.size);
         }
     }
 
-    pub fn hit_test(
+    pub fn hit_test<S: Copy + Send + 'static>(
         &self,
         screen_pos: gpui::Point<f32>,
         viewport: &Viewport,
-        state: &GraphState<ComputedStyle>,
+        view: &GraphView<S>,
         physics_active: bool,
     ) -> Option<NodeId> {
         let model_pos = viewport.screen_to_model(screen_pos);
 
-        let get_nesting_depth = |node_id: NodeId, h_state: &GraphState<ComputedStyle>| -> usize {
+        let get_nesting_depth = |node_id: NodeId, v: &GraphView<S>| -> usize {
             let mut depth = 0;
             let mut curr = node_id;
-            while let Some(&idx) = h_state.node_keys.get(curr) {
-                if let Some(parent_id) = *h_state.hierarchy.parent.get(idx) {
+            while let Some(node) = v.nodes.get(&curr) {
+                if let Some(parent_id) = node.parent {
                     curr = parent_id;
                     depth += 1;
                 } else {
@@ -122,13 +123,12 @@ impl InteractionState {
         let candidates = if physics_active || self.spatial_grid.cells.is_empty() {
             let neighborhood = self.spatial_grid.query_neighborhood(model_pos);
             if neighborhood.is_empty() {
-                state
-                    .node_index_to_id
+                view.node_order
                     .iter()
                     .copied()
                     .filter(|&id| {
-                        if let Some(&idx) = state.node_keys.get(id) {
-                            viewport.is_visible(*state.positions.get(idx), *state.sizes.get(idx))
+                        if let Some(node) = view.nodes.get(&id) {
+                            viewport.is_visible(node.pos, node.size)
                         } else {
                             false
                         }
@@ -142,17 +142,15 @@ impl InteractionState {
         };
 
         for id in candidates {
-            if let Some(&idx) = state.node_keys.get(id) {
-                let pos = *state.positions.get(idx);
-                let size = *state.sizes.get(idx);
-                let half_w = size.w / 2.0;
-                let half_h = size.h / 2.0;
-                if model_pos.x >= pos.x - half_w
-                    && model_pos.x <= pos.x + half_w
-                    && model_pos.y >= pos.y - half_h
-                    && model_pos.y <= pos.y + half_h
+            if let Some(node) = view.nodes.get(&id) {
+                let half_w = node.size.w / 2.0;
+                let half_h = node.size.h / 2.0;
+                if model_pos.x >= node.pos.x - half_w
+                    && model_pos.x <= node.pos.x + half_w
+                    && model_pos.y >= node.pos.y - half_h
+                    && model_pos.y <= node.pos.y + half_h
                 {
-                    let depth = get_nesting_depth(id, state);
+                    let depth = get_nesting_depth(id, view);
                     if best_match.is_none() || depth > max_depth {
                         best_match = Some(id);
                         max_depth = depth;
@@ -164,144 +162,93 @@ impl InteractionState {
         best_match
     }
 
-    pub fn hit_test_edge<S: Copy>(
+    pub fn hit_test_edge<S: Copy + Send + 'static>(
         &self,
         screen_pos: gpui::Point<f32>,
         viewport: &Viewport,
-        state: &GraphState<S>,
+        view: &GraphView<S>,
         threshold: f32,
-    ) -> Option<usize> {
-        for edge_idx in 0..state.edges.len() {
-            let src = *state.edge_sources.get(edge_idx);
-            let tgt = *state.edge_targets.get(edge_idx);
-            let (Some(&src_idx), Some(&tgt_idx)) =
-                (state.node_keys.get(src), state.node_keys.get(tgt))
-            else {
-                continue;
-            };
-            let pos_src = *state.positions.get(src_idx);
-            let pos_tgt = *state.positions.get(tgt_idx);
+    ) -> Option<EdgeId> {
+        for &edge_id in &view.edge_order {
+            if let Some(edge) = view.edges.get(&edge_id) {
+                let (Some(src_node), Some(tgt_node)) = (view.nodes.get(&edge.source), view.nodes.get(&edge.target))
+                else {
+                    continue;
+                };
 
-            let src_screen = viewport.model_to_screen(pos_src);
-            let tgt_screen = viewport.model_to_screen(pos_tgt);
+                let src_screen = viewport.model_to_screen(src_node.pos);
+                let tgt_screen = viewport.model_to_screen(tgt_node.pos);
 
-            let dist = distance_to_segment(
-                screen_pos,
-                gpui::point(src_screen.x, src_screen.y),
-                gpui::point(tgt_screen.x, tgt_screen.y),
-            );
-            if dist < threshold {
-                return Some(edge_idx);
+                let dist = distance_to_segment(
+                    screen_pos,
+                    gpui::point(src_screen.x, src_screen.y),
+                    gpui::point(tgt_screen.x, tgt_screen.y),
+                );
+                if dist < threshold {
+                    return Some(edge_id);
+                }
             }
         }
         None
     }
 
-    pub fn on_mouse_down(
+    pub fn on_mouse_down<S: Copy + Send + 'static>(
         &mut self,
         position: gpui::Point<f32>,
         hit_node: Option<NodeId>,
-        state: &GraphState<ComputedStyle>,
+        view: &GraphView<S>,
     ) {
         if let Some(node_id) = hit_node {
-            if let Some(&idx) = state.node_keys.get(node_id) {
-                let node_pos = *state.positions.get(idx);
-                self.drag_start = Some((node_id, position, node_pos));
+            if let Some(node) = view.nodes.get(&node_id) {
+                self.drag_start = Some((node_id, position, node.pos));
             }
         } else {
             self.pan_origin = Some(position);
         }
     }
 
-    pub fn on_mouse_drag(
+    pub fn on_mouse_drag<S: Copy + Send + 'static>(
         &mut self,
         position: gpui::Point<f32>,
         viewport: &mut Viewport,
-        state: &mut GraphState<ComputedStyle>,
-    ) {
+        view: &GraphView<S>,
+    ) -> Option<(NodeId, Vec2)> {
         if let Some((id, start_mouse_pos, start_node_pos)) = self.drag_start {
             let total_mouse_delta = gpui::point(
                 position.x - start_mouse_pos.x,
                 position.y - start_mouse_pos.y,
             );
-            let target_parent_pos = start_node_pos + Vec2::new(total_mouse_delta.x / viewport.zoom, total_mouse_delta.y / viewport.zoom);
-            if let Some(&idx) = state.node_keys.get(id) {
-                let current_parent_pos = *state.positions.get(idx);
+            let target_parent_pos = start_node_pos
+                + Vec2::new(
+                    total_mouse_delta.x / viewport.zoom,
+                    total_mouse_delta.y / viewport.zoom,
+                );
+            if let Some(node) = view.nodes.get(&id) {
+                let current_parent_pos = node.pos;
                 let step_delta = target_parent_pos - current_parent_pos;
-                state.translate_node_and_descendants(id, step_delta);
+                return Some((id, step_delta));
             }
         } else if let Some(last_pos) = self.pan_origin {
-            let delta = gpui::point(
-                position.x - last_pos.x,
-                position.y - last_pos.y,
-            );
-            // Adjust viewport offset
+            let delta = gpui::point(position.x - last_pos.x, position.y - last_pos.y);
             viewport.offset.x += delta.x / viewport.zoom;
             viewport.offset.y += delta.y / viewport.zoom;
             self.pan_origin = Some(position);
         }
+        None
     }
 
     pub fn on_mouse_up(&mut self) {
         self.drag_start = None;
         self.pan_origin = None;
     }
-
-    pub fn on_double_click(
-        &mut self,
-        screen_pos: gpui::Point<f32>,
-        viewport: &Viewport,
-        state: &mut GraphState<ComputedStyle>,
-        label: &str,
-    ) -> NodeId {
-        let model_pos = viewport.screen_to_model(screen_pos);
-        let id = state.add_node_with_label(model_pos, Size2::new(40.0, 40.0), label);
-
-        if let Some(&idx) = state.node_keys.get(id) {
-            let mut style = ComputedStyle::default();
-            if let graphene_style::StylingTarget::Node(ref mut node_style) = style.target {
-                node_style.label = Some(idx as u32);
-                node_style.shape = graphene_style::NodeShape::Ellipse;
-                node_style.fill_color =
-                    graphene_style::ColorValue::Rgba(137.0 / 255.0, 180.0 / 255.0, 250.0 / 255.0, 1.0);
-                node_style.border_color =
-                    graphene_style::ColorValue::Rgba(205.0 / 255.0, 214.0 / 255.0, 244.0 / 255.0, 1.0);
-                node_style.border_width = graphene_style::LengthValue::Pixels(2.0);
-            }
-            state.computed_styles.set(idx, style);
-        }
-
-        self.rebuild_grid(state);
-        id
-    }
 }
 
-pub fn update_node_shape(
-    state: &mut GraphState<ComputedStyle>,
-    id: NodeId,
-    shape: graphene_style::NodeShape,
-) {
-    if let Some(&idx) = state.node_keys.get(id) {
-        let style = state.computed_styles.get_mut(idx);
-        if let graphene_style::StylingTarget::Node(ref mut node_style) = style.target {
-            node_style.shape = shape;
-            state.dirty_flags |= graphene_core::DirtyFlags::CONTENT_DIRTY;
-        }
-    }
+pub fn update_node_shape() {
+    // Styling stays on ComputedStyle / commands
 }
 
-pub fn update_edge_width(
-    state: &mut GraphState<ComputedStyle>,
-    edge_idx: usize,
-    width: f32,
-) {
-    if edge_idx < state.edge_computed_styles.len() {
-        let style = state.edge_computed_styles.get_mut(edge_idx);
-        if let graphene_style::StylingTarget::Edge(ref mut edge_style) = style.target {
-            edge_style.line_width = graphene_style::LengthValue::Pixels(width);
-            state.dirty_flags |= graphene_core::DirtyFlags::CONTENT_DIRTY;
-        }
-    }
+pub fn update_edge_width() {
+    // Styling stays on ComputedStyle / commands
 }
 
 pub fn distance_to_segment(p: gpui::Point<f32>, a: gpui::Point<f32>, b: gpui::Point<f32>) -> f32 {
@@ -322,85 +269,61 @@ pub fn distance_to_segment(p: gpui::Point<f32>, a: gpui::Point<f32>, b: gpui::Po
 #[cfg(test)]
 mod tests {
     use super::*;
-    use graphene_core::math::Size2;
+    use graphene_core::GraphState;
+    use graphene_style::ComputedStyle;
 
     #[test]
     fn test_hit_test_prioritizes_nested_children() {
-        let mut state = GraphState::new();
+        let mut state = GraphState::<ComputedStyle>::new();
 
-        // 1. Create a parent node (cover -100 to 100 on both axes)
         let parent_id = state.add_node(Vec2::new(0.0, 0.0), Size2::new(200.0, 200.0));
-
-        // 2. Create a child node (nested inside, cover 30 to 70 on both axes)
         let child_id = state.add_node(Vec2::new(50.0, 50.0), Size2::new(40.0, 40.0));
-        
-        // Reparent child to parent
         state.reparent_node(child_id, Some(parent_id));
 
-        // Create viewport (centered at 0, 0 in model space)
+        let view = GraphView::from_state(&state);
+
         let bounds = gpui::Bounds {
             origin: gpui::Point { x: 0.0, y: 0.0 },
-            size: gpui::Size { width: 800.0, height: 600.0 },
+            size: gpui::Size {
+                width: 800.0,
+                height: 600.0,
+            },
         };
         let viewport = Viewport::new(bounds);
 
-        // Rebuild spatial grid
         let mut interaction = InteractionState::new(60.0);
-        interaction.rebuild_grid(&state);
+        interaction.rebuild_grid(&view);
 
-        // Click directly on the child node at model coordinate (50, 50)
-        // Screen position corresponding to (50, 50)
         let screen_pos = viewport.model_to_screen(Vec2::new(50.0, 50.0));
 
-        // Hit test with active simulation (linear scan)
-        let hit_active = interaction.hit_test(screen_pos, &viewport, &state, true);
-        assert_eq!(hit_active, Some(child_id), "Active hit_test did not prioritize nested child node!");
+        let hit_active = interaction.hit_test(screen_pos, &viewport, &view, true);
+        assert_eq!(
+            hit_active,
+            Some(child_id),
+            "Active hit_test did not prioritize nested child node!"
+        );
 
-        // Hit test with inactive simulation (spatial grid query)
-        let hit_inactive = interaction.hit_test(screen_pos, &viewport, &state, false);
-        assert_eq!(hit_inactive, Some(child_id), "Inactive hit_test did not prioritize nested child node!");
+        let hit_inactive = interaction.hit_test(screen_pos, &viewport, &view, false);
+        assert_eq!(
+            hit_inactive,
+            Some(child_id),
+            "Inactive hit_test did not prioritize nested child node!"
+        );
 
-        // Click on the parent margin (e.g. at model coordinate (-50, -50), outside child)
         let screen_margin = viewport.model_to_screen(Vec2::new(-50.0, -50.0));
-        
-        let hit_margin_active = interaction.hit_test(screen_margin, &viewport, &state, true);
-        assert_eq!(hit_margin_active, Some(parent_id), "Hit test at margin should match parent node!");
 
-        let hit_margin_inactive = interaction.hit_test(screen_margin, &viewport, &state, false);
-        assert_eq!(hit_margin_inactive, Some(parent_id), "Hit test at margin should match parent node!");
-    }
+        let hit_margin_active = interaction.hit_test(screen_margin, &viewport, &view, true);
+        assert_eq!(
+            hit_margin_active,
+            Some(parent_id),
+            "Hit test at margin should match parent node!"
+        );
 
-    #[test]
-    fn test_drag_compound_node_translates_children() {
-        let mut state = GraphState::new();
-
-        let parent_id = state.add_node(Vec2::new(0.0, 0.0), Size2::new(200.0, 200.0));
-        let child_id = state.add_node(Vec2::new(50.0, 50.0), Size2::new(40.0, 40.0));
-        state.reparent_node(child_id, Some(parent_id));
-
-        let bounds = gpui::Bounds {
-            origin: gpui::Point { x: 0.0, y: 0.0 },
-            size: gpui::Size { width: 800.0, height: 600.0 },
-        };
-        let mut viewport = Viewport::new(bounds);
-
-        let mut interaction = InteractionState::new(60.0);
-        let start_screen_pos = viewport.model_to_screen(Vec2::new(0.0, 0.0));
-
-        // Mouse down on parent node
-        interaction.on_mouse_down(start_screen_pos, Some(parent_id), &state);
-
-        // Drag parent node by +100 in x, +50 in y
-        let target_screen_pos = gpui::point(start_screen_pos.x + 100.0, start_screen_pos.y + 50.0);
-        interaction.on_mouse_drag(target_screen_pos, &mut viewport, &mut state);
-
-        let p_idx = state.node_keys[parent_id];
-        let c_idx = state.node_keys[child_id];
-
-        let parent_pos = *state.positions.get(p_idx);
-        let child_pos = *state.positions.get(c_idx);
-
-        assert_eq!(parent_pos, Vec2::new(100.0, 50.0));
-        assert_eq!(child_pos, Vec2::new(150.0, 100.0));
+        let hit_margin_inactive = interaction.hit_test(screen_margin, &viewport, &view, false);
+        assert_eq!(
+            hit_margin_inactive,
+            Some(parent_id),
+            "Hit test at margin should match parent node!"
+        );
     }
 }

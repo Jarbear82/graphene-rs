@@ -155,7 +155,8 @@ impl GuiPerformanceBenchmarkApp {
             _ => {}
         }
         self.layout_compute_ms = start.elapsed().as_secs_f64() * 1000.0;
-        self.viewport.fit_to_graph(&self.state);
+        let view = graphene_gpui::GraphView::from_state(&self.state);
+        self.viewport.fit_to_graph(&view);
     }
 }
 

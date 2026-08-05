@@ -28,8 +28,9 @@ fn test_headless_gpui_viewport_and_culling_performance() {
 
     for &n in SCALES {
         let state = build_test_graph(n);
+        let view = graphene_gpui::GraphView::from_state(&state);
         let mut viewport = Viewport::new(screen_bounds);
-        viewport.fit_to_graph(&state);
+        viewport.fit_to_graph(&view);
 
         // 1. Viewport Culling Benchmark
         let start_cull = Instant::now();

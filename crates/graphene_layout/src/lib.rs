@@ -30,7 +30,7 @@ pub use circular_advanced::{count_crossings, CircularAdvancedLayout};
 pub use collision::{resolve_overlaps, CollisionForceDirectedLayout, WeightedForceDirectedLayout};
 pub use compound::{star_expand_hypergraph, CompoundLayout, ConcentricHubLayout, RegionalPartitionLayout};
 pub use cose::{find_clipping_point, CoseLayout, CosePhase};
-pub use engine::{GraphCommand, GraphEngineHandle, LayoutCommand};
+pub use engine::{GraphCommand, GraphEngineHandle, GraphUpdate, LayoutCommand};
 pub use fcose::{
     AlignmentConstraint, FCoseConstraints, FCoseLayout, FCosePhase, FixedNodeConstraint,
     RelativePlacementConstraint,

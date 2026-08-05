@@ -7,7 +7,8 @@ use gpui::{
 };
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::input::Input;
-use graphene_style::{NodeShape, StylingTarget};
+use graphene_core::NodeId;
+use graphene_style::{ComputedStyle, NodeShape, StylingTarget};
 
 impl DemoApp {
     pub fn render_sidebar_right(
@@ -127,26 +128,21 @@ impl DemoApp {
                             .child("3. INSPECTOR"),
                     )
                     .child(
-                        if let Some(node_id) =
-                            self.state.selected.primary_node().or(self.selected_node)
-                        {
+                        if let Some(node_id) = self.selected_node {
                             let label = self
-                                .state
-                                .get_node_label(node_id)
-                                .map(|s| s.to_string())
+                                .view
+                                .nodes
+                                .get(&node_id)
+                                .map(|n| n.label.clone())
                                 .or_else(|| {
                                     self.fixtures[self.selected_fixture_idx]
                                         .node_labels
                                         .get(&node_id)
                                         .cloned()
                                 })
-                                .unwrap_or_else(|| format!("N{}", self.state.node_keys[node_id]));
-                            let uuid_str = self
-                                .state
-                                .get_node_uuid(node_id)
-                                .unwrap_or("N/A")
-                                .to_string();
-                            let sec_node = self.state.selected.secondary_node();
+                                .unwrap_or_else(|| format!("N{:?}", node_id));
+                            let uuid_str = format!("{:?}", node_id);
+                            let sec_node: Option<NodeId> = None;
 
                             gpui::div()
                                 .flex()
@@ -172,23 +168,14 @@ impl DemoApp {
                                 )
                                 .when_some(sec_node, |parent, sec_id| {
                                     let sec_label = self
-                                        .state
-                                        .get_node_label(sec_id)
-                                        .map(|s| s.to_string())
-                                        .or_else(|| {
-                                            self.fixtures[self.selected_fixture_idx]
-                                                .node_labels
-                                                .get(&sec_id)
-                                                .cloned()
-                                        })
+                                        .view
+                                        .nodes
+                                        .get(&sec_id)
+                                        .map(|n| n.label.clone())
                                         .unwrap_or_else(|| {
-                                            format!("N{}", self.state.node_keys[sec_id])
+                                            format!("N{:?}", sec_id)
                                         });
-                                    let sec_uuid = self
-                                        .state
-                                        .get_node_uuid(sec_id)
-                                        .unwrap_or("N/A")
-                                        .to_string();
+                                    let sec_uuid = format!("{:?}", sec_id);
                                     parent.child(
                                         gpui::div()
                                             .p_2()
@@ -283,11 +270,14 @@ impl DemoApp {
                                                     .label(label)
                                                     .on_click(cx.listener(move |this, _, _, cx| {
                                                         if let Some(id) = this.selected_node {
-                                                            graphene_gpui::update_node_shape(
-                                                                &mut this.state,
+                                                            let mut style = ComputedStyle::default();
+                                                            if let StylingTarget::Node(ref mut node_style) = style.target {
+                                                                node_style.shape = shape;
+                                                            }
+                                                            this.engine.send_command(graphene_layout::GraphCommand::SetNodeData {
                                                                 id,
-                                                                shape,
-                                                            );
+                                                                data: style,
+                                                            }).ok();
                                                             cx.notify();
                                                         }
                                                     }))
@@ -327,44 +317,6 @@ impl DemoApp {
                                 )
                                 .child(
                                     gpui::div()
-                                        .flex()
-                                        .flex_col()
-                                        .gap_1()
-                                        .child(
-                                            gpui::div()
-                                                .text_color(theme.text)
-                                                .text_size(px(11.0))
-                                                .child("Width"),
-                                        )
-                                        .child(gpui::div().flex().gap_1().children(
-                                            vec![1.5, 3.0, 5.0].into_iter().map(|w| {
-                                                Button::new(SharedString::from(format!(
-                                                    "width-btn-{}",
-                                                    w
-                                                )))
-                                                .label(format!("{}px", w))
-                                                .on_click(cx.listener(move |this, _, _, _| {
-                                                    if let Some(edge_idx) = this.selected_edge {
-                                                        let style = this
-                                                            .state
-                                                            .edge_computed_styles
-                                                            .get_mut(edge_idx);
-                                                        if let StylingTarget::Edge(
-                                                            ref mut edge_style,
-                                                        ) = style.target
-                                                        {
-                                                            edge_style.line_width =
-                                                                graphene_style::LengthValue::Pixels(
-                                                                    w,
-                                                                );
-                                                        }
-                                                    }
-                                                }))
-                                            }),
-                                        )),
-                                )
-                                .child(
-                                    gpui::div()
                                         .id("delete-edge-container")
                                         .p_1()
                                         .rounded_md()
@@ -374,15 +326,10 @@ impl DemoApp {
                                                 .label("DELETE EDGE")
                                                 .on_click(cx.listener(|this, _, _, _| {
                                                     if let Some(edge_idx) = this.selected_edge {
-                                                        this.undo_redo.record_state(&this.state);
-                                                        let id =
-                                                            this.state.edge_index_to_id[edge_idx];
-                                                        this.state.remove_edge(id);
+                                                        if let Some(&id) = this.view.edge_order.get(edge_idx) {
+                                                            this.engine.send_command(graphene_layout::GraphCommand::RemoveEdge(id)).ok();
+                                                        }
                                                         this.selected_edge = None;
-                                                        this.state.dirty_flags |=
-                                                        graphene_core::DirtyFlags::TOPOLOGY_DIRTY;
-                                                        this.interaction_state
-                                                            .rebuild_grid(&this.state);
                                                     }
                                                 })),
                                         ),
@@ -477,9 +424,10 @@ impl DemoApp {
                                             .on_click(cx.listener(|this, _, window, cx| {
                                                 if let Some(id) = this.selected_node {
                                                     let label = this
-                                                        .state
-                                                        .get_node_label(id)
-                                                        .map(|s| s.to_string())
+                                                        .view
+                                                        .nodes
+                                                        .get(&id)
+                                                        .map(|n| n.label.clone())
                                                         .or_else(|| {
                                                             this.fixtures[this.selected_fixture_idx]
                                                                 .node_labels
@@ -487,7 +435,7 @@ impl DemoApp {
                                                                 .cloned()
                                                         })
                                                         .unwrap_or_else(|| {
-                                                            format!("N{}", this.state.node_keys[id])
+                                                            format!("N{:?}", id)
                                                         });
                                                     this.edge_src_state.update(cx, |input, cx| {
                                                         let len = input.text().len();
@@ -507,9 +455,10 @@ impl DemoApp {
                                             .on_click(cx.listener(|this, _, window, cx| {
                                                 if let Some(id) = this.selected_node {
                                                     let label = this
-                                                        .state
-                                                        .get_node_label(id)
-                                                        .map(|s| s.to_string())
+                                                        .view
+                                                        .nodes
+                                                        .get(&id)
+                                                        .map(|n| n.label.clone())
                                                         .or_else(|| {
                                                             this.fixtures[this.selected_fixture_idx]
                                                                 .node_labels
@@ -517,7 +466,7 @@ impl DemoApp {
                                                                 .cloned()
                                                         })
                                                         .unwrap_or_else(|| {
-                                                            format!("N{}", this.state.node_keys[id])
+                                                            format!("N{:?}", id)
                                                         });
                                                     this.edge_tgt_state.update(cx, |input, cx| {
                                                         let len = input.text().len();
@@ -608,18 +557,16 @@ impl DemoApp {
                             .gap_2()
                             .child(Button::new("undo-btn").label("UNDO").on_click(cx.listener(
                                 |this, _, _, _| {
-                                    this.undo_redo.undo(&mut this.state);
+                                    this.engine.send_command(graphene_layout::GraphCommand::Undo).ok();
                                     this.selected_node = None;
                                     this.selected_edge = None;
-                                    this.interaction_state.rebuild_grid(&this.state);
                                 },
                             )))
                             .child(Button::new("redo-btn").label("REDO").on_click(cx.listener(
                                 |this, _, _, _| {
-                                    this.undo_redo.redo(&mut this.state);
+                                    this.engine.send_command(graphene_layout::GraphCommand::Redo).ok();
                                     this.selected_node = None;
                                     this.selected_edge = None;
-                                    this.interaction_state.rebuild_grid(&this.state);
                                 },
                             ))),
                     ),
@@ -641,16 +588,6 @@ impl DemoApp {
                             .flex()
                             .flex_col()
                             .gap_2()
-                            .child(Button::new("save-json-btn").label("SAVE JSON").on_click(
-                                cx.listener(|this, _, _, _| {
-                                    let json = this.state.to_json();
-                                    if let Err(e) = std::fs::write("workspace_graph.json", json) {
-                                        println!("Failed to save graph: {:?}", e);
-                                    } else {
-                                        println!("Saved graph to workspace_graph.json");
-                                    }
-                                }),
-                            ))
                             .child(Button::new("load-json-btn").label("LOAD JSON").on_click(
                                 cx.listener(|this, _, _, _| {
                                     if let Ok(json) =
@@ -659,23 +596,10 @@ impl DemoApp {
                                         if let Ok(new_state) =
                                             graphene_core::GraphState::from_json(&json)
                                         {
-                                            this.undo_redo.record_state(&this.state);
-                                            this.state = new_state;
+                                            this.engine.load_preset(new_state);
                                             this.selected_node = None;
                                             this.selected_edge = None;
-                                            this.interaction_state.rebuild_grid(&this.state);
-                                            this.viewport.fit_to_graph(&this.state);
                                         }
-                                    }
-                                }),
-                            ))
-                            .child(Button::new("export-dot-btn").label("EXPORT DOT").on_click(
-                                cx.listener(|this, _, _, _| {
-                                    let dot = this.state.to_dot();
-                                    if let Err(e) = std::fs::write("workspace_graph.dot", dot) {
-                                        println!("Failed to export DOT: {:?}", e);
-                                    } else {
-                                        println!("Exported graph to workspace_graph.dot");
                                     }
                                 }),
                             )),
