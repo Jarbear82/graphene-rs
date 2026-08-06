@@ -299,21 +299,28 @@ impl<'a> IntoElement for GraphCanvas<'a> {
 
                 let pos_src = src_node.pos;
                 let pos_tgt = tgt_node.pos;
-                let src_size = src_node.size;
-                let tgt_size = tgt_node.size;
+                let effective_src_size = src_node.node_data.compute_expansion_size(src_node.size);
+                let effective_tgt_size = tgt_node.node_data.compute_expansion_size(tgt_node.size);
 
-                if !viewport.is_visible(pos_src, src_size) && !viewport.is_visible(pos_tgt, tgt_size) {
+                if !viewport.is_visible(pos_src, effective_src_size) && !viewport.is_visible(pos_tgt, effective_tgt_size) {
                     continue;
                 }
 
-                let src_screen = viewport.model_to_window(pos_src);
+                let clipped_src = graphene_layout::find_clipping_point(
+                    pos_src,
+                    effective_src_size,
+                    pos_tgt.x - pos_src.x,
+                    pos_tgt.y - pos_src.y,
+                );
 
                 let clipped_tgt = graphene_layout::find_clipping_point(
                     pos_tgt,
-                    tgt_size,
+                    effective_tgt_size,
                     pos_src.x - pos_tgt.x,
                     pos_src.y - pos_tgt.y,
                 );
+
+                let src_screen = viewport.model_to_window(clipped_src);
                 let tgt_screen = viewport.model_to_window(clipped_tgt);
 
                 let curve_style = EdgeCurveStyle::Straight;
@@ -360,7 +367,7 @@ impl<'a> IntoElement for GraphCanvas<'a> {
 
                 if let Some(lbl) = label_text {
                     if !lbl.is_empty() {
-                        edge_labels_to_render.push((i, pos_src, pos_tgt, curve_style, lbl));
+                        edge_labels_to_render.push((i, clipped_src, clipped_tgt, curve_style, lbl));
                     }
                 }
             }
