@@ -119,6 +119,132 @@ impl<S: Copy + Default> GraphState<S> {
         id
     }
 
+    pub fn add_node_with_data(
+        &mut self,
+        pos: Vec2,
+        size: Size2,
+        data: NodeData,
+    ) -> NodeId {
+        let id = self.add_node(pos, size);
+        if let Some(&idx) = self.node_keys.get(id) {
+            self.nodes.set(idx, data);
+        }
+        id
+    }
+
+    pub fn add_edge_with_data(
+        &mut self,
+        source: NodeId,
+        target: NodeId,
+        data: EdgeData,
+    ) -> EdgeId {
+        let id = self.add_edge(source, target, data.clone());
+        if let Some(&idx) = self.edge_keys.get(id) {
+            self.edges.set(idx, data);
+        }
+        id
+    }
+
+    pub fn node_labels(&self, id: NodeId) -> Option<&Labels> {
+        let idx = *self.node_keys.get(id)?;
+        Some(&self.nodes.get(idx).labels)
+    }
+
+    pub fn node_props(&self, id: NodeId) -> Option<&Properties> {
+        let idx = *self.node_keys.get(id)?;
+        Some(&self.nodes.get(idx).props)
+    }
+
+    pub fn set_node_prop(&mut self, id: NodeId, key: impl Into<CompactString>, val: PropValue) {
+        if let Some(&idx) = self.node_keys.get(id) {
+            self.nodes.get_mut(idx).props.insert(key.into(), val);
+        }
+    }
+
+    pub fn get_node_prop(&self, id: NodeId, key: &str) -> Option<&PropValue> {
+        let idx = *self.node_keys.get(id)?;
+        self.nodes.get(idx).props.get(key)
+    }
+
+    pub fn display_label<'a>(&'a self, id: NodeId) -> Option<&'a str> {
+        let idx = *self.node_keys.get(id)?;
+        self.nodes.get(idx).display_label()
+    }
+
+    pub fn edge_labels(&self, id: EdgeId) -> Option<&Labels> {
+        let idx = *self.edge_keys.get(id)?;
+        Some(&self.edges.get(idx).labels)
+    }
+
+    pub fn edge_props(&self, id: EdgeId) -> Option<&Properties> {
+        let idx = *self.edge_keys.get(id)?;
+        Some(&self.edges.get(idx).props)
+    }
+
+    pub fn set_edge_prop(&mut self, id: EdgeId, key: impl Into<CompactString>, val: PropValue) {
+        if let Some(&idx) = self.edge_keys.get(id) {
+            self.edges.get_mut(idx).props.insert(key.into(), val);
+        }
+    }
+
+    pub fn outgoing(&self, id: NodeId) -> Vec<(EdgeId, NodeId)> {
+        let mut result = Vec::new();
+        for (i, &src) in self.edge_sources.iter().enumerate() {
+            let tgt = self.edge_targets[i];
+            let edge_id = self.edge_index_to_id[i];
+            let dir = self.edges.get(i).direction;
+            match dir {
+                EdgeDirection::Directed => {
+                    if src == id {
+                        result.push((edge_id, tgt));
+                    }
+                }
+                EdgeDirection::Reverse => {
+                    if tgt == id {
+                        result.push((edge_id, src));
+                    }
+                }
+                EdgeDirection::Bidirectional | EdgeDirection::Undirected => {
+                    if src == id {
+                        result.push((edge_id, tgt));
+                    } else if tgt == id {
+                        result.push((edge_id, src));
+                    }
+                }
+            }
+        }
+        result
+    }
+
+    pub fn incoming(&self, id: NodeId) -> Vec<(EdgeId, NodeId)> {
+        let mut result = Vec::new();
+        for (i, &src) in self.edge_sources.iter().enumerate() {
+            let tgt = self.edge_targets[i];
+            let edge_id = self.edge_index_to_id[i];
+            let dir = self.edges.get(i).direction;
+            match dir {
+                EdgeDirection::Directed => {
+                    if tgt == id {
+                        result.push((edge_id, src));
+                    }
+                }
+                EdgeDirection::Reverse => {
+                    if src == id {
+                        result.push((edge_id, tgt));
+                    }
+                }
+                EdgeDirection::Bidirectional | EdgeDirection::Undirected => {
+                    if tgt == id {
+                        result.push((edge_id, src));
+                    } else if src == id {
+                        result.push((edge_id, tgt));
+                    }
+                }
+            }
+        }
+        result
+    }
+
     pub fn add_hyperedge_proxy(&mut self, pos: Vec2, size: Size2, targets: &[NodeId]) -> NodeId {
         let proxy_id = self.add_node_kind(pos, size, NodeKind::HyperedgeProxy);
         for &tgt in targets {

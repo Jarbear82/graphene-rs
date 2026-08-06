@@ -67,10 +67,10 @@ impl<'a, S: Copy> GraphView<'a, S> {
     }
 }
 
-/// Secondary index over UserData key-value properties using bit vectors
+/// Secondary index over PropValue key-value properties using bit vectors
 #[derive(Debug, Clone, Default)]
 pub struct PropertyIndex {
-    pub by_key_val: std::collections::HashMap<(StringId, UserDataValue), BitVec>,
+    pub by_key_val: std::collections::HashMap<(CompactString, PropValue), BitVec>,
 }
 
 impl PropertyIndex {
@@ -84,9 +84,12 @@ impl PropertyIndex {
         let mut index = Self::new();
         let n = state.node_index_to_id.len();
         for idx in 0..n {
-            let user_data = &state.nodes.get(idx).user_data;
-            for (&k, &v) in &user_data.fields {
-                let mask = index.by_key_val.entry((k, v)).or_insert_with(|| BitVec::repeat(false, n));
+            let props = &state.nodes.get(idx).props;
+            for (k, v) in props {
+                let mask = index
+                    .by_key_val
+                    .entry((k.clone(), v.clone()))
+                    .or_insert_with(|| BitVec::repeat(false, n));
                 if mask.len() < n {
                     mask.resize(n, false);
                 }
@@ -96,7 +99,8 @@ impl PropertyIndex {
         index
     }
 
-    pub fn query(&self, key: StringId, val: UserDataValue) -> Option<&BitVec> {
-        self.by_key_val.get(&(key, val))
+    pub fn query(&self, key: &str, val: &PropValue) -> Option<&BitVec> {
+        let key_cs = CompactString::from(key);
+        self.by_key_val.get(&(key_cs, val.clone()))
     }
 }

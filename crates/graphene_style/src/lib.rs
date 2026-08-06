@@ -219,7 +219,6 @@ impl CompareOp {
     }
 }
 
-/// Selector — no Strings, no heap allocation. All variants are Copy/enum-backed.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Selector {
     All,
@@ -229,11 +228,11 @@ pub enum Selector {
     EdgeOf(EdgeId),
     Class(ClassId),    // u32 — O(1) bitfield or direct comparison
     State(StateFlags), // bitfield: SELECTED | GRABBED | HOVERED
-    DataExists(graphene_core::StringId),
-    DataFloatCompare(graphene_core::StringId, CompareOp, f64),
-    DataIntCompare(graphene_core::StringId, CompareOp, i64),
-    DataStrEquals(graphene_core::StringId, graphene_core::StringId),
-    DataBoolEquals(graphene_core::StringId, bool),
+    DataExists(graphene_core::CompactString),
+    DataFloatCompare(graphene_core::CompactString, CompareOp, f64),
+    DataIntCompare(graphene_core::CompactString, CompareOp, i64),
+    DataStrEquals(graphene_core::CompactString, String),
+    DataBoolEquals(graphene_core::CompactString, bool),
 }
 
 #[derive(Debug, Clone)]
@@ -244,18 +243,23 @@ pub struct StyleRule {
 
 #[derive(Debug, Clone, Default)]
 pub struct ClassStore {
-    pub node_classes: HashMap<NodeId, Vec<ClassId>>,
-    pub edge_classes: HashMap<EdgeId, Vec<ClassId>>,
-    pub class_names: HashMap<String, ClassId>,
     pub next_class_id: u32,
+    pub class_names: std::collections::HashMap<String, ClassId>,
+    pub node_classes: std::collections::HashMap<NodeId, Vec<ClassId>>,
+    pub edge_classes: std::collections::HashMap<EdgeId, Vec<ClassId>>,
 }
 
 impl ClassStore {
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            next_class_id: 1,
+            class_names: std::collections::HashMap::new(),
+            node_classes: std::collections::HashMap::new(),
+            edge_classes: std::collections::HashMap::new(),
+        }
     }
 
-    pub fn get_or_create_class(&mut self, name: &str) -> ClassId {
+    pub fn get_or_register_class(&mut self, name: &str) -> ClassId {
         if let Some(&id) = self.class_names.get(name) {
             id
         } else {
@@ -281,7 +285,7 @@ pub fn matches_selector(
     edge_id: Option<EdgeId>,
     class_store: &ClassStore,
     state_flags: StateFlags,
-    user_data: Option<&graphene_core::UserData>,
+    props: Option<&graphene_core::Properties>,
 ) -> bool {
     match selector {
         Selector::All => true,
@@ -308,13 +312,13 @@ pub fn matches_selector(
         }
         Selector::State(flags) => state_flags.contains(*flags),
         Selector::DataExists(key) => {
-            user_data.map(|ud| ud.fields.contains_key(key)).unwrap_or(false)
+            props.map(|p| p.contains_key(key)).unwrap_or(false)
         }
         Selector::DataFloatCompare(key, op, val) => {
-            if let Some(ud) = user_data {
-                match ud.fields.get(key) {
-                    Some(graphene_core::UserDataValue::Float(f)) => op.compare_f64(*f, *val),
-                    Some(graphene_core::UserDataValue::Integer(i)) => op.compare_f64(*i as f64, *val),
+            if let Some(p) = props {
+                match p.get(key) {
+                    Some(graphene_core::PropValue::Float(f)) => op.compare_f64(*f, *val),
+                    Some(graphene_core::PropValue::Int(i)) => op.compare_f64(*i as f64, *val),
                     _ => false,
                 }
             } else {
@@ -322,10 +326,10 @@ pub fn matches_selector(
             }
         }
         Selector::DataIntCompare(key, op, val) => {
-            if let Some(ud) = user_data {
-                match ud.fields.get(key) {
-                    Some(graphene_core::UserDataValue::Integer(i)) => op.compare_i64(*i, *val),
-                    Some(graphene_core::UserDataValue::Float(f)) => op.compare_i64(*f as i64, *val),
+            if let Some(p) = props {
+                match p.get(key) {
+                    Some(graphene_core::PropValue::Int(i)) => op.compare_i64(*i, *val),
+                    Some(graphene_core::PropValue::Float(f)) => op.compare_i64(*f as i64, *val),
                     _ => false,
                 }
             } else {
@@ -333,9 +337,9 @@ pub fn matches_selector(
             }
         }
         Selector::DataStrEquals(key, val) => {
-            if let Some(ud) = user_data {
-                match ud.fields.get(key) {
-                    Some(graphene_core::UserDataValue::String(s)) => s == val,
+            if let Some(p) = props {
+                match p.get(key) {
+                    Some(graphene_core::PropValue::Text(s)) => s.as_str() == val,
                     _ => false,
                 }
             } else {
@@ -343,9 +347,9 @@ pub fn matches_selector(
             }
         }
         Selector::DataBoolEquals(key, val) => {
-            if let Some(ud) = user_data {
-                match ud.fields.get(key) {
-                    Some(graphene_core::UserDataValue::Boolean(b)) => b == val,
+            if let Some(p) = props {
+                match p.get(key) {
+                    Some(graphene_core::PropValue::Bool(b)) => b == val,
                     _ => false,
                 }
             } else {
@@ -396,7 +400,7 @@ impl RuleEngine {
         node_id: NodeId,
         class_store: &ClassStore,
         state_flags: StateFlags,
-        user_data: Option<&graphene_core::UserData>,
+        props: Option<&graphene_core::Properties>,
     ) -> ComputedStyle {
         let mut computed = ComputedStyle {
             target: StylingTarget::Node(NodeStyle::default()),
@@ -410,7 +414,7 @@ impl RuleEngine {
                 None,
                 class_store,
                 state_flags,
-                user_data,
+                props,
             ) {
                 rule.patch.merge_into(&mut computed);
             }
@@ -435,7 +439,7 @@ impl RuleEngine {
                 None,
                 class_store,
                 state_flags,
-                user_data,
+                props,
             ) {
                 rule.patch.merge_into(&mut computed);
             }
@@ -449,7 +453,7 @@ impl RuleEngine {
         edge_id: EdgeId,
         class_store: &ClassStore,
         state_flags: StateFlags,
-        user_data: Option<&graphene_core::UserData>,
+        props: Option<&graphene_core::Properties>,
     ) -> ComputedStyle {
         let mut computed = ComputedStyle {
             target: StylingTarget::Edge(EdgeStyle::default()),
@@ -463,7 +467,7 @@ impl RuleEngine {
                 Some(edge_id),
                 class_store,
                 state_flags,
-                user_data,
+                props,
             ) {
                 rule.patch.merge_into(&mut computed);
             }
@@ -488,12 +492,73 @@ impl RuleEngine {
                 Some(edge_id),
                 class_store,
                 state_flags,
-                user_data,
+                props,
             ) {
                 rule.patch.merge_into(&mut computed);
             }
         }
 
+        computed
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct StylingEngine {
+    pub rule_engine: RuleEngine,
+    pub node_bypasses: std::collections::HashMap<NodeId, StylePatch>,
+    pub edge_bypasses: std::collections::HashMap<EdgeId, StylePatch>,
+}
+
+impl StylingEngine {
+    pub fn new(rule_engine: RuleEngine) -> Self {
+        Self {
+            rule_engine,
+            node_bypasses: std::collections::HashMap::new(),
+            edge_bypasses: std::collections::HashMap::new(),
+        }
+    }
+
+    pub fn set_node_bypass(&mut self, node: NodeId, patch: StylePatch) {
+        self.node_bypasses.insert(node, patch);
+    }
+
+    pub fn clear_node_bypass(&mut self, node: NodeId) {
+        self.node_bypasses.remove(&node);
+    }
+
+    pub fn set_edge_bypass(&mut self, edge: EdgeId, patch: StylePatch) {
+        self.edge_bypasses.insert(edge, patch);
+    }
+
+    pub fn clear_edge_bypass(&mut self, edge: EdgeId) {
+        self.edge_bypasses.remove(&edge);
+    }
+
+    pub fn compute_node_style(
+        &self,
+        node_id: NodeId,
+        class_store: &ClassStore,
+        state_flags: StateFlags,
+        props: Option<&graphene_core::Properties>,
+    ) -> ComputedStyle {
+        let mut computed = self.rule_engine.compute_node_style(node_id, class_store, state_flags, props);
+        if let Some(bypass) = self.node_bypasses.get(&node_id) {
+            bypass.merge_into(&mut computed);
+        }
+        computed
+    }
+
+    pub fn compute_edge_style(
+        &self,
+        edge_id: EdgeId,
+        class_store: &ClassStore,
+        state_flags: StateFlags,
+        props: Option<&graphene_core::Properties>,
+    ) -> ComputedStyle {
+        let mut computed = self.rule_engine.compute_edge_style(edge_id, class_store, state_flags, props);
+        if let Some(bypass) = self.edge_bypasses.get(&edge_id) {
+            bypass.merge_into(&mut computed);
+        }
         computed
     }
 }
@@ -635,122 +700,107 @@ impl DataMapper {
     }
 }
 
-#[derive(Debug, Clone, Default)]
-pub struct StylingEngine {
-    pub rule_engine: RuleEngine,
-    pub node_bypasses: HashMap<NodeId, StylePatch>,
-    pub edge_bypasses: HashMap<EdgeId, StylePatch>,
-}
 
-impl StylingEngine {
-    pub fn new(rule_engine: RuleEngine) -> Self {
-        Self {
-            rule_engine,
-            node_bypasses: HashMap::new(),
-            edge_bypasses: HashMap::new(),
-        }
-    }
-
-    pub fn set_node_bypass(&mut self, node: NodeId, patch: StylePatch) {
-        self.node_bypasses.insert(node, patch);
-    }
-
-    pub fn clear_node_bypass(&mut self, node: NodeId) {
-        self.node_bypasses.remove(&node);
-    }
-
-    pub fn set_edge_bypass(&mut self, edge: EdgeId, patch: StylePatch) {
-        self.edge_bypasses.insert(edge, patch);
-    }
-
-    pub fn clear_edge_bypass(&mut self, edge: EdgeId) {
-        self.edge_bypasses.remove(&edge);
-    }
-
-    pub fn compute_node_style(
-        &self,
-        node_id: NodeId,
-        class_store: &ClassStore,
-        state_flags: StateFlags,
-        user_data: Option<&graphene_core::UserData>,
-    ) -> ComputedStyle {
-        let mut computed = self.rule_engine.compute_node_style(node_id, class_store, state_flags, user_data);
-        if let Some(bypass) = self.node_bypasses.get(&node_id) {
-            bypass.merge_into(&mut computed);
-        }
-        computed
-    }
-
-    pub fn compute_edge_style(
-        &self,
-        edge_id: EdgeId,
-        class_store: &ClassStore,
-        state_flags: StateFlags,
-        user_data: Option<&graphene_core::UserData>,
-    ) -> ComputedStyle {
-        let mut computed = self.rule_engine.compute_edge_style(edge_id, class_store, state_flags, user_data);
-        if let Some(bypass) = self.edge_bypasses.get(&edge_id) {
-            bypass.merge_into(&mut computed);
-        }
-        computed
-    }
-}
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use graphene_core::{GraphState, Vec2, Size2, UserDataValue};
+    use graphene_core::{GraphState, PropValue, Size2, Vec2};
 
     #[test]
     fn test_data_driven_selectors_and_bypasses() {
         let mut state: GraphState<ComputedStyle> = GraphState::new();
         let n1 = state.add_node(Vec2::new(0.0, 0.0), Size2::new(10.0, 10.0));
 
-        let key_weight = state.string_arena.intern("weight".to_string());
-        let key_name = state.string_arena.intern("name".to_string());
-        let key_active = state.string_arena.intern("active".to_string());
-        let val_alice = state.string_arena.intern("Alice".to_string());
+        state.set_node_prop(n1, "weight", PropValue::Float(7.5));
+        state.set_node_prop(n1, "name", PropValue::Text("Alice".into()));
+        state.set_node_prop(n1, "active", PropValue::Bool(true));
 
-        // Setup user data for node
-        let idx = state.node_keys[n1];
-        state.nodes[idx].user_data.insert(key_weight, UserDataValue::Float(7.5));
-        state.nodes[idx].user_data.insert(key_name, UserDataValue::String(val_alice));
-        state.nodes[idx].user_data.insert(key_active, UserDataValue::Boolean(true));
+        let props = state.node_props(n1);
 
         let class_store = ClassStore::new();
 
         // 1. Test Selector::DataExists
-        let sel_exists = Selector::DataExists(key_weight);
-        assert!(matches_selector(&sel_exists, Some(n1), None, &class_store, StateFlags::empty(), Some(&state.nodes[idx].user_data)));
+        let sel_exists = Selector::DataExists("weight".into());
+        assert!(matches_selector(
+            &sel_exists,
+            Some(n1),
+            None,
+            &class_store,
+            StateFlags::empty(),
+            props
+        ));
 
-        let sel_not_exists = Selector::DataExists(999);
-        assert!(!matches_selector(&sel_not_exists, Some(n1), None, &class_store, StateFlags::empty(), Some(&state.nodes[idx].user_data)));
+        let sel_not_exists = Selector::DataExists("non_existent".into());
+        assert!(!matches_selector(
+            &sel_not_exists,
+            Some(n1),
+            None,
+            &class_store,
+            StateFlags::empty(),
+            props
+        ));
 
         // 2. Test Selector::DataFloatCompare
-        let sel_float_gt = Selector::DataFloatCompare(key_weight, CompareOp::GreaterThan, 5.0);
-        assert!(matches_selector(&sel_float_gt, Some(n1), None, &class_store, StateFlags::empty(), Some(&state.nodes[idx].user_data)));
+        let sel_float_gt =
+            Selector::DataFloatCompare("weight".into(), CompareOp::GreaterThan, 5.0);
+        assert!(matches_selector(
+            &sel_float_gt,
+            Some(n1),
+            None,
+            &class_store,
+            StateFlags::empty(),
+            props
+        ));
 
-        let sel_float_lt = Selector::DataFloatCompare(key_weight, CompareOp::LessThan, 5.0);
-        assert!(!matches_selector(&sel_float_lt, Some(n1), None, &class_store, StateFlags::empty(), Some(&state.nodes[idx].user_data)));
+        let sel_float_lt =
+            Selector::DataFloatCompare("weight".into(), CompareOp::LessThan, 5.0);
+        assert!(!matches_selector(
+            &sel_float_lt,
+            Some(n1),
+            None,
+            &class_store,
+            StateFlags::empty(),
+            props
+        ));
 
         // 3. Test Selector::DataStrEquals
-        let sel_str_eq = Selector::DataStrEquals(key_name, val_alice);
-        assert!(matches_selector(&sel_str_eq, Some(n1), None, &class_store, StateFlags::empty(), Some(&state.nodes[idx].user_data)));
+        let sel_str_eq = Selector::DataStrEquals("name".into(), "Alice".to_string());
+        assert!(matches_selector(
+            &sel_str_eq,
+            Some(n1),
+            None,
+            &class_store,
+            StateFlags::empty(),
+            props
+        ));
 
         // 4. Test Selector::DataBoolEquals
-        let sel_bool_eq = Selector::DataBoolEquals(key_active, true);
-        assert!(matches_selector(&sel_bool_eq, Some(n1), None, &class_store, StateFlags::empty(), Some(&state.nodes[idx].user_data)));
+        let sel_bool_eq = Selector::DataBoolEquals("active".into(), true);
+        assert!(matches_selector(
+            &sel_bool_eq,
+            Some(n1),
+            None,
+            &class_store,
+            StateFlags::empty(),
+            props
+        ));
 
         // 5. Test RuleEngine with Data-Driven Selectors
         let rule_weight = StyleRule {
-            selector: Selector::DataFloatCompare(key_weight, CompareOp::GreaterThan, 5.0),
+            selector: Selector::DataFloatCompare("weight".into(), CompareOp::GreaterThan, 5.0),
             patch: StylePatch {
                 fill_color: Some(ColorValue::Rgba(1.0, 0.0, 0.0, 1.0)),
                 ..Default::default()
             },
         };
         let rule_engine = RuleEngine::new(vec![rule_weight]);
-        let computed = rule_engine.compute_node_style(n1, &class_store, StateFlags::empty(), Some(&state.nodes[idx].user_data));
+        let computed = rule_engine.compute_node_style(
+            n1,
+            &class_store,
+            StateFlags::empty(),
+            props,
+        );
         if let StylingTarget::Node(node_style) = computed.target {
             assert_eq!(node_style.fill_color, ColorValue::Rgba(1.0, 0.0, 0.0, 1.0));
         } else {
@@ -759,7 +809,12 @@ mod tests {
 
         // 6. Test StylingEngine with overrides/bypasses
         let mut styling_engine = StylingEngine::new(rule_engine);
-        let computed_before = styling_engine.compute_node_style(n1, &class_store, StateFlags::empty(), Some(&state.nodes[idx].user_data));
+        let computed_before = styling_engine.compute_node_style(
+            n1,
+            &class_store,
+            StateFlags::empty(),
+            props,
+        );
         if let StylingTarget::Node(node_style) = computed_before.target {
             assert_eq!(node_style.fill_color, ColorValue::Rgba(1.0, 0.0, 0.0, 1.0));
         }
@@ -771,7 +826,12 @@ mod tests {
         };
         styling_engine.set_node_bypass(n1, bypass_patch);
 
-        let computed_after = styling_engine.compute_node_style(n1, &class_store, StateFlags::empty(), Some(&state.nodes[idx].user_data));
+        let computed_after = styling_engine.compute_node_style(
+            n1,
+            &class_store,
+            StateFlags::empty(),
+            props,
+        );
         if let StylingTarget::Node(node_style) = computed_after.target {
             assert_eq!(node_style.fill_color, ColorValue::Rgba(0.0, 0.0, 1.0, 1.0));
         } else {

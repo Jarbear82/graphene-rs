@@ -1,7 +1,7 @@
 use graphene_algorithms::{laplacian, to_csr, BfsIter, DfsIter, HierarchyWalk};
 use graphene_core::{
     AllowMulti, Directed, EdgeData, GraphError, GraphState, GraphView, NodeKind, PropertyIndex,
-    SimpleOnly, Size2, Undirected, UserDataValue, Vec2,
+    PropValue, SimpleOnly, Size2, Undirected, Vec2,
 };
 
 #[test]
@@ -91,16 +91,12 @@ fn test_property_index() {
     let idx1 = state.node_keys[n1];
     let idx2 = state.node_keys[n2];
 
-    let val_person = UserDataValue::Integer(42);
-    state
-        .nodes
-        .get_mut(idx1)
-        .user_data
-        .insert(k_type, val_person);
+    let val_person = PropValue::Int(42);
+    state.set_node_prop(n1, "type", val_person.clone());
 
     let index = PropertyIndex::rebuild(&state);
     let mask = index
-        .query(k_type, val_person)
+        .query("type", &val_person)
         .expect("Query should find match");
 
     assert!(mask[idx1]);

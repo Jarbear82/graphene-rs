@@ -4,6 +4,160 @@ use slotmap::{new_key_type, SecondaryMap, SlotMap};
 use std::time::Duration;
 
 pub use crate::math::{Size2, Vec2};
+pub use compact_str::CompactString;
+pub use indexmap::IndexMap;
+pub use smallvec::SmallVec;
+
+pub type Labels = SmallVec<[CompactString; 2]>;
+pub type Properties = IndexMap<CompactString, PropValue>;
+
+/// Typed property value sum type for LPG and HubGS attributes.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum PropValue {
+    Null,
+    Bool(bool),
+    Int(i64),
+    Float(f64),
+    Text(CompactString),
+}
+
+impl Eq for PropValue {}
+
+impl std::hash::Hash for PropValue {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        core::mem::discriminant(self).hash(state);
+        match self {
+            PropValue::Null => {}
+            PropValue::Bool(b) => b.hash(state),
+            PropValue::Int(i) => i.hash(state),
+            PropValue::Float(f) => f.to_bits().hash(state),
+            PropValue::Text(s) => s.hash(state),
+        }
+    }
+}
+
+impl PropValue {
+    pub fn as_str(&self) -> Option<&str> {
+        match self {
+            PropValue::Text(s) => Some(s.as_str()),
+            _ => None,
+        }
+    }
+
+    pub fn to_display_string(&self) -> String {
+        match self {
+            PropValue::Null => "null".to_string(),
+            PropValue::Bool(b) => b.to_string(),
+            PropValue::Int(i) => i.to_string(),
+            PropValue::Float(f) => f.to_string(),
+            PropValue::Text(s) => s.to_string(),
+        }
+    }
+}
+
+/// Explicit edge direction capturing LPG directedness and HubGS role arrows (->, <-, <->, -).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize)]
+pub enum EdgeDirection {
+    #[default]
+    Directed,      // ->
+    Reverse,       // <-
+    Bidirectional, // <->
+    Undirected,    // -
+}
+
+/// Attribute data visibility / expansion state for a node.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize)]
+pub enum DataExpansionMode {
+    #[default]
+    Compact, // Summary mode: Primary label + @display prop value
+    Preview, // Partial mode: @display + highlighted key properties
+    Full,    // Expanded mode: Unfolds complete key-value property drawer/table
+}
+
+/// Structured attribute container for LPG nodes & HubGS entity instances.
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct NodeData {
+    pub labels: Labels,
+    pub props: Properties,
+    pub expansion_mode: DataExpansionMode,
+}
+
+impl NodeData {
+    pub fn new(labels: impl IntoIterator<Item = impl Into<CompactString>>, props: Properties) -> Self {
+        let labels_vec = labels.into_iter().map(|l| l.into()).collect();
+        Self {
+            labels: labels_vec,
+            props,
+            expansion_mode: DataExpansionMode::Compact,
+        }
+    }
+
+    pub fn with_label(label: impl Into<CompactString>) -> Self {
+        let mut labels = Labels::new();
+        labels.push(label.into());
+        Self {
+            labels,
+            props: Properties::new(),
+            expansion_mode: DataExpansionMode::Compact,
+        }
+    }
+
+    pub fn primary_label(&self) -> Option<&str> {
+        self.labels.first().map(|s| s.as_str())
+    }
+
+    pub fn display_label(&self) -> Option<&str> {
+        if let Some(PropValue::Text(val)) = self.props.get("@display") {
+            Some(val.as_str())
+        } else if let Some(PropValue::Text(val)) = self.props.get("name") {
+            Some(val.as_str())
+        } else if let Some(PropValue::Text(val)) = self.props.get("title") {
+            Some(val.as_str())
+        } else {
+            self.primary_label()
+        }
+    }
+}
+
+/// Structured attribute container for LPG relationships & HubGS roles.
+#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct EdgeData {
+    pub labels: Labels,
+    pub props: Properties,
+    pub direction: EdgeDirection,
+    pub multiplicity: Option<CompactString>,
+}
+
+impl EdgeData {
+    pub fn new(
+        labels: impl IntoIterator<Item = impl Into<CompactString>>,
+        direction: EdgeDirection,
+        props: Properties,
+    ) -> Self {
+        let labels_vec = labels.into_iter().map(|l| l.into()).collect();
+        Self {
+            labels: labels_vec,
+            props,
+            direction,
+            multiplicity: None,
+        }
+    }
+
+    pub fn with_label(label: impl Into<CompactString>, direction: EdgeDirection) -> Self {
+        let mut labels = Labels::new();
+        labels.push(label.into());
+        Self {
+            labels,
+            props: Properties::new(),
+            direction,
+            multiplicity: None,
+        }
+    }
+
+    pub fn primary_label(&self) -> Option<&str> {
+        self.labels.first().map(|s| s.as_str())
+    }
+}
 
 new_key_type! {
     pub struct NodeId;
@@ -268,15 +422,7 @@ impl UserData {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
-pub struct NodeData {
-    pub user_data: UserData,
-}
 
-#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
-pub struct EdgeData {
-    pub user_data: UserData,
-}
 
 /// Doubly-linked tree in SoA — O(1) reparenting and deletion.
 #[derive(Debug, Clone)]

@@ -191,7 +191,7 @@ impl<S: Copy + Default + Send + Sync + 'static> GraphView<S> {
         for (idx, &id) in state.node_index_to_id.iter().enumerate() {
             let pos = *state.positions.get(idx);
             let size = *state.sizes.get(idx);
-            let label = state.get_node_label(id).unwrap_or_default().to_string();
+            let label = state.display_label(id).unwrap_or_default().to_string();
             let parent = *state.hierarchy.parent.get(idx);
             let data = if idx < state.computed_styles.len() {
                 *state.computed_styles.get(idx)
