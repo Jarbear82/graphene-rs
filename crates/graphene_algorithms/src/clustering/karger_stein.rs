@@ -102,12 +102,15 @@ fn contract_until(
 
 /// Compute an approximate minimum cut of a graph using the Karger-Stein algorithm.
 ///
-/// # Arguments
-/// * `nodes` — list of node identifiers (only needed to verify connectivity).
-/// * `edges` — list of undirected edges connecting the nodes.
+/// WHY / INVARIANT:
+/// Karger's algorithm contracts random edges because any edge in a specific minimum cut $C$
+/// is contracted with probability at most $2/|V|$. By contracting until $n/\sqrt{2}$ meta-nodes
+/// remain and recursively splitting into two independent trials, Karger-Stein elevates the
+/// success probability from $O(1/n^2)$ to $O(1/\log n)$ per trial, running in $O(n^2 \log^3 n)$ time.
 ///
-/// Returns a [`MinCutResult`] on success, or `None` if the graph has fewer than
-/// two nodes.
+/// # Arguments
+/// * `nodes` — list of node identifiers.
+/// * `edges` — list of undirected edges connecting the nodes.
 pub fn karger_stein(nodes: &[usize], edges: &[Edge]) -> Option<MinCutResult> {
     let num_nodes = nodes.len();
 

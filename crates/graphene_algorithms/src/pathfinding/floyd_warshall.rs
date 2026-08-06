@@ -43,8 +43,11 @@ impl FloydWarshallResult {
         let mut path = vec![PathStep::Node(from)];
 
         while current != to {
-            let next_node = self.next[current * self.nodes_count + to].unwrap();
-            let edge_idx = self.edge_next[current * self.nodes_count + next_node].unwrap();
+            let idx = current * self.nodes_count + to;
+            let Some(next_node) = self.next[idx] else { break };
+            let edge_idx_slot = current * self.nodes_count + next_node;
+            let Some(edge_idx) = self.edge_next[edge_idx_slot] else { break };
+
             path.push(PathStep::Edge(edge_idx));
             path.push(PathStep::Node(next_node));
             current = next_node;

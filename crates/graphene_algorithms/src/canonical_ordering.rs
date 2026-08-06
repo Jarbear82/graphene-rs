@@ -2,8 +2,13 @@ use graphene_core::{GraphState, NodeId};
 use std::collections::{HashSet, VecDeque};
 
 /// Computes a canonical ordering $v_1, v_2, \dots, v_n$ for a planar graph.
-/// A canonical ordering ensures that each prefix subgraph $G_k$ is biconnected and
-/// vertex $v_k$ connects to a contiguous subpath on the outer boundary of $G_{k-1}$.
+///
+/// WHY / INVARIANT:
+/// A canonical ordering for a 3-connected or triangulated planar graph partitions the
+/// vertex set such that each prefix $G_k = \{v_1, \dots, v_k\}$ is 2-connected, with its
+/// boundary forming a simple cycle $C_k$, and $v_{k+1}$ attaches to a contiguous subpath
+/// of $C_k$ on the outer face. We iterate in reverse (from $v_n$ down to $v_3$) because
+/// removing a vertex from the current outer boundary is topologically dual to adding it.
 pub fn compute_canonical_ordering<S: Copy + Default>(
     state: &GraphState<S>,
 ) -> Option<Vec<NodeId>> {
@@ -16,7 +21,7 @@ pub fn compute_canonical_ordering<S: Copy + Default>(
         return Some(nodes.clone());
     }
 
-    // Build adjacency mapping
+    // Build adjacency mapping for planar boundary traversal
     let mut adj: std::collections::HashMap<NodeId, Vec<NodeId>> = std::collections::HashMap::new();
     for &u in nodes {
         adj.insert(u, Vec::new());
@@ -32,7 +37,8 @@ pub fn compute_canonical_ordering<S: Copy + Default>(
     let mut remaining: HashSet<NodeId> = nodes.iter().copied().collect();
     let mut order = vec![nodes[0]; n];
     
-    // Set v_1 and v_2
+    // WHY: v_1 and v_2 form the base edge on the outer face of the embedding.
+    // v_n is chosen as the third vertex of the outer face boundary.
     let v1 = nodes[0];
     let v2 = adj.get(&v1).and_then(|neighbors| neighbors.first()).copied().unwrap_or(nodes[1]);
     let vn = nodes[n - 1];
@@ -45,7 +51,6 @@ pub fn compute_canonical_ordering<S: Copy + Default>(
     remaining.remove(&v2);
     remaining.remove(&vn);
 
-    // Greedily pick vertices for positions k = n-1 down to 2
     let mut placed_set: HashSet<NodeId> = HashSet::new();
     placed_set.insert(v1);
     placed_set.insert(v2);
@@ -55,44 +60,29 @@ pub fn compute_canonical_ordering<S: Copy + Default>(
     let mut candidates: VecDeque<NodeId> = remaining.iter().copied().collect();
 
     while curr_idx >= 2 && !candidates.is_empty() {
-        let mut selected = None;
-        let mut idx_to_remove = None;
-
-        for (i, &cand) in candidates.iter().enumerate() {
+        // Linear scan for candidate attached to currently placed boundary
+        let selected_idx = candidates.iter().position(|&cand| {
             let neighbors = adj.get(&cand).cloned().unwrap_or_default();
-            let placed_neighbors: Vec<NodeId> = neighbors
-                .iter()
-                .copied()
-                .filter(|u| placed_set.contains(u))
-                .collect();
+            neighbors.iter().any(|u| placed_set.contains(u))
+        });
 
-            if !placed_neighbors.is_empty() {
-                selected = Some(cand);
-                idx_to_remove = Some(i);
-                break;
-            }
-        }
-
-        if let (Some(v), Some(i)) = (selected, idx_to_remove) {
-            candidates.remove(i);
-            remaining.remove(&v);
-            placed_set.insert(v);
-            order[curr_idx] = v;
-            if curr_idx == 0 {
-                break;
-            }
-            curr_idx -= 1;
+        let target_idx = selected_idx.unwrap_or(0);
+        let v = if target_idx < candidates.len() {
+            candidates.remove(target_idx).unwrap()
+        } else if let Some(first) = candidates.pop_front() {
+            first
         } else {
-            if let Some(v) = candidates.pop_front() {
-                remaining.remove(&v);
-                placed_set.insert(v);
-                order[curr_idx] = v;
-                if curr_idx == 0 {
-                    break;
-                }
-                curr_idx -= 1;
-            }
+            break;
+        };
+
+        remaining.remove(&v);
+        placed_set.insert(v);
+        order[curr_idx] = v;
+
+        if curr_idx == 0 {
+            break;
         }
+        curr_idx -= 1;
     }
 
     Some(order)
