@@ -57,7 +57,7 @@ impl Render for DemoApp {
 
         let sim_converged = self.live_sim.is_converged();
         let needs_physics = self.physics_enabled
-            && (!sim_converged || self.interaction_state.drag_start.is_some());
+            && (!sim_converged || self.interaction_state.drag_session.is_some());
 
         if needs_physics {
             self.run_physics_step();
@@ -68,7 +68,7 @@ impl Render for DemoApp {
                     .await;
                 this.update(cx, |this, cx| {
                     if this.physics_enabled {
-                        if this.interaction_state.drag_start.is_some() {
+                        if this.interaction_state.drag_session.is_some() {
                             this.physics_temperature = 10.0;
                         } else {
                             this.physics_temperature *= 0.95;
@@ -310,7 +310,11 @@ impl DemoApp {
                         }
                     }
 
-                    this.interaction_state.on_mouse_down(click_pos, hit_node, &this.view);
+                    if let Some((node_id, target_pos, phase)) =
+                        this.interaction_state.on_mouse_down(click_pos, hit_node, &this.view)
+                    {
+                        this.engine.drag_node_target(node_id, target_pos, phase);
+                    }
                     cx.notify();
                 }),
             )
@@ -319,15 +323,10 @@ impl DemoApp {
                 let mut interaction = this.interaction_state.clone();
                 let mut vp = this.viewport.clone();
 
-                if let Some((drag_id, step_delta)) =
+                if let Some((drag_id, target_pos, phase)) =
                     interaction.on_mouse_drag(mouse_pos, &mut vp, &this.view)
                 {
-                    this.engine
-                        .send_command(graphene_layout::GraphCommand::TranslateSubtree {
-                            id: drag_id,
-                            delta: step_delta,
-                        })
-                        .ok();
+                    this.engine.drag_node_target(drag_id, target_pos, phase);
                 }
 
                 this.interaction_state = interaction;
@@ -337,7 +336,9 @@ impl DemoApp {
             .on_mouse_up(
                 gpui::MouseButton::Left,
                 cx.listener(|this, _, _, cx| {
-                    this.interaction_state.on_mouse_up();
+                    if let Some((node_id, target_pos, phase)) = this.interaction_state.on_mouse_up() {
+                        this.engine.drag_node_target(node_id, target_pos, phase);
+                    }
                     this.interaction_state.rebuild_grid(&this.view);
                     cx.notify();
                 }),

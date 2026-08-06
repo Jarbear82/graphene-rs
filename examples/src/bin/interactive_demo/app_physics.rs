@@ -56,8 +56,8 @@ impl DemoApp {
             return;
         }
 
-        let drag_idx = self.interaction_state.drag_start.and_then(|(drag_id, _, _)| {
-            self.view.node_order.iter().position(|&id| id == drag_id)
+        let drag_idx = self.interaction_state.drag_session.as_ref().and_then(|session| {
+            self.view.node_order.iter().position(|&id| id == session.node_id)
         });
 
         self.engine.send_command(graphene_layout::GraphCommand::UpdateLiveSimParam(

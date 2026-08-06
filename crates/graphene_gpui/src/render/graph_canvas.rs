@@ -265,7 +265,7 @@ impl<'a> IntoElement for GraphCanvas<'a> {
 
         let mut edge_paths = Vec::new();
         let mut edge_labels_to_render = Vec::new();
-        let is_panning_active = self.interaction_state.drag_start.is_some() || self.interaction_state.pan_origin.is_some();
+        let is_panning_active = self.interaction_state.drag_session.is_some() || self.interaction_state.pan_origin.is_some();
         let skip_edges = cfg.hide_edges_during_pan && is_panning_active;
 
         if !skip_edges {

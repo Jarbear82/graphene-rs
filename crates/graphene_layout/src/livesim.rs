@@ -1,5 +1,6 @@
 use crate::force_atlas2::{self, force_atlas2_step, Edge as FA2Edge, Node as FA2Node, Settings as FA2Settings};
-use graphene_core::{math::Vec2, GraphState, HierarchyExt};
+use graphene_core::{math::Vec2, GraphState, HierarchyExt, NodeId};
+use std::collections::HashSet;
 
 /// Simulation termination conditions
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -66,6 +67,8 @@ pub struct LiveForceSimulation {
     pub stop_condition: StopCondition,
     pub iteration_count: usize,
     pub last_displacement: f64,
+    /// Nodes currently pinned as kinematic bodies (e.g. during drag)
+    pub pinned_nodes: HashSet<NodeId>,
     /// Cached node state (for old force retention)
     cached_nodes: Vec<FA2Node>,
 }
@@ -89,8 +92,24 @@ impl LiveForceSimulation {
             stop_condition: StopCondition::default(),
             iteration_count: 0,
             last_displacement: 1.0,
+            pinned_nodes: HashSet::new(),
             cached_nodes: Vec::new(),
         }
+    }
+
+    /// Pin a node to prevent force simulation displacement during user dragging
+    pub fn pin_node(&mut self, id: NodeId) {
+        self.pinned_nodes.insert(id);
+    }
+
+    /// Unpin a node to resume normal force simulation
+    pub fn unpin_node(&mut self, id: NodeId) {
+        self.pinned_nodes.remove(&id);
+    }
+
+    /// Clear all kinematic pinned nodes
+    pub fn clear_pinned_nodes(&mut self) {
+        self.pinned_nodes.clear();
     }
 
     /// Reset internal step counters and temperature
@@ -100,6 +119,7 @@ impl LiveForceSimulation {
         self.speed_efficiency = 1.0;
         self.temperature = 10.0;
         self.last_displacement = 1.0;
+        self.pinned_nodes.clear();
         self.cached_nodes.clear();
     }
 
@@ -243,10 +263,17 @@ impl LiveForceSimulation {
         self.last_displacement = disp;
         self.iteration_count += 1;
 
-        // Sync positions back to GraphState
+        // Sync positions back to GraphState, preserving pinned kinematic nodes
         for i in 0..n {
-            let p = self.cached_nodes[i].pos;
-            state.positions.set(i, Vec2::new(p.x as f32, p.y as f32));
+            let node_id = state.node_index_to_id[i];
+            if self.pinned_nodes.contains(&node_id) {
+                let p = *state.positions.get(i);
+                self.cached_nodes[i].pos = force_atlas2::Vec2::new(p.x as f64, p.y as f64);
+                self.cached_nodes[i].old_force = force_atlas2::Vec2::zero();
+            } else {
+                let p = self.cached_nodes[i].pos;
+                state.positions.set(i, Vec2::new(p.x as f32, p.y as f32));
+            }
         }
 
         crate::collision::center_layout_at_origin(state);

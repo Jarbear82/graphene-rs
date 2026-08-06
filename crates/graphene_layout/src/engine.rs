@@ -93,6 +93,14 @@ impl LayoutCommand {
     }
 }
 
+/// Phase of an interactive node drag gesture.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DragPhase {
+    Begin,
+    Update,
+    End,
+}
+
 /// Asynchronous commands sent from the main UI thread to the GraphEngine thread.
 pub enum GraphCommand<S: Copy + Send + 'static> {
     AddNode {
@@ -111,6 +119,11 @@ pub enum GraphCommand<S: Copy + Send + 'static> {
     SetPosition {
         id: NodeId,
         pos: Vec2,
+    },
+    DragNodeTarget {
+        id: NodeId,
+        target_pos: Vec2,
+        phase: DragPhase,
     },
     TranslateNode {
         id: NodeId,
@@ -270,21 +283,44 @@ impl<S: Copy + Default + Send + Sync + 'static> GraphEngineHandle<S> {
             loop {
                 if active_sim.is_some() {
                     activity_counter_clone.store(1, Ordering::Relaxed);
+                    let mut coalesced_drags = std::collections::HashMap::<NodeId, Vec2>::new();
                     while let Ok(cmd) = command_rx.try_recv() {
-                        if !Self::process_command(
+                        if let GraphCommand::DragNodeTarget { id, target_pos, phase: DragPhase::Update } = cmd {
+                            coalesced_drags.insert(id, target_pos);
+                        } else {
+                            if !Self::process_command(
+                                &mut state,
+                                &mut undo_redo,
+                                &mut active_sim,
+                                cmd,
+                                &snapshot_clone,
+                                &analysis_report_clone,
+                                &update_tx,
+                                &threads_counter_clone,
+                                &activity_counter_clone,
+                                &mut version_counter,
+                            ) {
+                                return;
+                            }
+                        }
+                    }
+                    for (id, target_pos) in coalesced_drags {
+                        Self::process_command(
                             &mut state,
                             &mut undo_redo,
                             &mut active_sim,
-                            cmd,
+                            GraphCommand::DragNodeTarget {
+                                id,
+                                target_pos,
+                                phase: DragPhase::Update,
+                            },
                             &snapshot_clone,
                             &analysis_report_clone,
                             &update_tx,
                             &threads_counter_clone,
                             &activity_counter_clone,
                             &mut version_counter,
-                        ) {
-                            return;
-                        }
+                        );
                     }
                     if let Some(ref mut sim) = active_sim {
                         sim.tick(&mut state);
@@ -411,6 +447,41 @@ impl<S: Copy + Default + Send + Sync + 'static> GraphEngineHandle<S> {
                         label: None,
                         data: None,
                     });
+                }
+            }
+            GraphCommand::DragNodeTarget { id, target_pos, phase } => {
+                if let Some(&idx) = state.node_keys.get(id) {
+                    match phase {
+                        DragPhase::Begin => {
+                            if let Some(ref mut sim) = active_sim {
+                                sim.pin_node(id);
+                            }
+                            state.positions.set(idx, target_pos);
+                            *version += 1;
+                            Self::publish_snapshot(state, snapshot, *version);
+                        }
+                        DragPhase::Update => {
+                            state.positions.set(idx, target_pos);
+                            *version += 1;
+                            Self::publish_snapshot(state, snapshot, *version);
+                        }
+                        DragPhase::End => {
+                            if let Some(ref mut sim) = active_sim {
+                                sim.unpin_node(id);
+                            }
+                            undo_redo.record_state(state);
+                            state.positions.set(idx, target_pos);
+                            *version += 1;
+                            Self::publish_snapshot(state, snapshot, *version);
+                            let _ = update_tx.send(GraphUpdate::NodeUpdated {
+                                id,
+                                pos: Some(target_pos),
+                                size: None,
+                                label: None,
+                                data: None,
+                            });
+                        }
+                    }
                 }
             }
             GraphCommand::TranslateNode { id, delta } => {
@@ -705,6 +776,11 @@ impl<S: Copy + Default + Send + Sync + 'static> GraphEngineHandle<S> {
     /// Asynchronously set position of a node.
     pub fn drag_node(&self, id: NodeId, pos: Vec2) {
         let _ = self.send_command(GraphCommand::SetPosition { id, pos });
+    }
+
+    /// Asynchronously dispatch a node drag gesture phase target to the background GraphEngine thread.
+    pub fn drag_node_target(&self, id: NodeId, target_pos: Vec2, phase: DragPhase) {
+        let _ = self.send_command(GraphCommand::DragNodeTarget { id, target_pos, phase });
     }
 
     /// Asynchronously load a new graph preset.

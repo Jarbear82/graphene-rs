@@ -68,9 +68,17 @@ impl SpatialHashGrid {
 }
 
 #[derive(Debug, Clone)]
+pub struct DragSession {
+    pub node_id: NodeId,
+    pub start_mouse_pos: gpui::Point<f32>,
+    pub start_node_pos: Vec2,
+    pub optimistic_pos: Vec2,
+}
+
+#[derive(Debug, Clone)]
 pub struct InteractionState {
-    pub drag_start: Option<(NodeId, gpui::Point<f32>, Vec2)>, // grabbed node + mouse starting pos + node starting pos
-    pub pan_origin: Option<gpui::Point<f32>>,                 // last pan start position
+    pub drag_session: Option<DragSession>,
+    pub pan_origin: Option<gpui::Point<f32>>, // last pan start position
     pub spatial_grid: SpatialHashGrid,
     pub is_box_selecting: bool,
     pub box_select_rect: Option<gpui::Bounds<f32>>,
@@ -79,7 +87,7 @@ pub struct InteractionState {
 impl InteractionState {
     pub fn new(cell_size: f32) -> Self {
         Self {
-            drag_start: None,
+            drag_session: None,
             pan_origin: None,
             spatial_grid: SpatialHashGrid::new(cell_size),
             is_box_selecting: false,
@@ -90,7 +98,16 @@ impl InteractionState {
     pub fn rebuild_grid<S: Copy + Send + 'static>(&mut self, view: &GraphView<S>) {
         self.spatial_grid.clear();
         for (&id, node) in &view.nodes {
-            self.spatial_grid.insert(id, node.pos, node.size);
+            let pos = if let Some(ref session) = self.drag_session {
+                if session.node_id == id {
+                    session.optimistic_pos
+                } else {
+                    node.pos
+                }
+            } else {
+                node.pos
+            };
+            self.spatial_grid.insert(id, pos, node.size);
         }
     }
 
@@ -128,7 +145,16 @@ impl InteractionState {
                     .copied()
                     .filter(|&id| {
                         if let Some(node) = view.nodes.get(&id) {
-                            viewport.is_visible(node.pos, node.size)
+                            let pos = if let Some(ref session) = self.drag_session {
+                                if session.node_id == id {
+                                    session.optimistic_pos
+                                } else {
+                                    node.pos
+                                }
+                            } else {
+                                node.pos
+                            };
+                            viewport.is_visible(pos, node.size)
                         } else {
                             false
                         }
@@ -143,12 +169,21 @@ impl InteractionState {
 
         for id in candidates {
             if let Some(node) = view.nodes.get(&id) {
+                let pos = if let Some(ref session) = self.drag_session {
+                    if session.node_id == id {
+                        session.optimistic_pos
+                    } else {
+                        node.pos
+                    }
+                } else {
+                    node.pos
+                };
                 let half_w = node.size.w / 2.0;
                 let half_h = node.size.h / 2.0;
-                if model_pos.x >= node.pos.x - half_w
-                    && model_pos.x <= node.pos.x + half_w
-                    && model_pos.y >= node.pos.y - half_h
-                    && model_pos.y <= node.pos.y + half_h
+                if model_pos.x >= pos.x - half_w
+                    && model_pos.x <= pos.x + half_w
+                    && model_pos.y >= pos.y - half_h
+                    && model_pos.y <= pos.y + half_h
                 {
                     let depth = get_nesting_depth(id, view);
                     if best_match.is_none() || depth > max_depth {
@@ -176,8 +211,28 @@ impl InteractionState {
                     continue;
                 };
 
-                let src_screen = viewport.model_to_screen(src_node.pos);
-                let tgt_screen = viewport.model_to_screen(tgt_node.pos);
+                let src_pos = if let Some(ref session) = self.drag_session {
+                    if session.node_id == edge.source {
+                        session.optimistic_pos
+                    } else {
+                        src_node.pos
+                    }
+                } else {
+                    src_node.pos
+                };
+
+                let tgt_pos = if let Some(ref session) = self.drag_session {
+                    if session.node_id == edge.target {
+                        session.optimistic_pos
+                    } else {
+                        tgt_node.pos
+                    }
+                } else {
+                    tgt_node.pos
+                };
+
+                let src_screen = viewport.model_to_screen(src_pos);
+                let tgt_screen = viewport.model_to_screen(tgt_pos);
 
                 let dist = distance_to_segment(
                     screen_pos,
@@ -197,37 +252,42 @@ impl InteractionState {
         position: gpui::Point<f32>,
         hit_node: Option<NodeId>,
         view: &GraphView<S>,
-    ) {
+    ) -> Option<(NodeId, Vec2, graphene_layout::engine::DragPhase)> {
         if let Some(node_id) = hit_node {
             if let Some(node) = view.nodes.get(&node_id) {
-                self.drag_start = Some((node_id, position, node.pos));
+                let session = DragSession {
+                    node_id,
+                    start_mouse_pos: position,
+                    start_node_pos: node.pos,
+                    optimistic_pos: node.pos,
+                };
+                self.drag_session = Some(session);
+                return Some((node_id, node.pos, graphene_layout::engine::DragPhase::Begin));
             }
         } else {
             self.pan_origin = Some(position);
         }
+        None
     }
 
     pub fn on_mouse_drag<S: Copy + Send + 'static>(
         &mut self,
         position: gpui::Point<f32>,
         viewport: &mut Viewport,
-        view: &GraphView<S>,
-    ) -> Option<(NodeId, Vec2)> {
-        if let Some((id, start_mouse_pos, start_node_pos)) = self.drag_start {
+        _view: &GraphView<S>,
+    ) -> Option<(NodeId, Vec2, graphene_layout::engine::DragPhase)> {
+        if let Some(ref mut session) = self.drag_session {
             let total_mouse_delta = gpui::point(
-                position.x - start_mouse_pos.x,
-                position.y - start_mouse_pos.y,
+                position.x - session.start_mouse_pos.x,
+                position.y - session.start_mouse_pos.y,
             );
-            let target_parent_pos = start_node_pos
+            let target_pos = session.start_node_pos
                 + Vec2::new(
                     total_mouse_delta.x / viewport.zoom,
                     total_mouse_delta.y / viewport.zoom,
                 );
-            if let Some(node) = view.nodes.get(&id) {
-                let current_parent_pos = node.pos;
-                let step_delta = target_parent_pos - current_parent_pos;
-                return Some((id, step_delta));
-            }
+            session.optimistic_pos = target_pos;
+            return Some((session.node_id, target_pos, graphene_layout::engine::DragPhase::Update));
         } else if let Some(last_pos) = self.pan_origin {
             let delta = gpui::point(position.x - last_pos.x, position.y - last_pos.y);
             viewport.offset.x += delta.x / viewport.zoom;
@@ -237,9 +297,18 @@ impl InteractionState {
         None
     }
 
-    pub fn on_mouse_up(&mut self) {
-        self.drag_start = None;
+    pub fn on_mouse_up(&mut self) -> Option<(NodeId, Vec2, graphene_layout::engine::DragPhase)> {
+        let result = if let Some(session) = self.drag_session.take() {
+            Some((
+                session.node_id,
+                session.optimistic_pos,
+                graphene_layout::engine::DragPhase::End,
+            ))
+        } else {
+            None
+        };
         self.pan_origin = None;
+        result
     }
 }
 

@@ -169,6 +169,19 @@ impl<S: Copy + Default + Send + Sync + 'static> GraphView<S> {
         view
     }
 
+    pub fn effective_node_position(
+        &self,
+        id: NodeId,
+        drag_session: Option<&crate::interaction::state::DragSession>,
+    ) -> Option<Vec2> {
+        if let Some(session) = drag_session {
+            if session.node_id == id {
+                return Some(session.optimistic_pos);
+            }
+        }
+        self.nodes.get(&id).map(|n| n.pos)
+    }
+
     pub fn load_preset(&mut self, state: &GraphState<S>) {
         self.nodes.clear();
         self.node_order.clear();
