@@ -315,7 +315,20 @@ impl<'a> IntoElement for GraphCanvas<'a> {
                 let tgt_screen = viewport.model_to_screen(clipped_tgt);
 
                 let curve_style = EdgeCurveStyle::Straight;
-                let label_text = edge_labels.get(&i).cloned();
+                let mut label_text = edge_labels.get(&i).cloned();
+                if label_text.is_none() || label_text.as_deref() == Some("") {
+                    let primary_lbl = edge.data.primary_label();
+                    let mult = edge.data.multiplicity.as_deref();
+                    if let Some(lbl) = primary_lbl {
+                        if let Some(m) = mult {
+                            label_text = Some(format!("{} {}", lbl, m));
+                        } else {
+                            label_text = Some(lbl.to_string());
+                        }
+                    } else if let Some(m) = mult {
+                        label_text = Some(m.to_string());
+                    }
+                }
 
                 let screen_curve_style = match curve_style {
                     EdgeCurveStyle::UnbundledBezier(cp1, cp2) => {
@@ -449,6 +462,25 @@ impl<'a> IntoElement for GraphCanvas<'a> {
 
             let mut node_w = size_val.w * viewport.zoom;
             let mut node_h = size_val.h * viewport.zoom;
+
+            let line_count = label.lines().count().max(1);
+            let max_line_len = label.lines().map(|l| l.chars().count()).max().unwrap_or(1);
+
+            match node.node_data.expansion_mode {
+                graphene_core::DataExpansionMode::Compact => {}
+                graphene_core::DataExpansionMode::Preview => {
+                    let min_w = (max_line_len as f32 * 8.5 + 28.0) * viewport.zoom;
+                    let min_h = (line_count as f32 * 18.0 + 24.0) * viewport.zoom;
+                    node_w = node_w.max(min_w);
+                    node_h = node_h.max(min_h);
+                }
+                graphene_core::DataExpansionMode::Full => {
+                    let min_w = (max_line_len as f32 * 9.0 + 36.0) * viewport.zoom;
+                    let min_h = (line_count as f32 * 18.0 + 28.0) * viewport.zoom;
+                    node_w = node_w.max(min_w);
+                    node_h = node_h.max(min_h);
+                }
+            }
 
             if let Some(score) = score_opt {
                 scale = 0.8 + score * 0.8;
