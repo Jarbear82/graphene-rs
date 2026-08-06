@@ -142,7 +142,20 @@ impl DemoApp {
                                 })
                                 .unwrap_or_else(|| format!("N{:?}", node_id));
                             let uuid_str = format!("{:?}", node_id);
-                            let sec_node: Option<NodeId> = None;
+
+                            let current_state = &self.fixtures[self.selected_fixture_idx].state;
+                            let (lpg_labels, lpg_props) = if let Some(idx) = current_state.node_keys.get(node_id) {
+                                let node_data = current_state.nodes.get(*idx);
+                                let labels_str: Vec<String> = node_data.labels.iter().map(|l| l.to_string()).collect();
+                                let props_list: Vec<(String, String)> = node_data
+                                    .props
+                                    .iter()
+                                    .map(|(k, v)| (k.to_string(), v.to_display_string()))
+                                    .collect();
+                                (labels_str, props_list)
+                            } else {
+                                (Vec::new(), Vec::new())
+                            };
 
                             gpui::div()
                                 .flex()
@@ -158,31 +171,17 @@ impl DemoApp {
                                         .text_color(theme.text)
                                         .font_weight(gpui::FontWeight::BOLD)
                                         .text_size(px(11.0))
-                                        .child(format!("Primary Selected: {}", label)),
+                                        .child(format!("Selected Node: {}", label)),
                                 )
                                 .child(
                                     gpui::div()
                                         .text_color(theme.text_dim)
                                         .text_size(px(10.0))
-                                        .child(format!("Node UUID (Read-Only):\n{}", uuid_str)),
+                                        .child(format!("Node UUID:\n{}", uuid_str)),
                                 )
-                                .when_some(sec_node, |parent, sec_id| {
-                                    let sec_label = self
-                                        .view
-                                        .nodes
-                                        .get(&sec_id)
-                                        .map(|n| n.label.clone())
-                                        .unwrap_or_else(|| {
-                                            format!("N{:?}", sec_id)
-                                        });
-                                    let sec_uuid = format!("{:?}", sec_id);
+                                .when(!lpg_labels.is_empty(), |parent| {
                                     parent.child(
                                         gpui::div()
-                                            .p_2()
-                                            .bg(theme.panel_bg)
-                                            .rounded_md()
-                                            .border(px(1.0))
-                                            .border_color(theme.accent)
                                             .flex()
                                             .flex_col()
                                             .gap_1()
@@ -190,28 +189,43 @@ impl DemoApp {
                                                 gpui::div()
                                                     .text_color(theme.accent)
                                                     .font_weight(gpui::FontWeight::BOLD)
-                                                    .text_size(px(11.0))
-                                                    .child(format!(
-                                                        "Secondary Selected: {}",
-                                                        sec_label
-                                                    )),
-                                            )
+                                                    .text_size(px(10.0))
+                                                    .child(format!("LPG Labels: [{}]", lpg_labels.join(", "))),
+                                            ),
+                                    )
+                                })
+                                .when(!lpg_props.is_empty(), |parent| {
+                                    parent.child(
+                                        gpui::div()
+                                            .flex()
+                                            .flex_col()
+                                            .gap_1()
+                                            .p_2()
+                                            .bg(theme.panel_bg)
+                                            .rounded_md()
                                             .child(
                                                 gpui::div()
-                                                    .text_color(theme.text_dim)
+                                                    .text_color(theme.text)
+                                                    .font_weight(gpui::FontWeight::BOLD)
                                                     .text_size(px(10.0))
-                                                    .child(format!("UUID: {}", sec_uuid)),
+                                                    .child("PROPERTIES (IndexMap):"),
                                             )
-                                            .child(
-                                                Button::new("connect-pri-sec-btn")
-                                                    .primary()
-                                                    .label("CONNECT PRIMARY ➔ SECONDARY")
-                                                    .on_click(cx.listener(move |this, _, _, _| {
-                                                        this.create_edge_between_nodes(
-                                                            node_id, sec_id,
-                                                        );
-                                                    })),
-                                            ),
+                                            .children(lpg_props.into_iter().map(|(k, v)| {
+                                                gpui::div()
+                                                    .flex()
+                                                    .justify_between()
+                                                    .text_size(px(10.0))
+                                                    .child(
+                                                        gpui::div()
+                                                            .text_color(theme.accent)
+                                                            .child(k),
+                                                    )
+                                                    .child(
+                                                        gpui::div()
+                                                            .text_color(theme.text)
+                                                            .child(v),
+                                                    )
+                                            })),
                                     )
                                 })
                                 .child(
@@ -300,6 +314,27 @@ impl DemoApp {
                                         ),
                                 )
                         } else if let Some(edge_idx) = self.selected_edge {
+                            let (edge_dir_str, edge_mult_str, edge_labels_str, edge_props_list) =
+                                if let Some(&id) = self.view.edge_order.get(edge_idx) {
+                                    let current_state = &self.fixtures[self.selected_fixture_idx].state;
+                                    if let Some(idx) = current_state.edge_keys.get(id) {
+                                        let edge_data = current_state.edges.get(*idx);
+                                        let dir = format!("{:?}", edge_data.direction);
+                                        let mult = edge_data.multiplicity.as_deref().unwrap_or("None").to_string();
+                                        let labels = edge_data.labels.iter().map(|l| l.to_string()).collect::<Vec<_>>().join(", ");
+                                        let props = edge_data
+                                            .props
+                                            .iter()
+                                            .map(|(k, v)| (k.to_string(), v.to_display_string()))
+                                            .collect::<Vec<_>>();
+                                        (dir, mult, labels, props)
+                                    } else {
+                                        ("Directed".to_string(), "None".to_string(), String::new(), Vec::new())
+                                    }
+                                } else {
+                                    ("Directed".to_string(), "None".to_string(), String::new(), Vec::new())
+                                };
+
                             gpui::div()
                                 .flex()
                                 .flex_col()
@@ -315,6 +350,60 @@ impl DemoApp {
                                         .text_size(px(11.0))
                                         .child(format!("Selected Edge: idx={}", edge_idx)),
                                 )
+                                .child(
+                                    gpui::div()
+                                        .text_color(theme.accent)
+                                        .text_size(px(10.0))
+                                        .child(format!("Direction: {}", edge_dir_str)),
+                                )
+                                .child(
+                                    gpui::div()
+                                        .text_color(theme.text_dim)
+                                        .text_size(px(10.0))
+                                        .child(format!("Multiplicity: {}", edge_mult_str)),
+                                )
+                                .when(!edge_labels_str.is_empty(), |parent| {
+                                    parent.child(
+                                        gpui::div()
+                                            .text_color(theme.text)
+                                            .text_size(px(10.0))
+                                            .child(format!("Edge Labels: [{}]", edge_labels_str)),
+                                    )
+                                })
+                                .when(!edge_props_list.is_empty(), |parent| {
+                                    parent.child(
+                                        gpui::div()
+                                            .flex()
+                                            .flex_col()
+                                            .gap_1()
+                                            .p_2()
+                                            .bg(theme.panel_bg)
+                                            .rounded_md()
+                                            .child(
+                                                gpui::div()
+                                                    .text_color(theme.text)
+                                                    .font_weight(gpui::FontWeight::BOLD)
+                                                    .text_size(px(10.0))
+                                                    .child("EDGE PROPERTIES:"),
+                                            )
+                                            .children(edge_props_list.into_iter().map(|(k, v)| {
+                                                gpui::div()
+                                                    .flex()
+                                                    .justify_between()
+                                                    .text_size(px(10.0))
+                                                    .child(
+                                                        gpui::div()
+                                                            .text_color(theme.accent)
+                                                            .child(k),
+                                                    )
+                                                    .child(
+                                                        gpui::div()
+                                                            .text_color(theme.text)
+                                                            .child(v),
+                                                    )
+                                            })),
+                                    )
+                                })
                                 .child(
                                     gpui::div()
                                         .id("delete-edge-container")

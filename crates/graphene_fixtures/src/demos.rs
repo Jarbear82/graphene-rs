@@ -1,5 +1,7 @@
 use super::GraphFixture;
-use graphene_core::{EdgeData, Size2, Vec2};
+use graphene_core::{
+    EdgeData, EdgeDirection, NodeData, PropValue, Properties, Size2, Vec2,
+};
 
 pub fn add_cytoscape_demos<S: Copy + Default>(fixtures: &mut Vec<GraphFixture<S>>) {
     // 1. COMPOUND NODES DEMO
@@ -396,6 +398,136 @@ pub fn add_cytoscape_demos<S: Copy + Default>(fixtures: &mut Vec<GraphFixture<S>
                     .add_edge(nodes[i], nodes[i + side], EdgeData::default());
             }
         }
+
+        fixtures.push(f);
+    }
+
+    // 9. HubGS RPG KNOWLEDGE GRAPH DEMO
+    {
+        let mut f = GraphFixture::new(
+            "Demo: HubGS RPG Knowledge Graph",
+            "HubGS Schema & Entity Instance Graph with @display, @background, and directed roles.",
+        );
+
+        let mut hero_props = Properties::new();
+        hero_props.insert("@display".into(), PropValue::Text("Aragorn".into()));
+        hero_props.insert("@background".into(), PropValue::Text("#8b0000".into()));
+        hero_props.insert("level".into(), PropValue::Int(50));
+        hero_props.insert("class".into(), PropValue::Text("Ranger".into()));
+        hero_props.insert("faction".into(), PropValue::Text("Fellowship".into()));
+
+        let hero = f.state.add_node_with_data(
+            Vec2::new(-120.0, -40.0),
+            Size2::new(140.0, 50.0),
+            NodeData::new(vec!["Character", "Hero"], hero_props),
+        );
+
+        let mut elf_props = Properties::new();
+        elf_props.insert("@display".into(), PropValue::Text("Legolas".into()));
+        elf_props.insert("@background".into(), PropValue::Text("#2e8b57".into()));
+        elf_props.insert("level".into(), PropValue::Int(48));
+        elf_props.insert("class".into(), PropValue::Text("Archer".into()));
+        elf_props.insert("faction".into(), PropValue::Text("Fellowship".into()));
+
+        let elf = f.state.add_node_with_data(
+            Vec2::new(-120.0, 60.0),
+            Size2::new(140.0, 50.0),
+            NodeData::new(vec!["Character", "Hero"], elf_props),
+        );
+
+        let mut gondor_props = Properties::new();
+        gondor_props.insert("@display".into(), PropValue::Text("Gondor Realm".into()));
+        gondor_props.insert("@background".into(), PropValue::Text("#4682b4".into()));
+        gondor_props.insert("type".into(), PropValue::Text("Kingdom".into()));
+
+        let gondor = f.state.add_node_with_data(
+            Vec2::new(140.0, -40.0),
+            Size2::new(140.0, 50.0),
+            NodeData::new(vec!["Location"], gondor_props),
+        );
+
+        let mut rivendell_props = Properties::new();
+        rivendell_props.insert("@display".into(), PropValue::Text("Rivendell Refuge".into()));
+        rivendell_props.insert("@background".into(), PropValue::Text("#4682b4".into()));
+        rivendell_props.insert("type".into(), PropValue::Text("Sanctuary".into()));
+
+        let rivendell = f.state.add_node_with_data(
+            Vec2::new(140.0, 60.0),
+            Size2::new(140.0, 50.0),
+            NodeData::new(vec!["Location"], rivendell_props),
+        );
+
+        f.node_labels.insert(hero, "Aragorn".into());
+        f.node_labels.insert(elf, "Legolas".into());
+        f.node_labels.insert(gondor, "Gondor Realm".into());
+        f.node_labels.insert(rivendell, "Rivendell Refuge".into());
+
+        let mut r1 = EdgeData::with_label("resides_in", EdgeDirection::Directed);
+        r1.multiplicity = Some("(1)".into());
+        f.state.add_edge_with_data(hero, gondor, r1);
+
+        let mut r2 = EdgeData::with_label("resides_in", EdgeDirection::Directed);
+        r2.multiplicity = Some("(1)".into());
+        f.state.add_edge_with_data(elf, rivendell, r2);
+
+        let mut r3 = EdgeData::with_label("allied_with", EdgeDirection::Bidirectional);
+        r3.multiplicity = Some("(1..*)".into());
+        f.state.add_edge_with_data(hero, elf, r3);
+
+        fixtures.push(f);
+    }
+
+    // 10. LPG MOVIE & ACTOR NETWORK DEMO
+    {
+        let mut f = GraphFixture::new(
+            "Demo: LPG Movie & Actor Network",
+            "Multi-labelled Property Graph (Person, Actor, Director, Movie) with rich attributes.",
+        );
+
+        let mut p1_props = Properties::new();
+        p1_props.insert("@display".into(), PropValue::Text("Keanu Reeves".into()));
+        p1_props.insert("born".into(), PropValue::Int(1964));
+        p1_props.insert("awards".into(), PropValue::Int(12));
+
+        let p1 = f.state.add_node_with_data(
+            Vec2::new(-140.0, -50.0),
+            Size2::new(140.0, 50.0),
+            NodeData::new(vec!["Person", "Actor"], p1_props),
+        );
+
+        let mut p2_props = Properties::new();
+        p2_props.insert("@display".into(), PropValue::Text("Lana Wachowski".into()));
+        p2_props.insert("born".into(), PropValue::Int(1965));
+
+        let p2 = f.state.add_node_with_data(
+            Vec2::new(-140.0, 70.0),
+            Size2::new(140.0, 50.0),
+            NodeData::new(vec!["Person", "Director"], p2_props),
+        );
+
+        let mut m1_props = Properties::new();
+        m1_props.insert("@display".into(), PropValue::Text("The Matrix (1999)".into()));
+        m1_props.insert("released".into(), PropValue::Int(1999));
+        m1_props.insert("rating".into(), PropValue::Float(8.7));
+        m1_props.insert("genre".into(), PropValue::Text("Sci-Fi".into()));
+
+        let m1 = f.state.add_node_with_data(
+            Vec2::new(140.0, 0.0),
+            Size2::new(160.0, 50.0),
+            NodeData::new(vec!["Movie"], m1_props),
+        );
+
+        f.node_labels.insert(p1, "Keanu Reeves".into());
+        f.node_labels.insert(p2, "Lana Wachowski".into());
+        f.node_labels.insert(m1, "The Matrix (1999)".into());
+
+        let mut e1_props = Properties::new();
+        e1_props.insert("role".into(), PropValue::Text("Neo".into()));
+        let e1 = EdgeData::new(vec!["ACTED_IN"], EdgeDirection::Directed, e1_props);
+        f.state.add_edge_with_data(p1, m1, e1);
+
+        let e2 = EdgeData::with_label("DIRECTED", EdgeDirection::Directed);
+        f.state.add_edge_with_data(p2, m1, e2);
 
         fixtures.push(f);
     }
