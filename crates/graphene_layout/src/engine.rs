@@ -145,6 +145,10 @@ pub enum GraphCommand<S: Copy + Send + 'static> {
         id: NodeId,
         data: S,
     },
+    SetNodeExpansionMode {
+        id: NodeId,
+        mode: graphene_core::DataExpansionMode,
+    },
     Undo,
     Redo,
     LoadPreset(GraphState<S>),
@@ -543,6 +547,22 @@ impl<S: Copy + Default + Send + Sync + 'static> GraphEngineHandle<S> {
                     });
                 }
             }
+            GraphCommand::SetNodeExpansionMode { id, mode } => {
+                if let Some(&idx) = state.node_keys.get(id) {
+                    undo_redo.record_state(state);
+                    state.set_node_expansion_mode(id, mode);
+                    let new_size = *state.sizes.get(idx);
+                    *version += 1;
+                    Self::publish_snapshot(state, snapshot, *version);
+                    let _ = update_tx.send(GraphUpdate::NodeUpdated {
+                        id,
+                        pos: None,
+                        size: Some(new_size),
+                        label: None,
+                        data: None,
+                    });
+                }
+            }
             GraphCommand::Undo => {
                 if undo_redo.undo(state) {
                     *version += 1;
@@ -791,6 +811,11 @@ impl<S: Copy + Default + Send + Sync + 'static> GraphEngineHandle<S> {
     /// Asynchronously run a layout algorithm on the background thread.
     pub fn run_layout(&self, layout: LayoutCommand) {
         let _ = self.send_command(GraphCommand::RunLayout(layout));
+    }
+
+    /// Asynchronously set expansion mode for a node on the background GraphEngine thread.
+    pub fn set_node_expansion_mode(&self, id: NodeId, mode: graphene_core::DataExpansionMode) {
+        let _ = self.send_command(GraphCommand::SetNodeExpansionMode { id, mode });
     }
 
     /// Shutdown the background GraphEngine thread.

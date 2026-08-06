@@ -43,7 +43,21 @@ impl PropValue {
             _ => None,
         }
     }
+}
 
+impl std::fmt::Display for PropValue {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PropValue::Null => write!(f, "null"),
+            PropValue::Bool(b) => write!(f, "{}", b),
+            PropValue::Int(i) => write!(f, "{}", i),
+            PropValue::Float(fl) => write!(f, "{}", fl),
+            PropValue::Text(s) => write!(f, "{}", s),
+        }
+    }
+}
+
+impl PropValue {
     pub fn to_display_string(&self) -> String {
         match self {
             PropValue::Null => "null".to_string(),
@@ -115,6 +129,48 @@ impl NodeData {
             Some(val.as_str())
         } else {
             self.primary_label()
+        }
+    }
+
+    pub fn compute_expansion_size(&self, base_size: Size2) -> Size2 {
+        let label = self.display_label().unwrap_or("").to_string();
+        let mut full_label = label.clone();
+
+        match self.expansion_mode {
+            DataExpansionMode::Compact => base_size,
+            DataExpansionMode::Preview => {
+                let items: Vec<String> = self
+                    .props
+                    .iter()
+                    .filter(|(k, _)| !k.starts_with('@'))
+                    .take(3)
+                    .map(|(k, v)| format!("{}: {}", k, v))
+                    .collect();
+                if !items.is_empty() {
+                    full_label = format!("{}\n{}", full_label, items.join("\n"));
+                }
+                let line_count = full_label.lines().count().max(1);
+                let max_line_len = full_label.lines().map(|l| l.chars().count()).max().unwrap_or(1);
+                let min_w = max_line_len as f32 * 8.5 + 28.0;
+                let min_h = line_count as f32 * 18.0 + 24.0;
+                Size2::new(base_size.w.max(min_w), base_size.h.max(min_h))
+            }
+            DataExpansionMode::Full => {
+                let items: Vec<String> = self
+                    .props
+                    .iter()
+                    .filter(|(k, _)| !k.starts_with('@'))
+                    .map(|(k, v)| format!("{}: {}", k, v))
+                    .collect();
+                if !items.is_empty() {
+                    full_label = format!("{}\n{}", full_label, items.join("\n"));
+                }
+                let line_count = full_label.lines().count().max(1);
+                let max_line_len = full_label.lines().map(|l| l.chars().count()).max().unwrap_or(1);
+                let min_w = max_line_len as f32 * 9.0 + 36.0;
+                let min_h = line_count as f32 * 18.0 + 28.0;
+                Size2::new(base_size.w.max(min_w), base_size.h.max(min_h))
+            }
         }
     }
 }

@@ -248,6 +248,7 @@ impl DemoApp {
                                                     Button::new("exp-compact-btn")
                                                         .label("COMPACT")
                                                         .on_click(cx.listener(move |this, _, _, cx| {
+                                                            this.engine.set_node_expansion_mode(node_id, graphene_core::DataExpansionMode::Compact);
                                                             this.fixtures[this.selected_fixture_idx]
                                                                 .state
                                                                 .set_node_expansion_mode(node_id, graphene_core::DataExpansionMode::Compact);
@@ -261,6 +262,7 @@ impl DemoApp {
                                                     Button::new("exp-preview-btn")
                                                         .label("PREVIEW")
                                                         .on_click(cx.listener(move |this, _, _, cx| {
+                                                            this.engine.set_node_expansion_mode(node_id, graphene_core::DataExpansionMode::Preview);
                                                             this.fixtures[this.selected_fixture_idx]
                                                                 .state
                                                                 .set_node_expansion_mode(node_id, graphene_core::DataExpansionMode::Preview);
@@ -274,6 +276,7 @@ impl DemoApp {
                                                     Button::new("exp-full-btn")
                                                         .label("FULL")
                                                         .on_click(cx.listener(move |this, _, _, cx| {
+                                                            this.engine.set_node_expansion_mode(node_id, graphene_core::DataExpansionMode::Full);
                                                             this.fixtures[this.selected_fixture_idx]
                                                                 .state
                                                                 .set_node_expansion_mode(node_id, graphene_core::DataExpansionMode::Full);

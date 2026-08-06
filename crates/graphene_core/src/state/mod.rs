@@ -125,7 +125,8 @@ impl<S: Copy + Default> GraphState<S> {
         size: Size2,
         data: NodeData,
     ) -> NodeId {
-        let id = self.add_node(pos, size);
+        let computed_size = data.compute_expansion_size(size);
+        let id = self.add_node(pos, computed_size);
         if let Some(&idx) = self.node_keys.get(id) {
             self.nodes.set(idx, data);
         }
@@ -157,7 +158,11 @@ impl<S: Copy + Default> GraphState<S> {
 
     pub fn set_node_prop(&mut self, id: NodeId, key: impl Into<CompactString>, val: PropValue) {
         if let Some(&idx) = self.node_keys.get(id) {
-            self.nodes.get_mut(idx).props.insert(key.into(), val);
+            let base_size = *self.sizes.get(idx);
+            let node = self.nodes.get_mut(idx);
+            node.props.insert(key.into(), val);
+            let new_size = node.compute_expansion_size(base_size);
+            *self.sizes.get_mut(idx) = new_size;
         }
     }
 
@@ -173,7 +178,11 @@ impl<S: Copy + Default> GraphState<S> {
 
     pub fn set_node_expansion_mode(&mut self, id: NodeId, mode: DataExpansionMode) {
         if let Some(&idx) = self.node_keys.get(id) {
-            self.nodes.get_mut(idx).expansion_mode = mode;
+            let base_size = *self.sizes.get(idx);
+            let node = self.nodes.get_mut(idx);
+            node.expansion_mode = mode;
+            let new_size = node.compute_expansion_size(base_size);
+            *self.sizes.get_mut(idx) = new_size;
         }
     }
 

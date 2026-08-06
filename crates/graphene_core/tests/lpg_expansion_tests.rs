@@ -18,14 +18,19 @@ fn test_node_expansion_mode_transitions() {
         NodeData::new(vec!["Character", "Hero"], props),
     );
 
+    let initial_size = *state.sizes.get(0);
     assert_eq!(state.nodes.get(0).expansion_mode, DataExpansionMode::Compact);
     assert_eq!(state.display_label(id), Some("Aragorn"));
 
     state.set_node_expansion_mode(id, DataExpansionMode::Preview);
     assert_eq!(state.nodes.get(0).expansion_mode, DataExpansionMode::Preview);
+    let preview_size = *state.sizes.get(0);
+    assert!(preview_size.w >= initial_size.w || preview_size.h >= initial_size.h);
 
     state.set_node_expansion_mode(id, DataExpansionMode::Full);
     assert_eq!(state.nodes.get(0).expansion_mode, DataExpansionMode::Full);
+    let full_size = *state.sizes.get(0);
+    assert!(full_size.w >= preview_size.w || full_size.h >= preview_size.h);
 }
 
 #[test]
