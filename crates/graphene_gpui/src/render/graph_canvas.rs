@@ -582,9 +582,9 @@ impl<'a> IntoElement for GraphCanvas<'a> {
                 curvature_val,
             );
 
-            // 2. Transform the model midpoint into screen space
-            let mid_screen = viewport.model_to_screen(mid_model);
-            let (mid_x, mid_y) = (mid_screen.x, mid_screen.y);
+            // 2. Transform the model midpoint into relative canvas space (matching node calculation)
+            let mid_x = (mid_model.x + viewport.offset.x) * viewport.zoom + viewport.bounds.size.width / 2.0;
+            let mid_y = (mid_model.y + viewport.offset.y) * viewport.zoom + viewport.bounds.size.height / 2.0;
 
             let font_size = cfg.edge_label_font_size * viewport.zoom;
 
