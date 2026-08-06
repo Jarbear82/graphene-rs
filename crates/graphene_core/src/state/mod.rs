@@ -171,6 +171,12 @@ impl<S: Copy + Default> GraphState<S> {
         self.nodes.get(idx).display_label()
     }
 
+    pub fn set_node_expansion_mode(&mut self, id: NodeId, mode: DataExpansionMode) {
+        if let Some(&idx) = self.node_keys.get(id) {
+            self.nodes.get_mut(idx).expansion_mode = mode;
+        }
+    }
+
     pub fn edge_labels(&self, id: EdgeId) -> Option<&Labels> {
         let idx = *self.edge_keys.get(id)?;
         Some(&self.edges.get(idx).labels)

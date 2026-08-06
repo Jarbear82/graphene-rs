@@ -477,15 +477,16 @@ pub fn add_cytoscape_demos<S: Copy + Default>(fixtures: &mut Vec<GraphFixture<S>
         fixtures.push(f);
     }
 
-    // 10. LPG MOVIE & ACTOR NETWORK DEMO
+    // 10. LPG MOVIE & ACTOR NETWORK (Small)
     {
         let mut f = GraphFixture::new(
-            "Demo: LPG Movie & Actor Network",
-            "Multi-labelled Property Graph (Person, Actor, Director, Movie) with rich attributes.",
+            "Demo: LPG Movie Network (Small: 3 Nodes)",
+            "Small multi-labelled Property Graph (Person, Actor, Director, Movie) with properties.",
         );
 
         let mut p1_props = Properties::new();
         p1_props.insert("@display".into(), PropValue::Text("Keanu Reeves".into()));
+        p1_props.insert("@background".into(), PropValue::Text("#8b0000".into()));
         p1_props.insert("born".into(), PropValue::Int(1964));
         p1_props.insert("awards".into(), PropValue::Int(12));
 
@@ -497,6 +498,7 @@ pub fn add_cytoscape_demos<S: Copy + Default>(fixtures: &mut Vec<GraphFixture<S>
 
         let mut p2_props = Properties::new();
         p2_props.insert("@display".into(), PropValue::Text("Lana Wachowski".into()));
+        p2_props.insert("@background".into(), PropValue::Text("#2e8b57".into()));
         p2_props.insert("born".into(), PropValue::Int(1965));
 
         let p2 = f.state.add_node_with_data(
@@ -507,6 +509,7 @@ pub fn add_cytoscape_demos<S: Copy + Default>(fixtures: &mut Vec<GraphFixture<S>
 
         let mut m1_props = Properties::new();
         m1_props.insert("@display".into(), PropValue::Text("The Matrix (1999)".into()));
+        m1_props.insert("@background".into(), PropValue::Text("#4682b4".into()));
         m1_props.insert("released".into(), PropValue::Int(1999));
         m1_props.insert("rating".into(), PropValue::Float(8.7));
         m1_props.insert("genre".into(), PropValue::Text("Sci-Fi".into()));
@@ -528,6 +531,113 @@ pub fn add_cytoscape_demos<S: Copy + Default>(fixtures: &mut Vec<GraphFixture<S>
 
         let e2 = EdgeData::with_label("DIRECTED", EdgeDirection::Directed);
         f.state.add_edge_with_data(p2, m1, e2);
+
+        fixtures.push(f);
+    }
+
+    // 11. HubGS ENTERPRISE SCHEMA (Medium: 30 Nodes)
+    {
+        let mut f = GraphFixture::new(
+            "Demo: HubGS Enterprise Schema (Medium: 30 Nodes)",
+            "Medium-scale HubGS schema & instance graph (Departments, Teams, Employees, Projects).",
+        );
+
+        let colors = ["#8b0000", "#2e8b57", "#4682b4", "#d2691e", "#4b0082"];
+        let mut nodes = Vec::new();
+
+        for i in 0..30 {
+            let row = i / 6;
+            let col = i % 6;
+            let pos = Vec2::new((col as f32 - 2.5) * 80.0, (row as f32 - 2.0) * 70.0);
+            let mut props = Properties::new();
+            let label_name = match i % 3 {
+                0 => format!("Emp #{}", i),
+                1 => format!("Team Alpha-{}", i),
+                _ => format!("Proj Delta-{}", i),
+            };
+            props.insert("@display".into(), PropValue::Text(label_name.clone().into()));
+            props.insert("@background".into(), PropValue::Text(colors[i % colors.len()].into()));
+            props.insert("id_code".into(), PropValue::Int(1000 + i as i64));
+            props.insert("budget".into(), PropValue::Float((i * 5000) as f64));
+            props.insert("active".into(), PropValue::Bool(i % 2 == 0));
+
+            let labels = match i % 3 {
+                0 => vec!["Employee", "Person"],
+                1 => vec!["Team", "Unit"],
+                _ => vec!["Project", "Resource"],
+            };
+            let id = f.state.add_node_with_data(pos, Size2::new(75.0, 45.0), NodeData::new(labels, props));
+            f.node_labels.insert(id, label_name);
+            nodes.push(id);
+        }
+
+        // Connect HubGS Roles (reports_to, assigned_to, owns)
+        for i in 0..30 {
+            if i + 1 < 30 {
+                let mut role = EdgeData::with_label("reports_to", EdgeDirection::Directed);
+                role.multiplicity = Some("(1)".into());
+                f.state.add_edge_with_data(nodes[i], nodes[i + 1], role);
+            }
+            if i + 6 < 30 {
+                let mut role = EdgeData::with_label("owns", EdgeDirection::Bidirectional);
+                role.multiplicity = Some("(0..*)".into());
+                f.state.add_edge_with_data(nodes[i], nodes[i + 6], role);
+            }
+        }
+
+        fixtures.push(f);
+    }
+
+    // 12. LPG CYBER THREAT GRAPH (Large: 200 Nodes)
+    {
+        let mut f = GraphFixture::new(
+            "Demo: LPG Cyber Threat Graph (Large: 200 Nodes)",
+            "Large-scale Labelled Property Graph mapping Hosts, IP addresses, Threats, and CVEs.",
+        );
+
+        let mut nodes = Vec::new();
+        let side = 14;
+
+        for i in 0..200 {
+            let r = i / side;
+            let c = i % side;
+            let pos = Vec2::new((c as f32 - 7.0) * 55.0, (r as f32 - 7.0) * 55.0);
+
+            let mut props = Properties::new();
+            let host_name = format!("Host-192.168.1.{}", i + 1);
+            props.insert("@display".into(), PropValue::Text(host_name.clone().into()));
+            props.insert("@background".into(), PropValue::Text(if i % 5 == 0 { "#8b0000" } else { "#2e8b57" }.into()));
+            props.insert("port".into(), PropValue::Int((8000 + i % 100) as i64));
+            props.insert("severity".into(), PropValue::Float((i % 10) as f64 / 10.0));
+
+            let labels = if i % 4 == 0 {
+                vec!["Threat", "Malware"]
+            } else if i % 2 == 0 {
+                vec!["Host", "Server"]
+            } else {
+                vec!["IPAddress"]
+            };
+
+            let id = f.state.add_node_with_data(pos, Size2::new(50.0, 35.0), NodeData::new(labels, props));
+            f.node_labels.insert(id, host_name);
+            nodes.push(id);
+        }
+
+        // Add directed edges with properties
+        for i in 0..200 {
+            if i + 1 < 200 {
+                let mut e_props = Properties::new();
+                e_props.insert("bytes".into(), PropValue::Int((i * 128) as i64));
+                let edge_data = EdgeData::new(vec!["ATTACKS"], EdgeDirection::Directed, e_props);
+                f.state.add_edge_with_data(nodes[i], nodes[i + 1], edge_data);
+            }
+            if i + side < 200 {
+                let mut e_props = Properties::new();
+                e_props.insert("protocol".into(), PropValue::Text("TCP".into()));
+                let edge_data = EdgeData::new(vec!["CONNECTS_TO"], EdgeDirection::Directed, e_props);
+                f.state.add_edge_with_data(nodes[i], nodes[i + side], edge_data);
+            }
+        }
 
         fixtures.push(f);
     }

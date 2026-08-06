@@ -57,6 +57,18 @@ pub fn color_to_gpui(val: ColorValue) -> gpui::Rgba {
     }
 }
 
+pub fn hex_to_rgba(hex: &str) -> Option<gpui::Rgba> {
+    let hex = hex.trim_start_matches('#');
+    if hex.len() == 6 {
+        let r = u8::from_str_radix(&hex[0..2], 16).ok()? as u32;
+        let g = u8::from_str_radix(&hex[2..4], 16).ok()? as u32;
+        let b = u8::from_str_radix(&hex[4..6], 16).ok()? as u32;
+        Some(gpui::rgba(r << 24 | g << 16 | b << 8 | 255))
+    } else {
+        None
+    }
+}
+
 pub fn heatmap_color(val: f32) -> gpui::Rgba {
     let clamped = val.clamp(0.0, 1.0);
     let r = (clamped * 255.0) as u32;
@@ -396,10 +408,39 @@ impl<'a> IntoElement for GraphCanvas<'a> {
             let is_neighbor = has_selection && connected_nodes.contains(&id);
             let is_faded = has_selection && !is_selected && !is_neighbor;
 
+            match node.node_data.expansion_mode {
+                graphene_core::DataExpansionMode::Compact => {}
+                graphene_core::DataExpansionMode::Preview => {
+                    let preview_items: Vec<String> = node
+                        .node_data
+                        .props
+                        .iter()
+                        .filter(|(k, _)| k.as_str() != "@display" && k.as_str() != "@background")
+                        .take(2)
+                        .map(|(k, v)| format!("{}: {}", k, v.to_display_string()))
+                        .collect();
+                    if !preview_items.is_empty() {
+                        label = format!("{}\n({})", label, preview_items.join(", "));
+                    }
+                }
+                graphene_core::DataExpansionMode::Full => {
+                    let full_items: Vec<String> = node
+                        .node_data
+                        .props
+                        .iter()
+                        .filter(|(k, _)| k.as_str() != "@display" && k.as_str() != "@background")
+                        .map(|(k, v)| format!("{}: {}", k, v.to_display_string()))
+                        .collect();
+                    if !full_items.is_empty() {
+                        label = format!("{}\n{}", label, full_items.join("\n"));
+                    }
+                }
+            }
+
             let effective_font_size = cfg.node_font_size * viewport.zoom;
             if effective_font_size < cfg.min_visible_font_size {
                 label = String::new();
-            } else if label.chars().count() > max_untruncated_len && !is_selected {
+            } else if label.chars().count() > max_untruncated_len && !is_selected && node.node_data.expansion_mode == graphene_core::DataExpansionMode::Compact {
                 label = label.chars().take(max_untruncated_len).collect::<String>() + "...";
             }
 
@@ -437,6 +478,13 @@ impl<'a> IntoElement for GraphCanvas<'a> {
             } else {
                 node_fill_color
             };
+
+            // Parse @background property text from node_data.props if present
+            if let Some(graphene_core::PropValue::Text(hex)) = node.node_data.props.get("@background") {
+                if let Some(parsed) = hex_to_rgba(hex) {
+                    fill_color = parsed;
+                }
+            }
 
             let mut border_color = if is_primary || is_neighbor {
                 accent_color

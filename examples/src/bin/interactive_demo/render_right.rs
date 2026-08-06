@@ -235,6 +235,63 @@ impl DemoApp {
                                         .gap_1()
                                         .child(
                                             gpui::div()
+                                                .text_color(theme.text)
+                                                .font_weight(gpui::FontWeight::BOLD)
+                                                .text_size(px(10.0))
+                                                .child("EXPANSION MODE:"),
+                                        )
+                                        .child(
+                                            gpui::div()
+                                                .flex()
+                                                .gap_1()
+                                                .child(
+                                                    Button::new("exp-compact-btn")
+                                                        .label("COMPACT")
+                                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                                            this.fixtures[this.selected_fixture_idx]
+                                                                .state
+                                                                .set_node_expansion_mode(node_id, graphene_core::DataExpansionMode::Compact);
+                                                            if let Some(n) = this.view.nodes.get_mut(&node_id) {
+                                                                n.node_data.expansion_mode = graphene_core::DataExpansionMode::Compact;
+                                                            }
+                                                            cx.notify();
+                                                        })),
+                                                )
+                                                .child(
+                                                    Button::new("exp-preview-btn")
+                                                        .label("PREVIEW")
+                                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                                            this.fixtures[this.selected_fixture_idx]
+                                                                .state
+                                                                .set_node_expansion_mode(node_id, graphene_core::DataExpansionMode::Preview);
+                                                            if let Some(n) = this.view.nodes.get_mut(&node_id) {
+                                                                n.node_data.expansion_mode = graphene_core::DataExpansionMode::Preview;
+                                                            }
+                                                            cx.notify();
+                                                        })),
+                                                )
+                                                .child(
+                                                    Button::new("exp-full-btn")
+                                                        .label("FULL")
+                                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                                            this.fixtures[this.selected_fixture_idx]
+                                                                .state
+                                                                .set_node_expansion_mode(node_id, graphene_core::DataExpansionMode::Full);
+                                                            if let Some(n) = this.view.nodes.get_mut(&node_id) {
+                                                                n.node_data.expansion_mode = graphene_core::DataExpansionMode::Full;
+                                                            }
+                                                            cx.notify();
+                                                        })),
+                                                ),
+                                        ),
+                                )
+                                .child(
+                                    gpui::div()
+                                        .flex()
+                                        .flex_col()
+                                        .gap_1()
+                                        .child(
+                                            gpui::div()
                                                 .text_color(theme.text_dim)
                                                 .text_size(px(10.0))
                                                 .child("Edit Primary Node Label"),

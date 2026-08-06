@@ -12,6 +12,7 @@ pub struct NodeViewData<S: Copy + Send + 'static> {
     pub parent: Option<NodeId>,
     pub children: Vec<NodeId>,
     pub data: S,
+    pub node_data: graphene_core::NodeData,
 }
 
 #[derive(Debug, Clone)]
@@ -199,6 +200,8 @@ impl<S: Copy + Default + Send + Sync + 'static> GraphView<S> {
                 S::default()
             };
 
+            let node_data = state.nodes.get(idx).clone();
+
             self.nodes.insert(
                 id,
                 NodeViewData {
@@ -209,6 +212,7 @@ impl<S: Copy + Default + Send + Sync + 'static> GraphView<S> {
                     parent,
                     children: Vec::new(),
                     data,
+                    node_data,
                 },
             );
             self.node_order.push(id);
@@ -262,6 +266,7 @@ impl<S: Copy + Default + Send + Sync + 'static> GraphView<S> {
                             parent,
                             children: Vec::new(),
                             data,
+                            node_data: graphene_core::NodeData::default(),
                         },
                     );
                     self.node_order.push(id);
