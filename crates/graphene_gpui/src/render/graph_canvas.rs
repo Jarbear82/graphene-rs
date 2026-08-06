@@ -354,11 +354,11 @@ impl<'a> IntoElement for GraphCanvas<'a> {
                     (edge_color, cfg.edge_stroke_width)
                 };
 
-                edge_paths.push((src_screen, tgt_screen, screen_curve_style, cur_edge_color, stroke_width));
+                edge_paths.push((src_screen, tgt_screen, screen_curve_style, cur_edge_color, stroke_width, label_text.clone()));
 
                 if let Some(lbl) = label_text {
                     if !lbl.is_empty() {
-                        edge_labels_to_render.push((i, src_screen, tgt_screen, curve_style, lbl));
+                        edge_labels_to_render.push((i, pos_src, pos_tgt, curve_style, lbl));
                     }
                 }
             }
@@ -568,35 +568,29 @@ impl<'a> IntoElement for GraphCanvas<'a> {
             }.into_any_element())
         };
 
-        let render_edge_label = |(i, src_p, tgt_p, curve_style, label): (usize, Point<f32>, Point<f32>, EdgeCurveStyle, String)| {
-            let src_x = f32::from(src_p.x);
-            let src_y = f32::from(src_p.y);
-            let tgt_x = f32::from(tgt_p.x);
-            let tgt_y = f32::from(tgt_p.y);
-
-            let screen_curve = match curve_style {
-                EdgeCurveStyle::UnbundledBezier(cp1, cp2) => {
-                    let p1 = viewport.model_to_screen(cp1);
-                    let p2 = viewport.model_to_screen(cp2);
-                    EdgeCurveStyle::UnbundledBezier(
-                        graphene_core::Vec2::new(p1.x, p1.y),
-                        graphene_core::Vec2::new(p2.x, p2.y),
-                    )
-                }
-                other => other,
+        let render_edge_label = |(i, pos_src, pos_tgt, curve_style, label): (usize, graphene_core::Vec2, graphene_core::Vec2, EdgeCurveStyle, String)| {
+            let curvature_val = match curve_style {
+                EdgeCurveStyle::Straight => 0.0,
+                _ => cfg.edge_curvature,
             };
-            let mid = graphene_layout::compute_curve_midpoint(
-                graphene_core::Vec2::new(src_x, src_y),
-                graphene_core::Vec2::new(tgt_x, tgt_y),
-                screen_curve,
-                cfg.edge_curvature,
+
+            // 1. Calculate midpoint in model space
+            let mid_model = graphene_layout::compute_curve_midpoint(
+                pos_src,
+                pos_tgt,
+                curve_style,
+                curvature_val,
             );
-            let (mid_x, mid_y) = (mid.x, mid.y);
 
-            let font_size = cfg.edge_label_font_size;
+            // 2. Transform the model midpoint into screen space
+            let mid_screen = viewport.model_to_screen(mid_model);
+            let (mid_x, mid_y) = (mid_screen.x, mid_screen.y);
 
-            let label_w = cfg.edge_label_width * viewport.zoom;
-            let label_h = cfg.edge_label_height * viewport.zoom;
+            let font_size = cfg.edge_label_font_size * viewport.zoom;
+
+            let char_w = font_size * 0.62;
+            let label_w = (label.len() as f32 * char_w + 6.0).max(12.0);
+            let label_h = font_size * 1.2;
             let screen_x = mid_x - (label_w / 2.0);
             let screen_y = mid_y - (label_h / 2.0);
 
@@ -607,7 +601,7 @@ impl<'a> IntoElement for GraphCanvas<'a> {
                 width: label_w,
                 height: label_h,
                 text_color,
-                font_size: font_size * viewport.zoom,
+                font_size,
                 label,
             }
         };
@@ -655,39 +649,99 @@ impl<'a> IntoElement for GraphCanvas<'a> {
                             y += grid_spacing;
                         }
 
-                        // Draw Edges
-                        for (src_screen_f, tgt_screen_f, curve_style, cur_edge_color, stroke_w) in edge_paths {
+                        // Draw Edges with Inline Text Line Cutouts
+                        for (src_screen_f, tgt_screen_f, curve_style, cur_edge_color, stroke_w, label_opt) in edge_paths {
                             let src_p = gpui::point(px(src_screen_f.x), px(src_screen_f.y));
                             let tgt_p = gpui::point(px(tgt_screen_f.x), px(tgt_screen_f.y));
 
-                            let mut builder = PathBuilder::stroke(px(stroke_w));
-                            builder.move_to(src_p);
+                            if let Some(ref lbl) = label_opt {
+                                if !lbl.is_empty() && curve_style == EdgeCurveStyle::Straight {
+                                    let dx = tgt_screen_f.x - src_screen_f.x;
+                                    let dy = tgt_screen_f.y - src_screen_f.y;
+                                    let len = (dx * dx + dy * dy).sqrt().max(0.001);
+                                    let ux = dx / len;
+                                    let uy = dy / len;
 
-                            match curve_style {
-                                EdgeCurveStyle::Straight => {
-                                    builder.line_to(tgt_p);
-                                }
-                                EdgeCurveStyle::Bezier | EdgeCurveStyle::Segmented => {
-                                    let mid_x = (src_screen_f.x + tgt_screen_f.x) / 2.0;
-                                    let mid_y = (src_screen_f.y + tgt_screen_f.y) / 2.0 - cfg.edge_curvature * viewport.zoom;
-                                    let control = gpui::point(px(mid_x), px(mid_y));
-                                    builder.cubic_bezier_to(tgt_p, control, control);
-                                }
-                                EdgeCurveStyle::Taxi => {
-                                    let mid_x = (src_screen_f.x + tgt_screen_f.x) / 2.0;
-                                    builder.line_to(gpui::point(px(mid_x), px(src_screen_f.y)));
-                                    builder.line_to(gpui::point(px(mid_x), px(tgt_screen_f.y)));
-                                    builder.line_to(tgt_p);
-                                }
-                                EdgeCurveStyle::UnbundledBezier(cp1, cp2) => {
-                                    let control1 = gpui::point(px(cp1.x), px(cp1.y));
-                                    let control2 = gpui::point(px(cp2.x), px(cp2.y));
-                                    builder.cubic_bezier_to(control1, control2, tgt_p);
-                                }
-                            }
+                                    let font_sz = cfg.edge_label_font_size * viewport.zoom;
+                                    let text_gap = (lbl.len() as f32 * (font_sz * 0.62) + 6.0).max(12.0);
+                                    let half_gap = (text_gap / 2.0).min(len * 0.4);
 
-                            if let Ok(path) = builder.build() {
-                                window.paint_path(path, cur_edge_color);
+                                    let mid_x = (src_screen_f.x + tgt_screen_f.x) / 2.0;
+                                    let mid_y = (src_screen_f.y + tgt_screen_f.y) / 2.0;
+
+                                    let cut1_x = mid_x - ux * half_gap;
+                                    let cut1_y = mid_y - uy * half_gap;
+                                    let cut2_x = mid_x + ux * half_gap;
+                                    let cut2_y = mid_y + uy * half_gap;
+
+                                    // Segment 1: src -> cut1 (stops right before text)
+                                    let mut b1 = PathBuilder::stroke(px(stroke_w));
+                                    b1.move_to(src_p);
+                                    b1.line_to(gpui::point(px(cut1_x), px(cut1_y)));
+                                    if let Ok(p1) = b1.build() {
+                                        window.paint_path(p1, cur_edge_color);
+                                    }
+
+                                    // Segment 2: cut2 -> tgt (continues right after text)
+                                    let mut b2 = PathBuilder::stroke(px(stroke_w));
+                                    b2.move_to(gpui::point(px(cut2_x), px(cut2_y)));
+                                    b2.line_to(tgt_p);
+                                    if let Ok(p2) = b2.build() {
+                                        window.paint_path(p2, cur_edge_color);
+                                    }
+                                } else {
+                                    let mut builder = PathBuilder::stroke(px(stroke_w));
+                                    builder.move_to(src_p);
+                                    match curve_style {
+                                        EdgeCurveStyle::Straight => { builder.line_to(tgt_p); }
+                                        EdgeCurveStyle::Bezier | EdgeCurveStyle::Segmented => {
+                                            let mid_x = (src_screen_f.x + tgt_screen_f.x) / 2.0;
+                                            let mid_y = (src_screen_f.y + tgt_screen_f.y) / 2.0 - cfg.edge_curvature * viewport.zoom;
+                                            let control = gpui::point(px(mid_x), px(mid_y));
+                                            builder.cubic_bezier_to(tgt_p, control, control);
+                                        }
+                                        EdgeCurveStyle::Taxi => {
+                                            let mid_x = (src_screen_f.x + tgt_screen_f.x) / 2.0;
+                                            builder.line_to(gpui::point(px(mid_x), px(src_screen_f.y)));
+                                            builder.line_to(gpui::point(px(mid_x), px(tgt_screen_f.y)));
+                                            builder.line_to(tgt_p);
+                                        }
+                                        EdgeCurveStyle::UnbundledBezier(cp1, cp2) => {
+                                            let control1 = gpui::point(px(cp1.x), px(cp1.y));
+                                            let control2 = gpui::point(px(cp2.x), px(cp2.y));
+                                            builder.cubic_bezier_to(control1, control2, tgt_p);
+                                        }
+                                    }
+                                    if let Ok(path) = builder.build() {
+                                        window.paint_path(path, cur_edge_color);
+                                    }
+                                }
+                            } else {
+                                let mut builder = PathBuilder::stroke(px(stroke_w));
+                                builder.move_to(src_p);
+                                match curve_style {
+                                    EdgeCurveStyle::Straight => { builder.line_to(tgt_p); }
+                                    EdgeCurveStyle::Bezier | EdgeCurveStyle::Segmented => {
+                                        let mid_x = (src_screen_f.x + tgt_screen_f.x) / 2.0;
+                                        let mid_y = (src_screen_f.y + tgt_screen_f.y) / 2.0 - cfg.edge_curvature * viewport.zoom;
+                                        let control = gpui::point(px(mid_x), px(mid_y));
+                                        builder.cubic_bezier_to(tgt_p, control, control);
+                                    }
+                                    EdgeCurveStyle::Taxi => {
+                                        let mid_x = (src_screen_f.x + tgt_screen_f.x) / 2.0;
+                                        builder.line_to(gpui::point(px(mid_x), px(src_screen_f.y)));
+                                        builder.line_to(gpui::point(px(mid_x), px(tgt_screen_f.y)));
+                                        builder.line_to(tgt_p);
+                                    }
+                                    EdgeCurveStyle::UnbundledBezier(cp1, cp2) => {
+                                        let control1 = gpui::point(px(cp1.x), px(cp1.y));
+                                        let control2 = gpui::point(px(cp2.x), px(cp2.y));
+                                        builder.cubic_bezier_to(control1, control2, tgt_p);
+                                    }
+                                }
+                                if let Ok(path) = builder.build() {
+                                    window.paint_path(path, cur_edge_color);
+                                }
                             }
 
                             if is_directed {
