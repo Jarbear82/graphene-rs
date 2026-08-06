@@ -72,30 +72,9 @@ impl GraphAnalysisReport {
         let centralities = compute_all_centrality_with_config(state, directed, config.centrality);
 
         let top_k = config.top_k_rankings;
-
-        let mut pr_sorted: Vec<(NodeId, f32)> = centralities
-            .page_rank
-            .iter()
-            .map(|(&k, &v)| (k, v))
-            .collect();
-        pr_sorted.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-        pr_sorted.truncate(top_k);
-
-        let mut bet_sorted: Vec<(NodeId, f32)> = centralities
-            .betweenness
-            .iter()
-            .map(|(&k, &v)| (k, v))
-            .collect();
-        bet_sorted.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-        bet_sorted.truncate(top_k);
-
-        let mut deg_sorted: Vec<(NodeId, f32)> = centralities
-            .degree
-            .iter()
-            .map(|(&k, &v)| (k, v))
-            .collect();
-        deg_sorted.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
-        deg_sorted.truncate(top_k);
+        let pr_sorted = top_k_rankings(&centralities.page_rank, top_k);
+        let bet_sorted = top_k_rankings(&centralities.betweenness, top_k);
+        let deg_sorted = top_k_rankings(&centralities.degree, top_k);
 
         Self {
             is_directed: directed,
@@ -116,4 +95,14 @@ impl GraphAnalysisReport {
             centralities,
         }
     }
+}
+
+fn top_k_rankings(
+    map: &std::collections::HashMap<NodeId, f32>,
+    k: usize,
+) -> Vec<(NodeId, f32)> {
+    let mut sorted: Vec<(NodeId, f32)> = map.iter().map(|(&k, &v)| (k, v)).collect();
+    sorted.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+    sorted.truncate(k);
+    sorted
 }

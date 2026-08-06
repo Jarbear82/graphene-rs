@@ -111,7 +111,7 @@ pub fn closeness_centralities(
 
 /// Compute closeness centrality for a single root node using Dijkstra.
 /// Returns harmonic sum (1/d) or reciprocal of total distance depending on `harmonic`.
-pub fn closeness_centralty_one_node(
+pub fn closeness_centrality_one_node(
     graph: &impl Graph,
     options: ClosenessCentralityOptions,
 ) -> f64 {

@@ -293,7 +293,6 @@ impl<S: Copy + Default + Send + Sync + 'static> GraphView<S> {
             }
             GraphUpdate::EdgeRemoved { id } => {
                 if self.edges.remove(&id).is_some() {
-                    self.edge_order.retain(|&x| x != x); // retain other ids
                     self.edge_order.retain(|&x| x != id);
                 }
             }

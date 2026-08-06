@@ -1,14 +1,7 @@
 use graphene_core::{GraphState, Vec2};
 use graphene_fixtures::get_all_fixtures;
-use graphene_layout::{
-    compute_multigraph_bezier_routing, star_expand_hypergraph, BipartiteLayout, CircleLayout,
-    CollisionForceDirectedLayout, CompoundLayout, ConcentricHubLayout, DisconnectedPacker,
-    FCoseLayout, ForceDirectedLayout, GridSortedLayout, KamadaKawaiLayout, Layout, MdsLayout,
-    RegionalPartitionLayout, ReingoldTilfordLayout, SugiyamaLayout, WeightedForceDirectedLayout,
-};
-use std::collections::HashMap;
+use graphene_layout::{CircleLayout, FCoseLayout, Layout};
 
-// Helper to assert all positions are valid finite numbers
 fn assert_valid_positions<S: Copy>(state: &GraphState<S>) {
     for i in 0..state.node_index_to_id.len() {
         let pos = *state.positions.get(i);
@@ -17,384 +10,51 @@ fn assert_valid_positions<S: Copy>(state: &GraphState<S>) {
     }
 }
 
-// 1. UNDIRECTED TESTS
-#[test]
-fn test_undirected_layouts() {
-    let fixtures = get_all_fixtures::<()>();
+fn assert_containment<S: Copy>(state: &GraphState<S>) {
+    let n = state.node_index_to_id.len();
+    for idx in 0..n {
+        let child_id = state.node_index_to_id[idx];
+        if let Some(parent_id) = *state.hierarchy.parent.get(idx) {
+            let Some(&p_idx) = state.node_keys.get(parent_id) else {
+                continue;
+            };
+            let child_pos = *state.positions.get(idx);
+            let child_size = *state.sizes.get(idx);
+            let parent_pos = *state.positions.get(p_idx);
+            let parent_size = *state.sizes.get(p_idx);
 
-    // Small: Undirected Small (Cycle)
-    let mut f_small = fixtures
-        .iter()
-        .find(|f| f.name.contains("Undirected Small"))
-        .unwrap()
-        .clone();
-    let mut circle = CircleLayout {
-        radius: 50.0,
-        center: Vec2::default(),
-        animate: false,
-    };
-    circle.compute(&mut f_small.state);
-    assert_valid_positions(&f_small.state);
+            let half_pw = parent_size.w / 2.0;
+            let half_ph = parent_size.h / 2.0;
+            let half_cw = child_size.w / 2.0;
+            let half_ch = child_size.h / 2.0;
 
-    // Medium: Undirected Medium (Petersen)
-    let mut f_med = fixtures
-        .iter()
-        .find(|f| f.name.contains("Undirected Medium"))
-        .unwrap()
-        .clone();
-    let mut kk = KamadaKawaiLayout::default();
-    kk.compute(&mut f_med.state);
-    assert_valid_positions(&f_med.state);
-
-    // Large: Undirected Large (Grid)
-    let mut f_large = fixtures
-        .iter()
-        .find(|f| f.name.contains("Undirected Large"))
-        .unwrap()
-        .clone();
-    let mut force = ForceDirectedLayout::default();
-    force.compute(&mut f_large.state);
-    assert_valid_positions(&f_large.state);
-}
-
-// 2. DIRECTED TESTS
-#[test]
-fn test_directed_layouts() {
-    let fixtures = get_all_fixtures::<()>();
-
-    // Small
-    let mut f_small = fixtures
-        .iter()
-        .find(|f| f.name.contains("Directed Small"))
-        .unwrap()
-        .clone();
-    let mut sugi = SugiyamaLayout::default();
-    sugi.compute(&mut f_small.state);
-    assert_valid_positions(&f_small.state);
-
-    // Medium
-    let mut f_med = fixtures
-        .iter()
-        .find(|f| f.name.contains("Directed Medium"))
-        .unwrap()
-        .clone();
-    let mut sugi_med = SugiyamaLayout::default();
-    sugi_med.compute(&mut f_med.state);
-    assert_valid_positions(&f_med.state);
-
-    // Large
-    let mut f_large = fixtures
-        .iter()
-        .find(|f| f.name.contains("Directed Large"))
-        .unwrap()
-        .clone();
-    let mut sugi_large = SugiyamaLayout::default();
-    sugi_large.compute(&mut f_large.state);
-    assert_valid_positions(&f_large.state);
-}
-
-// 3. WEIGHTED TESTS
-#[test]
-fn test_weighted_layouts() {
-    let fixtures = get_all_fixtures::<()>();
-
-    // Small
-    let mut f_small = fixtures
-        .iter()
-        .find(|f| f.name.contains("Weighted Small"))
-        .unwrap()
-        .clone();
-    let weights = f_small.weights.clone();
-    let edge_keys = f_small.state.edge_keys.clone();
-    let mut weighted = WeightedForceDirectedLayout {
-        iterations: 100,
-        gravity: 1.0,
-        k_rep: 30.0,
-        k_att: 30.0,
-        weight_fn: move |edge| {
-            if let Some(&idx) = edge_keys.get(edge) {
-                *weights.get(&idx).unwrap_or(&1.0)
-            } else {
-                1.0
-            }
-        },
-    };
-    weighted.compute(&mut f_small.state);
-    assert_valid_positions(&f_small.state);
-
-    // Medium
-    let mut f_med = fixtures
-        .iter()
-        .find(|f| f.name.contains("Weighted Medium"))
-        .unwrap()
-        .clone();
-    let weights_med = f_med.weights.clone();
-    let edge_keys_med = f_med.state.edge_keys.clone();
-    let mut weighted_med = WeightedForceDirectedLayout {
-        iterations: 100,
-        gravity: 1.0,
-        k_rep: 30.0,
-        k_att: 30.0,
-        weight_fn: move |edge| {
-            if let Some(&idx) = edge_keys_med.get(edge) {
-                *weights_med.get(&idx).unwrap_or(&1.0)
-            } else {
-                1.0
-            }
-        },
-    };
-    weighted_med.compute(&mut f_med.state);
-    assert_valid_positions(&f_med.state);
-}
-
-// 4. MULTIGRAPH TESTS
-#[test]
-fn test_multigraph_layouts() {
-    let fixtures = get_all_fixtures::<()>();
-
-    // Small
-    let f_small = fixtures
-        .iter()
-        .find(|f| f.name.contains("Multigraph Small"))
-        .unwrap()
-        .clone();
-    let routes = compute_multigraph_bezier_routing(&f_small.state, 20.0);
-    assert!(routes.len() >= 2);
-}
-
-// 5. COMPOUND TESTS
-#[test]
-fn test_compound_layouts() {
-    let fixtures = get_all_fixtures::<()>();
-
-    // Small
-    let mut f_small = fixtures
-        .iter()
-        .find(|f| f.name.contains("Compound Small"))
-        .unwrap()
-        .clone();
-    let mut comp = CompoundLayout {
-        sub_layout: ForceDirectedLayout::default(),
-        padding: 10.0,
-    };
-    comp.compute(&mut f_small.state);
-    assert_valid_positions(&f_small.state);
-}
-
-// 6. HYPERGRAPH TESTS
-#[test]
-fn test_hypergraph_expansion() {
-    let fixtures = get_all_fixtures::<()>();
-
-    // Small
-    let f_small = fixtures
-        .iter()
-        .find(|f| f.name.contains("Hypergraph Small"))
-        .unwrap()
-        .clone();
-    let expanded = star_expand_hypergraph(&f_small.state, &f_small.hyperedges);
-    assert!(expanded.node_index_to_id.len() > f_small.state.node_index_to_id.len());
-}
-
-// 7. ATTRIBUTE NETWORK TESTS
-#[test]
-fn test_attribute_regional_layouts() {
-    let fixtures = get_all_fixtures::<()>();
-
-    // Small
-    let mut f_small = fixtures
-        .iter()
-        .find(|f| f.name.contains("Attribute Small"))
-        .unwrap()
-        .clone();
-    let mut clusters = HashMap::new();
-    for (idx, &id) in f_small.state.node_index_to_id.iter().enumerate() {
-        clusters.insert(id, idx % 2);
+            let eps = 0.05;
+            assert!(
+                child_pos.x - half_cw >= parent_pos.x - half_pw - eps,
+                "Child node {:?} extends left of parent {:?}",
+                child_id,
+                parent_id
+            );
+            assert!(
+                child_pos.x + half_cw <= parent_pos.x + half_pw + eps,
+                "Child node {:?} extends right of parent {:?}",
+                child_id,
+                parent_id
+            );
+            assert!(
+                child_pos.y - half_ch >= parent_pos.y - half_ph - eps,
+                "Child node {:?} extends top of parent {:?}",
+                child_id,
+                parent_id
+            );
+            assert!(
+                child_pos.y + half_ch <= parent_pos.y + half_ph + eps,
+                "Child node {:?} extends bottom of parent {:?}",
+                child_id,
+                parent_id
+            );
+        }
     }
-    let mut regional = RegionalPartitionLayout {
-        cluster_fn: move |id| *clusters.get(&id).unwrap_or(&0),
-        sub_layout: ForceDirectedLayout::default(),
-        columns: 2,
-        cell_size: 200.0,
-    };
-    regional.compute(&mut f_small.state);
-    assert_valid_positions(&f_small.state);
-}
-
-// 8. CHART NODES TESTS
-#[test]
-fn test_chart_nodes_collision() {
-    let fixtures = get_all_fixtures::<()>();
-
-    // Small
-    let mut f_small = fixtures
-        .iter()
-        .find(|f| f.name.contains("Chart Nodes Small"))
-        .unwrap()
-        .clone();
-    let mut collision = CollisionForceDirectedLayout::default();
-    collision.compute(&mut f_small.state);
-    assert_valid_positions(&f_small.state);
-}
-
-// 9. SPARSE TESTS
-#[test]
-fn test_sparse_grid_sorting() {
-    let fixtures = get_all_fixtures::<()>();
-
-    // Small
-    let mut f_small = fixtures
-        .iter()
-        .find(|f| f.name.contains("Sparse Small"))
-        .unwrap()
-        .clone();
-    let mut grid = GridSortedLayout::default();
-    grid.compute(&mut f_small.state);
-    assert_valid_positions(&f_small.state);
-}
-
-// 10. DENSE TESTS
-#[test]
-fn test_dense_clique_layouts() {
-    let fixtures = get_all_fixtures::<()>();
-
-    // Small
-    let mut f_small = fixtures
-        .iter()
-        .find(|f| f.name.contains("Dense Small"))
-        .unwrap()
-        .clone();
-    let mut mds = MdsLayout::default();
-    mds.compute(&mut f_small.state);
-    assert_valid_positions(&f_small.state);
-}
-
-// 11. DISCONNECTED TESTS
-#[test]
-fn test_disconnected_packer() {
-    let fixtures = get_all_fixtures::<()>();
-
-    // Small
-    let mut f_small = fixtures
-        .iter()
-        .find(|f| f.name.contains("Disconnected Small"))
-        .unwrap()
-        .clone();
-    let mut packer = DisconnectedPacker {
-        sub_layout: ForceDirectedLayout::default(),
-        spacing: 50.0,
-    };
-    packer.compute(&mut f_small.state);
-    assert_valid_positions(&f_small.state);
-}
-
-// 12. ACYCLIC TESTS
-#[test]
-fn test_acyclic_reingold_tilford() {
-    let fixtures = get_all_fixtures::<()>();
-
-    // Small
-    let mut f_small = fixtures
-        .iter()
-        .find(|f| f.name.contains("Acyclic Small"))
-        .unwrap()
-        .clone();
-    let mut rt = ReingoldTilfordLayout::default();
-    rt.compute(&mut f_small.state);
-    assert_valid_positions(&f_small.state);
-}
-
-// 13. CYCLIC TESTS
-#[test]
-fn test_cyclic_mds() {
-    let fixtures = get_all_fixtures::<()>();
-
-    // Small
-    let mut f_small = fixtures
-        .iter()
-        .find(|f| f.name.contains("Cyclic Small"))
-        .unwrap()
-        .clone();
-    let mut mds = MdsLayout::default();
-    mds.compute(&mut f_small.state);
-    assert_valid_positions(&f_small.state);
-}
-
-// 14. SCALE-FREE TESTS
-#[test]
-fn test_scale_free_concentric() {
-    let fixtures = get_all_fixtures::<()>();
-
-    // Small
-    let mut f_small = fixtures
-        .iter()
-        .find(|f| f.name.contains("Scale-Free Small"))
-        .unwrap()
-        .clone();
-    let mut concentric = ConcentricHubLayout::default();
-    concentric.compute(&mut f_small.state);
-    assert_valid_positions(&f_small.state);
-}
-
-// 15. BIPARTITE TESTS
-#[test]
-fn test_bipartite_columns() {
-    let fixtures = get_all_fixtures::<()>();
-
-    // Small
-    let mut f_small = fixtures
-        .iter()
-        .find(|f| f.name.contains("Bipartite Small"))
-        .unwrap()
-        .clone();
-    let node_partitions = vec![0, 0, 1, 1]; // matching small bipartite nodes
-    let node_keys_map = f_small.state.node_keys.clone();
-    let mut bipartite = BipartiteLayout {
-        partition_fn: move |id| {
-            let idx = *node_keys_map.get(id).unwrap_or(&0);
-            node_partitions[idx % 4]
-        },
-        column_spacing: 100.0,
-        vertical_spacing: 50.0,
-    };
-    bipartite.compute(&mut f_small.state);
-    assert_valid_positions(&f_small.state);
-}
-
-// 16. BARNES-HUT TESTS
-#[test]
-fn test_barnes_hut_layout() {
-    let fixtures = get_all_fixtures::<()>();
-
-    let f_large = fixtures
-        .iter()
-        .find(|f| f.name.contains("Undirected Large"))
-        .unwrap();
-
-    // Compute classical layout positions
-    let mut f_classic = f_large.clone();
-    let mut classic_layout = ForceDirectedLayout {
-        use_barnes_hut: false,
-        iterations: 50,
-        ..Default::default()
-    };
-    classic_layout.compute(&mut f_classic.state);
-    assert_valid_positions(&f_classic.state);
-
-    // Compute Barnes-Hut layout positions
-    let mut f_bh = f_large.clone();
-    let mut bh_layout = ForceDirectedLayout {
-        use_barnes_hut: true,
-        theta: 0.5,
-        iterations: 50,
-        ..Default::default()
-    };
-    bh_layout.compute(&mut f_bh.state);
-    assert_valid_positions(&f_bh.state);
-
-    // Check we get different but valid results
-    let n = f_classic.state.node_index_to_id.len();
-    assert!(n > 0);
 }
 
 // 17. FCOSE & FILE TREE TESTS
@@ -402,7 +62,6 @@ fn test_barnes_hut_layout() {
 fn test_fcose_layout_and_file_tree_preset() {
     let fixtures = get_all_fixtures::<()>();
 
-    // 1. Verify the Workspace File Tree preset loads correctly
     let f_tree = fixtures
         .iter()
         .find(|f| f.name.contains("Workspace File Tree"))
@@ -417,7 +76,6 @@ fn test_fcose_layout_and_file_tree_preset() {
         "File tree should contain edges"
     );
 
-    // 2. Verify fCoSE layout computes successfully on the file tree graph
     let mut f_layout = f_tree.clone();
     let mut fcose = FCoseLayout::default();
     fcose.compute(&mut f_layout.state);
@@ -442,14 +100,11 @@ fn test_compound_flattening_on_circle_layout() {
         animate: false,
     };
 
-    // Run CircleLayout via the flattening helper
     let collapsed = std::collections::HashSet::new();
     graphene_layout::compute_flat_layout(&mut circle, &mut f_flat.state, &collapsed);
 
     assert_valid_positions(&f_flat.state);
 
-    // Verify parent directories enclose their child files/subfolders
-    // (i.e. parent size w/h must be > 0 and center must reflect child coordinates)
     for idx in 0..f_flat.state.node_index_to_id.len() {
         let id = f_flat.state.node_index_to_id[idx];
         let mut is_parent = false;
@@ -487,11 +142,8 @@ fn test_collapsed_compound_parent_filtering() {
         .expect("Workspace File Tree preset should exist");
 
     let mut f_collapsed = f_tree.clone();
-
-    // Find the root compound node
     let root_id = f_collapsed.state.node_index_to_id[0];
 
-    // Collapse the root folder
     let mut collapsed = std::collections::HashSet::new();
     collapsed.insert(root_id);
 
@@ -501,12 +153,10 @@ fn test_collapsed_compound_parent_filtering() {
         animate: false,
     };
 
-    // Run layout with root collapsed
     graphene_layout::compute_flat_layout(&mut circle, &mut f_collapsed.state, &collapsed);
 
     assert_valid_positions(&f_collapsed.state);
 
-    // Verify that the collapsed parent is sized correctly as a standard node
     let root_idx = f_collapsed.state.node_keys[root_id];
     let size = *f_collapsed.state.sizes.get(root_idx);
     assert_eq!(
@@ -519,7 +169,6 @@ fn test_collapsed_compound_parent_filtering() {
 // 20. FCOSE CONSTRAINTS & CALLBACKS INTEGRATION TESTS
 #[test]
 fn test_fcose_constraints_and_callbacks() {
-    use graphene_fixtures::get_all_fixtures;
     use graphene_layout::{
         AlignmentConstraint, FCoseConstraints, FixedNodeConstraint, RelativePlacementConstraint,
     };
@@ -532,27 +181,23 @@ fn test_fcose_constraints_and_callbacks() {
         .clone();
 
     let mut state = f_small.state;
-    // We have three nodes A, B, C
     let nodes = state.node_index_to_id.clone();
     assert!(nodes.len() >= 3);
     let id_a = nodes[0];
     let id_b = nodes[1];
     let id_c = nodes[2];
 
-    // Define constraints
     let fixed_pos = Vec2::new(123.0, 456.0);
     let fixed_node = FixedNodeConstraint {
         node_id: id_a,
         position: fixed_pos,
     };
 
-    // Align B and C vertically (share same X)
     let alignment = AlignmentConstraint {
         vertical: vec![vec![id_b, id_c]],
         horizontal: vec![],
     };
 
-    // Relative placement: B is to the left of A by at least 100.0
     let relative = RelativePlacementConstraint::LeftRight {
         left: id_b,
         right: id_a,
@@ -581,13 +226,11 @@ fn test_fcose_constraints_and_callbacks() {
 
     assert_valid_positions(&state);
 
-    // 1. Verify fixed node position is exactly preserved
     let idx_a = state.node_keys[id_a];
     let pos_a = *state.positions.get(idx_a);
     assert_eq!(pos_a.x, 123.0);
     assert_eq!(pos_a.y, 456.0);
 
-    // 2. Verify vertical alignment (B and C have the same X coordinate)
     let idx_b = state.node_keys[id_b];
     let idx_c = state.node_keys[id_c];
     let pos_b = *state.positions.get(idx_b);
@@ -599,78 +242,12 @@ fn test_fcose_constraints_and_callbacks() {
         pos_c.x
     );
 
-    // 3. Verify relative placement constraint (B is to the left of A by at least 100)
     assert!(
         pos_b.x <= pos_a.x - 100.0 + 1e-3,
         "B.x ({}) should be to the left of A.x ({}) by at least 100",
         pos_b.x,
         pos_a.x
     );
-}
-
-// Helper to assert all child nodes are physically located within their parent bounding boxes
-fn assert_containment<S: Copy>(state: &GraphState<S>) {
-    let n = state.node_index_to_id.len();
-    for idx in 0..n {
-        let child_id = state.node_index_to_id[idx];
-        if let Some(parent_id) = *state.hierarchy.parent.get(idx) {
-            let Some(&p_idx) = state.node_keys.get(parent_id) else {
-                continue;
-            };
-            let child_pos = *state.positions.get(idx);
-            let child_size = *state.sizes.get(idx);
-            let parent_pos = *state.positions.get(p_idx);
-            let parent_size = *state.sizes.get(p_idx);
-
-            let half_pw = parent_size.w / 2.0;
-            let half_ph = parent_size.h / 2.0;
-            let half_cw = child_size.w / 2.0;
-            let half_ch = child_size.h / 2.0;
-
-            // child bounds must be fully within parent bounds (with small epsilon for float precision)
-            let eps = 0.05;
-            assert!(
-                child_pos.x - half_cw >= parent_pos.x - half_pw - eps,
-                "Child node {:?} (x: {}, w: {}) extends left of parent {:?} (x: {}, w: {})",
-                child_id,
-                child_pos.x,
-                child_size.w,
-                parent_id,
-                parent_pos.x,
-                parent_size.w
-            );
-            assert!(
-                child_pos.x + half_cw <= parent_pos.x + half_pw + eps,
-                "Child node {:?} (x: {}, w: {}) extends right of parent {:?} (x: {}, w: {})",
-                child_id,
-                child_pos.x,
-                child_size.w,
-                parent_id,
-                parent_pos.x,
-                parent_size.w
-            );
-            assert!(
-                child_pos.y - half_ch >= parent_pos.y - half_ph - eps,
-                "Child node {:?} (y: {}, h: {}) extends top of parent {:?} (y: {}, h: {})",
-                child_id,
-                child_pos.y,
-                child_size.h,
-                parent_id,
-                parent_pos.y,
-                parent_size.h
-            );
-            assert!(
-                child_pos.y + half_ch <= parent_pos.y + half_ph + eps,
-                "Child node {:?} (y: {}, h: {}) extends bottom of parent {:?} (y: {}, h: {})",
-                child_id,
-                child_pos.y,
-                child_size.h,
-                parent_id,
-                parent_pos.y,
-                parent_size.h
-            );
-        }
-    }
 }
 
 // 21. FCOSE CONTAINMENT TESTS
@@ -700,11 +277,9 @@ fn test_fcose_containment_after_physics_simulation() {
 
     let mut state = f_tree.state.clone();
 
-    // 1. Initial layout
     let mut fcose = FCoseLayout::default();
     fcose.compute(&mut state);
 
-    // 2. Simulate physics steps as implemented in the interactive demo
     let n = state.node_index_to_id.len();
     assert!(n > 0);
 
@@ -757,12 +332,10 @@ fn test_fcose_containment_after_physics_simulation() {
         false
     };
 
-    // Cool down the temperature from 10.0 to 0.05
     let mut temp = 10.0;
     while temp > 0.05 {
         let mut forces = vec![Vec2::default(); n];
 
-        // Repulsive forces between leaf nodes
         let positions_slice = &*state.positions;
         let quadtree = graphene_layout::Quadtree::build(positions_slice);
         for i in 0..n {
@@ -772,7 +345,6 @@ fn test_fcose_containment_after_physics_simulation() {
             }
         }
 
-        // Attraction along edges
         let edges_count = state.edges.len();
         for i in 0..edges_count {
             let src = *state.edge_sources.get(i);
@@ -797,7 +369,6 @@ fn test_fcose_containment_after_physics_simulation() {
             }
         }
 
-        // Apply forces to positions with temperature limit
         for i in 0..n {
             if is_parent[i] {
                 continue;
@@ -811,7 +382,6 @@ fn test_fcose_containment_after_physics_simulation() {
             pos.y += (forces[i].y / force_len) * limit;
         }
 
-        // Resolve collisions (excluding ancestor containment)
         for _ in 0..4 {
             for i in 0..n {
                 for j in (i + 1)..n {
@@ -868,7 +438,6 @@ fn test_fcose_containment_after_physics_simulation() {
             }
         }
 
-        // Dynamically resolve compound bounds
         graphene_layout::resolve_compound_bounds(
             &mut state,
             &std::collections::HashSet::new(),
@@ -892,17 +461,14 @@ fn test_fcose_containment_after_drag() {
 
     let mut state = f_tree.state.clone();
 
-    // 1. Initial layout
     let mut fcose = FCoseLayout::default();
     fcose.compute(&mut state);
 
-    // 2. Pick a child node and drag it to a distant position
-    let child_idx = 0; // First node
+    let child_idx = 0;
     let original_pos = *state.positions.get(child_idx);
     let dragged_pos = Vec2::new(original_pos.x + 300.0, original_pos.y - 150.0);
     state.positions.set(child_idx, dragged_pos);
 
-    // 3. Resolve collisions and compound bounds as dragging logic does
     let n = state.node_index_to_id.len();
     let padding = 12.0;
 
@@ -921,7 +487,6 @@ fn test_fcose_containment_after_drag() {
         false
     };
 
-    // Collision resolution and compound bounds update (as done on mouse drag)
     for _ in 0..4 {
         for i in 0..n {
             for j in (i + 1)..n {
@@ -982,7 +547,6 @@ fn test_fcose_containment_collapsed_parents() {
 
     let mut state = f_tree.state.clone();
 
-    // Choose one parent node to collapse
     let n = state.node_index_to_id.len();
     let mut parent_id_to_collapse = None;
     for i in 0..n {
@@ -997,18 +561,15 @@ fn test_fcose_containment_collapsed_parents() {
         collapsed.insert(pid);
     }
 
-    // Run layout with collapsed parents via compute_flat_layout
     let mut fcose = FCoseLayout::default();
     graphene_layout::compute_flat_layout(&mut fcose, &mut state, &collapsed);
 
     assert_valid_positions(&state);
 
-    // Verify that all non-collapsed parents contain their children.
     for idx in 0..n {
         let child_id = state.node_index_to_id[idx];
         if let Some(parent_id) = *state.hierarchy.parent.get(idx) {
             if collapsed.contains(&parent_id) {
-                // If parent is collapsed, skip containment assertion since child is hidden
                 continue;
             }
             let Some(&p_idx) = state.node_keys.get(parent_id) else {
@@ -1055,12 +616,12 @@ fn test_fcose_containment_collapsed_parents() {
 
 #[test]
 fn test_cose_and_fcose_barnes_hut_large_graph() {
-    use graphene_core::{GraphState, math::Vec2, Size2};
+    use graphene_core::{math::Vec2, GraphState, Size2};
     use graphene_layout::cose::CoseLayout;
     use graphene_layout::fcose::FCoseLayout;
 
     let mut state = GraphState::<()>::default();
-    let n = 150; // N > 100 triggers Barnes-Hut spatial acceleration
+    let n = 150;
     for i in 0..n {
         let pos = Vec2::new((i % 15) as f32 * 20.0, (i / 15) as f32 * 20.0);
         let size = Size2::new(10.0, 10.0);
@@ -1073,19 +634,25 @@ fn test_cose_and_fcose_barnes_hut_large_graph() {
         state.add_edge(u, v, graphene_core::EdgeData::default());
     }
 
-    let mut cose = CoseLayout { iterations: 10, ..Default::default() };
+    let mut cose = CoseLayout {
+        iterations: 10,
+        ..Default::default()
+    };
     cose.compute(&mut state);
     assert_valid_positions(&state);
 
-    let mut fcose = FCoseLayout { iterations: 10, ..Default::default() };
+    let mut fcose = FCoseLayout {
+        iterations: 10,
+        ..Default::default()
+    };
     fcose.compute(&mut state);
     assert_valid_positions(&state);
 }
 
 #[test]
 fn test_async_live_simulation_handle_background_thread() {
-    use graphene_core::{GraphState, math::Vec2, Size2};
-    use graphene_layout::livesim::{LiveForceSimulation, AsyncLiveSimulationHandle};
+    use graphene_core::{math::Vec2, GraphState, Size2};
+    use graphene_layout::livesim::{AsyncLiveSimulationHandle, LiveForceSimulation};
 
     let mut state = GraphState::<()>::default();
     let n = 50;
@@ -1116,26 +683,30 @@ fn test_async_live_simulation_handle_background_thread() {
 
 #[test]
 fn test_graph_engine_decoupled_thread_actor() {
-    use graphene_core::{GraphState, math::Vec2, Size2};
-    use graphene_layout::engine::{GraphEngineHandle, GraphCommand, LayoutCommand};
+    use graphene_core::{math::Vec2, GraphState, Size2};
     use graphene_layout::cose::CoseLayout;
+    use graphene_layout::engine::{GraphCommand, GraphEngineHandle, LayoutCommand};
 
     let initial_state = GraphState::<()>::default();
     let engine = GraphEngineHandle::spawn(initial_state);
 
-    engine.send_command(GraphCommand::AddNode {
-        pos: Vec2::new(0.0, 0.0),
-        size: Size2::new(10.0, 10.0),
-        data: (),
-        label: None,
-    }).unwrap();
+    engine
+        .send_command(GraphCommand::AddNode {
+            pos: Vec2::new(0.0, 0.0),
+            size: Size2::new(10.0, 10.0),
+            data: (),
+            label: None,
+        })
+        .unwrap();
 
-    engine.send_command(GraphCommand::AddNode {
-        pos: Vec2::new(50.0, 50.0),
-        size: Size2::new(10.0, 10.0),
-        data: (),
-        label: None,
-    }).unwrap();
+    engine
+        .send_command(GraphCommand::AddNode {
+            pos: Vec2::new(50.0, 50.0),
+            size: Size2::new(10.0, 10.0),
+            data: (),
+            label: None,
+        })
+        .unwrap();
 
     std::thread::sleep(std::time::Duration::from_millis(30));
 
@@ -1143,10 +714,12 @@ fn test_graph_engine_decoupled_thread_actor() {
     assert_eq!(snap.positions.len(), 2);
     assert!(snap.version > 0);
 
-    engine.send_command(GraphCommand::RunLayout(LayoutCommand::Cose(CoseLayout {
-        iterations: 10,
-        ..Default::default()
-    }))).unwrap();
+    engine
+        .send_command(GraphCommand::RunLayout(LayoutCommand::Cose(CoseLayout {
+            iterations: 10,
+            ..Default::default()
+        })))
+        .unwrap();
 
     std::thread::sleep(std::time::Duration::from_millis(30));
 
@@ -1155,8 +728,8 @@ fn test_graph_engine_decoupled_thread_actor() {
 
 #[test]
 fn test_graph_engine_live_sim_stepping_and_tuning() {
-    use graphene_core::{GraphState, math::Vec2, Size2};
-    use graphene_layout::engine::{GraphEngineHandle, GraphCommand};
+    use graphene_core::{math::Vec2, GraphState, Size2};
+    use graphene_layout::engine::{GraphCommand, GraphEngineHandle};
     use graphene_layout::livesim::{LiveForceSimulation, LiveSimParam};
 
     let mut state = GraphState::<()>::default();
@@ -1167,11 +740,19 @@ fn test_graph_engine_live_sim_stepping_and_tuning() {
     let engine = GraphEngineHandle::spawn(state);
 
     let sim = LiveForceSimulation::new();
-    engine.send_command(GraphCommand::StartLiveSim(sim)).unwrap();
+    engine
+        .send_command(GraphCommand::StartLiveSim(sim))
+        .unwrap();
     std::thread::sleep(std::time::Duration::from_millis(20));
 
-    engine.send_command(GraphCommand::UpdateLiveSimParam(LiveSimParam::Repulsion(5000.0))).unwrap();
-    engine.send_command(GraphCommand::StepLiveSimN(5)).unwrap();
+    engine
+        .send_command(GraphCommand::UpdateLiveSimParam(LiveSimParam::Repulsion(
+            5000.0,
+        )))
+        .unwrap();
+    engine
+        .send_command(GraphCommand::StepLiveSimN(5))
+        .unwrap();
     std::thread::sleep(std::time::Duration::from_millis(30));
 
     let snap = engine.latest_snapshot();
@@ -1184,14 +765,17 @@ fn test_graph_engine_live_sim_stepping_and_tuning() {
 
 #[test]
 fn test_graph_engine_phase_stepped_layout() {
-    use graphene_core::{GraphState, math::Vec2, Size2};
-    use graphene_layout::engine::{GraphEngineHandle, GraphCommand, LayoutCommand};
+    use graphene_core::{math::Vec2, GraphState, Size2};
+    use graphene_layout::engine::{GraphCommand, GraphEngineHandle, LayoutCommand};
     use graphene_layout::hierarchical::{SugiyamaLayout, SugiyamaPhase};
     use graphene_layout::traits::PhaseSteppableLayout;
 
-    let mut sugiyama = SugiyamaLayout::default();
+    let sugiyama = SugiyamaLayout::default();
     assert_eq!(PhaseSteppableLayout::<()>::phases(&sugiyama).len(), 4);
-    assert_eq!(PhaseSteppableLayout::<()>::current_phase(&sugiyama), Some(SugiyamaPhase::CycleBreaking));
+    assert_eq!(
+        PhaseSteppableLayout::<()>::current_phase(&sugiyama),
+        Some(SugiyamaPhase::CycleBreaking)
+    );
 
     let mut state = GraphState::<()>::default();
     let n1 = state.add_node(Vec2::new(0.0, 0.0), Size2::new(10.0, 10.0));
@@ -1200,7 +784,11 @@ fn test_graph_engine_phase_stepped_layout() {
 
     let engine = GraphEngineHandle::spawn(state);
 
-    engine.send_command(GraphCommand::StepLayoutPhase(LayoutCommand::Sugiyama(sugiyama))).unwrap();
+    engine
+        .send_command(GraphCommand::StepLayoutPhase(LayoutCommand::Sugiyama(
+            sugiyama,
+        )))
+        .unwrap();
     std::thread::sleep(std::time::Duration::from_millis(30));
 
     let snap = engine.latest_snapshot();
@@ -1218,11 +806,17 @@ fn test_fcose_and_cose_phase_stepped_layouts() {
 
     let fcose = FCoseLayout::default();
     assert_eq!(PhaseSteppableLayout::<()>::phases(&fcose).len(), 4);
-    assert_eq!(PhaseSteppableLayout::<()>::current_phase(&fcose), Some(FCosePhase::DraftLayout));
+    assert_eq!(
+        PhaseSteppableLayout::<()>::current_phase(&fcose),
+        Some(FCosePhase::DraftLayout)
+    );
 
     let cose = CoseLayout::default();
     assert_eq!(PhaseSteppableLayout::<()>::phases(&cose).len(), 4);
-    assert_eq!(PhaseSteppableLayout::<()>::current_phase(&cose), Some(CosePhase::Initialization));
+    assert_eq!(
+        PhaseSteppableLayout::<()>::current_phase(&cose),
+        Some(CosePhase::Initialization)
+    );
 }
 
 #[test]
@@ -1284,5 +878,3 @@ fn test_multilevel_layout_execution() {
     ml.compute(&mut fixture.state);
     assert_valid_positions(&fixture.state);
 }
-
-

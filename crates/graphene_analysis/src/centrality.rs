@@ -24,7 +24,7 @@ impl Default for CentralityConfig {
     }
 }
 
-#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 pub struct CentralityScores {
     pub degree: HashMap<NodeId, f32>,
     pub closeness: HashMap<NodeId, f32>,
@@ -42,7 +42,7 @@ pub fn compute_all_centrality_with_config<S: Copy>(
     config: CentralityConfig,
 ) -> CentralityScores {
     let deg_res = degree_centrality_normalized(state, directed, config.degree_exponent, |_| 1.0);
-    let close_res = closeness_centrality_normalized(state, true, |_| 1.0);
+    let close_res = closeness_centrality_normalized(state, directed, |_| 1.0);
     let bet_res = betweenness_centrality(state);
     let pr_res = page_rank(
         state,

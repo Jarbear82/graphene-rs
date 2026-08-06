@@ -153,18 +153,9 @@ pub fn add_advanced_fixtures<S: Copy + Default>(fixtures: &mut Vec<GraphFixture<
         f.node_labels.insert(r1, "R1".to_string());
         f.node_labels.insert(l2, "L2".to_string());
 
-        f.state
-            .hierarchy
-            .parent
-            .set(f.state.node_keys[l1], Some(root));
-        f.state
-            .hierarchy
-            .parent
-            .set(f.state.node_keys[r1], Some(root));
-        f.state
-            .hierarchy
-            .parent
-            .set(f.state.node_keys[l2], Some(l1));
+        f.state.reparent_node(l1, Some(root));
+        f.state.reparent_node(r1, Some(root));
+        f.state.reparent_node(l2, Some(l1));
 
         f.state.add_edge(root, l1, EdgeData::default());
         f.state.add_edge(root, r1, EdgeData::default());

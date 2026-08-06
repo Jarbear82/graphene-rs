@@ -8,15 +8,15 @@ pub fn algebraic_connectivity<S: Copy>(state: &GraphState<S>) -> f64 {
         return 0.0;
     }
 
-    let mut row_sums = vec![0.0; n];
+    let mut degrees = vec![0.0; n];
     for i in 0..n {
         let start = lap.row_offsets[i];
-        let end = lap.row_offsets[i + 1];
-        let sum: f64 = lap.values[start..end].iter().sum();
-        row_sums[i] = sum;
+        if start < lap.values.len() {
+            degrees[i] = lap.values[start];
+        }
     }
 
-    let min_deg = row_sums
+    let min_deg = degrees
         .into_iter()
         .min_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
         .unwrap_or(0.0);

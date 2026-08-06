@@ -94,10 +94,36 @@ pub(crate) fn add_dir_to_fixture<S: Copy + Default>(
     }
 }
 
+impl<S: Copy + Default> Default for GraphFixture<S> {
+    fn default() -> Self {
+        Self::new("Default Fixture", "Default uninitialized graph fixture")
+    }
+}
+
 pub fn get_all_fixtures<S: Copy + Default>() -> Vec<GraphFixture<S>> {
     let mut fixtures = Vec::new();
     basic::add_basic_fixtures(&mut fixtures);
     advanced::add_advanced_fixtures(&mut fixtures);
     demos::add_cytoscape_demos(&mut fixtures);
     fixtures
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_get_all_fixtures_non_empty() {
+        let fixtures = get_all_fixtures::<()>();
+        assert!(!fixtures.is_empty(), "Fixtures vector should not be empty");
+        for f in &fixtures {
+            assert!(!f.name.is_empty());
+        }
+    }
+
+    #[test]
+    fn test_fixture_default() {
+        let f = GraphFixture::<()>::default();
+        assert_eq!(f.name, "Default Fixture");
+    }
 }

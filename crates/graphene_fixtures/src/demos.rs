@@ -1,6 +1,5 @@
 use super::GraphFixture;
-use graphene_core::{EdgeData, NodeId, Size2, Vec2};
-use std::collections::HashMap;
+use graphene_core::{EdgeData, Size2, Vec2};
 
 pub fn add_cytoscape_demos<S: Copy + Default>(fixtures: &mut Vec<GraphFixture<S>>) {
     // 1. COMPOUND NODES DEMO

@@ -2,11 +2,7 @@ use graphene_algorithms::{connected_components, hopcroft_tarjan_biconnected, tar
 use graphene_core::{EdgeId, GraphState, NodeId};
 use std::collections::HashMap;
 
-pub fn find_articulation_points<S: Copy + Default>(state: &GraphState<S>) -> Vec<NodeId> {
-    if state.node_index_to_id.is_empty() || state.edges.is_empty() {
-        return Vec::new();
-    }
-
+fn build_undirected_adj_map<S: Copy>(state: &GraphState<S>) -> HashMap<u32, Vec<(u32, u32)>> {
     let mut adj: HashMap<u32, Vec<(u32, u32)>> = HashMap::new();
     for idx in 0..state.edges.len() {
         let src = *state.edge_sources.get(idx);
@@ -16,7 +12,15 @@ pub fn find_articulation_points<S: Copy + Default>(state: &GraphState<S>) -> Vec
             adj.entry(v as u32).or_default().push((u as u32, idx as u32));
         }
     }
+    adj
+}
 
+pub fn find_articulation_points<S: Copy + Default>(state: &GraphState<S>) -> Vec<NodeId> {
+    if state.node_index_to_id.is_empty() || state.edges.is_empty() {
+        return Vec::new();
+    }
+
+    let adj = build_undirected_adj_map(state);
     let result = hopcroft_tarjan_biconnected(&adj);
     let mut ap = Vec::new();
     for node_idx in result.cut_vertices {
@@ -32,23 +36,16 @@ pub fn find_bridges<S: Copy + Default>(state: &GraphState<S>) -> Vec<EdgeId> {
         return Vec::new();
     }
 
-    let mut adj: HashMap<u32, Vec<(u32, u32)>> = HashMap::new();
-    for idx in 0..state.edges.len() {
-        let src = *state.edge_sources.get(idx);
-        let tgt = *state.edge_targets.get(idx);
-        if let (Some(&u), Some(&v)) = (state.node_keys.get(src), state.node_keys.get(tgt)) {
-            adj.entry(u as u32).or_default().push((v as u32, idx as u32));
-            adj.entry(v as u32).or_default().push((u as u32, idx as u32));
-        }
-    }
-
+    let adj = build_undirected_adj_map(state);
     let result = hopcroft_tarjan_biconnected(&adj);
     let mut bridges = Vec::new();
     for comp in result.components {
         if comp.len() == 1 {
-            let edge_idx = *comp.iter().next().unwrap() as usize;
-            if edge_idx < state.edge_index_to_id.len() {
-                bridges.push(state.edge_index_to_id[edge_idx]);
+            if let Some(&edge_idx_u32) = comp.iter().next() {
+                let edge_idx = edge_idx_u32 as usize;
+                if edge_idx < state.edge_index_to_id.len() {
+                    bridges.push(state.edge_index_to_id[edge_idx]);
+                }
             }
         }
     }
