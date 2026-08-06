@@ -175,7 +175,7 @@ impl Render for GuiPerformanceBenchmarkApp {
                 visible_count += 1;
                 // Render first 200 nodes in GUI tree for fast viewport presentation
                 if visible_count <= 200 {
-                    let screen_p = self.viewport.model_to_screen(pos);
+                    let screen_p = self.viewport.model_to_canvas(pos);
                     node_elements.push(
                         gpui::div()
                             .absolute()

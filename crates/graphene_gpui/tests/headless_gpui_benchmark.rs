@@ -51,7 +51,7 @@ fn test_headless_gpui_viewport_and_culling_performance() {
             let pos = *state.positions.get(i);
             let size = *state.sizes.get(i);
             if viewport.is_visible(pos, size) {
-                let screen_p = viewport.model_to_screen(pos);
+                let screen_p = viewport.model_to_canvas(pos);
                 let elem = GraphNodeElement {
                     id: gpui::SharedString::from(format!("node_{}", i)),
                     screen_x: screen_p.x,

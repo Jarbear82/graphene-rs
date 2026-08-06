@@ -137,6 +137,7 @@ pub struct GraphEdgeLabelElement {
     pub height: f32,
     pub text_color: gpui::Rgba,
     pub font_size: f32,
+    pub angle: f32,
     pub label: String,
 }
 
@@ -156,6 +157,7 @@ impl RenderOnce for GraphEdgeLabelElement {
                 gpui::div()
                     .text_color(self.text_color)
                     .text_size(px(self.font_size))
+                    .whitespace_nowrap()
                     .child(self.label),
             )
     }
@@ -304,7 +306,7 @@ impl<'a> IntoElement for GraphCanvas<'a> {
                     continue;
                 }
 
-                let src_screen = viewport.model_to_screen(pos_src);
+                let src_screen = viewport.model_to_window(pos_src);
 
                 let clipped_tgt = graphene_layout::find_clipping_point(
                     pos_tgt,
@@ -312,7 +314,7 @@ impl<'a> IntoElement for GraphCanvas<'a> {
                     pos_src.x - pos_tgt.x,
                     pos_src.y - pos_tgt.y,
                 );
-                let tgt_screen = viewport.model_to_screen(clipped_tgt);
+                let tgt_screen = viewport.model_to_window(clipped_tgt);
 
                 let curve_style = EdgeCurveStyle::Straight;
                 let mut label_text = edge_labels.get(&i).cloned();
@@ -332,8 +334,8 @@ impl<'a> IntoElement for GraphCanvas<'a> {
 
                 let screen_curve_style = match curve_style {
                     EdgeCurveStyle::UnbundledBezier(cp1, cp2) => {
-                        let s1 = viewport.model_to_screen(cp1);
-                        let s2 = viewport.model_to_screen(cp2);
+                        let s1 = viewport.model_to_window(cp1);
+                        let s2 = viewport.model_to_window(cp2);
                         EdgeCurveStyle::UnbundledBezier(
                             graphene_core::math::Vec2::new(s1.x, s1.y),
                             graphene_core::math::Vec2::new(s2.x, s2.y),
@@ -488,8 +490,9 @@ impl<'a> IntoElement for GraphCanvas<'a> {
                 node_h *= scale;
             }
 
-            let screen_x = (pos.x + viewport.offset.x) * viewport.zoom + viewport.bounds.size.width / 2.0 - (node_w / 2.0);
-            let screen_y = (pos.y + viewport.offset.y) * viewport.zoom + viewport.bounds.size.height / 2.0 - (node_h / 2.0);
+            let canvas_p = viewport.model_to_canvas(pos);
+            let screen_x = canvas_p.x - (node_w / 2.0);
+            let screen_y = canvas_p.y - (node_h / 2.0);
 
             let mut shape = if is_compound {
                 NodeShape::Rectangle
@@ -582,15 +585,23 @@ impl<'a> IntoElement for GraphCanvas<'a> {
                 curvature_val,
             );
 
-            // 2. Transform the model midpoint into relative canvas space (matching node calculation)
-            let mid_x = (mid_model.x + viewport.offset.x) * viewport.zoom + viewport.bounds.size.width / 2.0;
-            let mid_y = (mid_model.y + viewport.offset.y) * viewport.zoom + viewport.bounds.size.height / 2.0;
+            // 2. Canvas-local centre (matches node calculation)
+            let mid_canvas = viewport.model_to_canvas(mid_model);
+            let (mid_x, mid_y) = (mid_canvas.x, mid_canvas.y);
+
+            // 3. Edge angle (for orientation). Flip 180° so text stays upright.
+            let dx = pos_tgt.x - pos_src.x;
+            let dy = pos_tgt.y - pos_src.y;
+            let mut angle = dy.atan2(dx);
+            if angle > std::f32::consts::FRAC_PI_2 || angle < -std::f32::consts::FRAC_PI_2 {
+                angle += std::f32::consts::PI;
+            }
 
             let font_size = cfg.edge_label_font_size * viewport.zoom;
 
-            let char_w = font_size * 0.62;
-            let label_w = (label.len() as f32 * char_w + 6.0).max(12.0);
-            let label_h = font_size * 1.2;
+            let char_w = font_size * 0.55;
+            let label_w = (label.chars().count() as f32 * char_w + 8.0).max(16.0);
+            let label_h = font_size * 1.25;
             let screen_x = mid_x - (label_w / 2.0);
             let screen_y = mid_y - (label_h / 2.0);
 
@@ -602,6 +613,7 @@ impl<'a> IntoElement for GraphCanvas<'a> {
                 height: label_h,
                 text_color,
                 font_size,
+                angle,
                 label,
             }
         };

@@ -21,10 +21,24 @@ impl Viewport {
         }
     }
 
-    pub fn model_to_screen(&self, pos: Vec2) -> gpui::Point<f32> {
-        let x = (pos.x + self.offset.x) * self.zoom + self.bounds.origin.x + self.bounds.size.width / 2.0;
-        let y = (pos.y + self.offset.y) * self.zoom + self.bounds.origin.y + self.bounds.size.height / 2.0;
+    /// Canvas-local coordinates (relative to top-left of canvas element).
+    /// Use this for absolutely-positioned UI elements (nodes, edge labels).
+    pub fn model_to_canvas(&self, pos: Vec2) -> gpui::Point<f32> {
+        let x = (pos.x + self.offset.x) * self.zoom + self.bounds.size.width / 2.0;
+        let y = (pos.y + self.offset.y) * self.zoom + self.bounds.size.height / 2.0;
         gpui::point(x, y)
+    }
+
+    /// Window / absolute coordinates (includes bounds.origin).
+    /// Use inside canvas paint callbacks (e.g. window.paint_path).
+    pub fn model_to_window(&self, pos: Vec2) -> gpui::Point<f32> {
+        let canvas_p = self.model_to_canvas(pos);
+        gpui::point(canvas_p.x + self.bounds.origin.x, canvas_p.y + self.bounds.origin.y)
+    }
+
+    #[deprecated(note = "use model_to_canvas or model_to_window")]
+    pub fn model_to_screen(&self, pos: Vec2) -> gpui::Point<f32> {
+        self.model_to_window(pos)
     }
 
     pub fn screen_to_model(&self, p: gpui::Point<f32>) -> Vec2 {
@@ -34,7 +48,7 @@ impl Viewport {
     }
 
     pub fn is_visible(&self, pos: Vec2, size: Size2) -> bool {
-        let screen_pos = self.model_to_screen(pos);
+        let screen_pos = self.model_to_window(pos);
         let screen_size = gpui::size(size.w * self.zoom, size.h * self.zoom);
 
         let node_bounds = gpui::Bounds {

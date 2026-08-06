@@ -113,7 +113,7 @@ fn assert_no_overlaps_graph_and_ui<S: Copy + Default>(state: &GraphState<S>, tes
         let is_parent_i = state.is_parent(i);
         let pos_i = *state.positions.get(i);
         let size_i = *state.sizes.get(i);
-        let p_i_screen = viewport.model_to_screen(pos_i);
+        let p_i_screen = viewport.model_to_canvas(pos_i);
         let ui_w_i = size_i.w * viewport.zoom;
         let ui_h_i = size_i.h * viewport.zoom;
 
@@ -127,7 +127,7 @@ fn assert_no_overlaps_graph_and_ui<S: Copy + Default>(state: &GraphState<S>, tes
 
             let pos_j = *state.positions.get(j);
             let size_j = *state.sizes.get(j);
-            let p_j_screen = viewport.model_to_screen(pos_j);
+            let p_j_screen = viewport.model_to_canvas(pos_j);
             let ui_w_j = size_j.w * viewport.zoom;
             let ui_h_j = size_j.h * viewport.zoom;
 
