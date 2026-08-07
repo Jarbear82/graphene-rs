@@ -194,7 +194,7 @@ impl DemoApp {
                 .absolute(),
             )
             .child(
-                GraphCanvas::new(
+                graphene_gpui::GraphCanvasHost::new(
                     &self.view,
                     &self.viewport,
                     &self.interaction_state,
@@ -213,108 +213,66 @@ impl DemoApp {
                 gpui::MouseButton::Left,
                 cx.listener(|this, ev: &MouseDownEvent, window, cx| {
                     let click_pos = gpui::point(f32::from(ev.position.x), f32::from(ev.position.y));
-                    let hit_node = this.interaction_state.hit_test(
+                    let mut controller = this.controller.clone();
+                    let mut interaction = this.interaction_state.clone();
+                    let mut expansion = this.collapsed_parents.clone();
+
+                    let res = controller.handle_mouse_down(
                         click_pos,
+                        ev.modifiers.shift,
+                        this.selected_node,
                         &this.viewport,
                         &this.view,
+                        &mut interaction,
+                        &mut expansion,
                         this.physics_enabled,
                     );
-                    let now = std::time::Instant::now();
-                    if let Some(node_id) = hit_node {
-                        if ev.modifiers.shift {
-                            if let Some(prev_selected) = this.selected_node {
-                                if prev_selected != node_id {
-                                    this.create_edge_between_nodes(prev_selected, node_id);
-                                    this.selected_node = Some(node_id);
-                                    cx.notify();
-                                    return;
-                                }
-                            }
-                        }
 
-                        if let Some((prev_id, prev_time)) = this.last_node_click {
-                            if prev_id == node_id && now.duration_since(prev_time).as_millis() < 300 {
-                                let is_parent = this
-                                    .view
-                                    .nodes
-                                    .get(&node_id)
-                                    .map_or(false, |n| !n.children.is_empty());
-                                if is_parent {
-                                    if this.collapsed_parents.contains(&node_id) {
-                                        this.collapsed_parents.remove(&node_id);
-                                    } else {
-                                        this.collapsed_parents.insert(node_id);
-                                    }
-                                    this.physics_temperature = 5.0;
-                                    this.interaction_state.rebuild_grid(&this.view);
-                                    this.last_node_click = None;
-                                    cx.notify();
-                                    return;
-                                }
-                            }
-                        }
-                        this.last_node_click = Some((node_id, now));
-                        this.selected_node = Some(node_id);
-                        this.selected_edge = None;
+                    this.controller = controller;
+                    this.interaction_state = interaction;
+                    this.collapsed_parents = expansion;
+
+                    if let Some(sel_node) = res.selected_node {
+                        this.selected_node = sel_node;
+                    }
+                    if let Some(sel_edge) = res.selected_edge {
+                        this.selected_edge = sel_edge;
+                    }
+                    if let Some((drag_id, target_pos, phase)) = res.drag_update {
+                        this.engine.drag_node_target(drag_id, target_pos, phase);
                         if this.physics_enabled {
                             this.physics_temperature = 5.0;
                         }
+                    }
 
-                        if let Some(p_id) = this.selected_node {
-                            let label = this
-                                .view
-                                .nodes
-                                .get(&p_id)
-                                .map(|n| n.label.clone())
-                                .unwrap_or_else(|| format!("N{:?}", p_id));
-                            this.node_name_state.update(cx, |input, cx| {
-                                let len = input.text().len();
-                                input.replace_text_in_range(Some(0..len), &label, window, cx);
-                            });
-                        }
-                    } else {
-                        this.last_node_click = None;
-                        let now = std::time::Instant::now();
-                        let is_double_click = if let Some((prev_pos, prev_time)) = this.last_canvas_click {
-                            now.duration_since(prev_time).as_millis() < 350
-                                && (prev_pos.x - click_pos.x).abs() < 10.0
-                                && (prev_pos.y - click_pos.y).abs() < 10.0
-                        } else {
-                            false
-                        };
-
-                        if is_double_click {
-                            this.last_canvas_click = None;
-                            this.add_new_node(window, cx);
-                            cx.notify();
-                            return;
-                        } else {
-                            this.last_canvas_click = Some((click_pos, now));
-                        }
-
-                        let hit_edge = this.interaction_state.hit_test_edge(
-                            click_pos,
-                            &this.viewport,
-                            &this.view,
-                            8.0,
-                        );
-
-                        if let Some(edge_id) = hit_edge {
-                            if let Some(pos) = this.view.edge_order.iter().position(|&e| e == edge_id) {
-                                this.selected_edge = Some(pos);
+                    if let Some(action) = res.action {
+                        match action {
+                            graphene_gpui::CanvasAction::CreateEdge { source, target } => {
+                                this.create_edge_between_nodes(source, target);
+                                this.selected_node = Some(target);
                             }
-                            this.selected_node = None;
-                        } else {
-                            this.selected_node = None;
-                            this.selected_edge = None;
+                            graphene_gpui::CanvasAction::ToggleParentCollapse { parent_id: _ } => {
+                                this.physics_temperature = 5.0;
+                            }
+                            graphene_gpui::CanvasAction::AddNewNode { screen_pos: _ } => {
+                                this.add_new_node(window, cx);
+                            }
                         }
                     }
 
-                    if let Some((node_id, target_pos, phase)) =
-                        this.interaction_state.on_mouse_down(click_pos, hit_node, &this.view)
-                    {
-                        this.engine.drag_node_target(node_id, target_pos, phase);
+                    if let Some(p_id) = this.selected_node {
+                        let label = this
+                            .view
+                            .nodes
+                            .get(&p_id)
+                            .map(|n| n.label.clone())
+                            .unwrap_or_else(|| format!("N{:?}", p_id));
+                        this.node_name_state.update(cx, |input, cx| {
+                            let len = input.text().len();
+                            input.replace_text_in_range(Some(0..len), &label, window, cx);
+                        });
                     }
+
                     cx.notify();
                 }),
             )
@@ -324,7 +282,7 @@ impl DemoApp {
                 let mut vp = this.viewport.clone();
 
                 if let Some((drag_id, target_pos, phase)) =
-                    interaction.on_mouse_drag(mouse_pos, &mut vp, &this.view)
+                    this.controller.handle_mouse_move(mouse_pos, &mut vp, &this.view, &mut interaction)
                 {
                     this.engine.drag_node_target(drag_id, target_pos, phase);
                 }
@@ -336,10 +294,13 @@ impl DemoApp {
             .on_mouse_up(
                 gpui::MouseButton::Left,
                 cx.listener(|this, _, _, cx| {
-                    if let Some((node_id, target_pos, phase)) = this.interaction_state.on_mouse_up() {
+                    let mut interaction = this.interaction_state.clone();
+                    if let Some((node_id, target_pos, phase)) =
+                        this.controller.handle_mouse_up(&mut interaction, &this.view)
+                    {
                         this.engine.drag_node_target(node_id, target_pos, phase);
                     }
-                    this.interaction_state.rebuild_grid(&this.view);
+                    this.interaction_state = interaction;
                     cx.notify();
                 }),
             )
@@ -348,11 +309,9 @@ impl DemoApp {
                     gpui::ScrollDelta::Pixels(p) => f32::from(p.y),
                     gpui::ScrollDelta::Lines(p) => p.y * 20.0,
                 };
-                let zoom_factor = if amount > 0.0 { 1.15 } else { 1.0 / 1.15 };
-                this.viewport.zoom = (this.viewport.zoom * zoom_factor).clamp(
-                    graphene_gpui::render::draw_pipeline::MIN_ZOOM,
-                    graphene_gpui::render::draw_pipeline::MAX_ZOOM,
-                );
+                let mut vp = this.viewport.clone();
+                this.controller.handle_scroll(amount, &mut vp);
+                this.viewport = vp;
                 cx.notify();
             }))
             .children(self.render_telemetry_hud(theme))

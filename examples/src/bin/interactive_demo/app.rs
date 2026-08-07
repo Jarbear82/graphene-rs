@@ -116,9 +116,8 @@ pub struct DemoApp {
     pub active_heatmap: Option<String>,
     pub analysis_report: Option<GraphAnalysisReport>,
 
-    pub collapsed_parents: HashSet<NodeId>,
-    pub last_node_click: Option<(NodeId, Instant)>,
-    pub last_canvas_click: Option<(gpui::Point<f32>, Instant)>,
+    pub collapsed_parents: graphene_gpui::ExpansionState,
+    pub controller: graphene_gpui::GraphCanvasController,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -300,9 +299,8 @@ impl DemoApp {
             active_heatmap: None,
             analysis_report: None,
 
-            collapsed_parents: std::collections::HashSet::new(),
-            last_node_click: None,
-            last_canvas_click: None,
+            collapsed_parents: graphene_gpui::ExpansionState::new(),
+            controller: graphene_gpui::GraphCanvasController::new(),
         };
         app.load_preset(0, window, cx);
         app
@@ -379,7 +377,7 @@ impl DemoApp {
         self.selected_node = None;
         self.selected_edge = None;
         self.collapsed_parents.clear();
-        self.last_node_click = None;
+        self.controller.last_node_click = None;
         self.active_heatmap = None;
         self.analysis_report = None;
 

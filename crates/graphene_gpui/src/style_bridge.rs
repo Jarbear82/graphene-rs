@@ -23,6 +23,46 @@ pub fn color_value_to_rgba(color: ColorValue) -> gpui::Rgba {
     }
 }
 
+pub use color_value_to_rgba as color_to_gpui;
+pub use color_value_to_rgba as color_value_to_gpui_color;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct UiTheme {
+    pub bg: gpui::Rgba,
+    pub panel_bg: gpui::Rgba,
+    pub border: gpui::Rgba,
+    pub accent: gpui::Rgba,
+    pub text: gpui::Rgba,
+    pub text_dim: gpui::Rgba,
+    pub node_fill: gpui::Rgba,
+    pub node_border: gpui::Rgba,
+    pub edge_color: gpui::Rgba,
+}
+
+pub type GpuiTheme = UiTheme;
+
+impl UiTheme {
+    pub fn from_style(theme: &graphene_style::Theme) -> Self {
+        Self {
+            bg: color_value_to_rgba(theme.bg),
+            panel_bg: color_value_to_rgba(theme.panel_bg),
+            border: color_value_to_rgba(theme.border),
+            accent: color_value_to_rgba(theme.accent),
+            text: color_value_to_rgba(theme.text),
+            text_dim: color_value_to_rgba(theme.text_dim),
+            node_fill: color_value_to_rgba(theme.node_fill),
+            node_border: color_value_to_rgba(theme.node_border),
+            edge_color: color_value_to_rgba(theme.edge_color),
+        }
+    }
+}
+
+impl From<&graphene_style::Theme> for UiTheme {
+    fn from(theme: &graphene_style::Theme) -> Self {
+        Self::from_style(theme)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct StyleBridgeAdapter {
     pub default_node_style: NodeStyle,
@@ -59,6 +99,7 @@ impl StyleBridgeAdapter {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use graphene_style::Theme;
 
     #[test]
     fn test_color_value_to_hsla_roundtrip() {
@@ -76,4 +117,14 @@ mod tests {
         let border_hsla = adapter.node_border_hsla(&adapter.default_node_style);
         assert_ne!(fill_hsla, border_hsla);
     }
+
+    #[test]
+    fn test_ui_theme_from_style() {
+        let theme = Theme::one_dark();
+        let ui_theme = UiTheme::from_style(&theme);
+        assert_eq!(ui_theme.bg, color_value_to_rgba(theme.bg));
+        assert_eq!(ui_theme.panel_bg, color_value_to_rgba(theme.panel_bg));
+        assert_eq!(ui_theme.accent, color_value_to_rgba(theme.accent));
+    }
 }
+
