@@ -23,6 +23,7 @@ pub struct CanvasConfig {
     pub compound_border_alpha: f32,
     pub hide_edges_during_pan: bool,
     pub min_visible_font_size: f32,
+    pub color_config: graphene_style::ColorConfig,
 }
 
 impl Default for CanvasConfig {
@@ -42,6 +43,7 @@ impl Default for CanvasConfig {
             compound_border_alpha: 0.4,
             hide_edges_during_pan: false,
             min_visible_font_size: 4.0,
+            color_config: graphene_style::ColorConfig::default(),
         }
     }
 }
@@ -238,6 +240,7 @@ impl<'a> IntoElement for GraphCanvas<'a> {
         let centrality_scores = self.centrality_scores.cloned();
         let cfg = self.config;
 
+        let bg_color = color_to_gpui(theme.bg);
         let edge_color = color_to_gpui(theme.edge_color);
         let text_color = color_to_gpui(theme.text);
         let accent_color = color_to_gpui(theme.accent);
@@ -351,16 +354,23 @@ impl<'a> IntoElement for GraphCanvas<'a> {
                     other => other,
                 };
 
+                let base_edge_col = if cfg.color_config.auto_edge_colors {
+                    let seed = label_text.as_deref().unwrap_or("edge");
+                    crate::style_bridge::rgba_to_gpui(graphene_style::string_to_rgba(seed))
+                } else {
+                    edge_color
+                };
+
                 let (cur_edge_color, stroke_width) = if let Some(_sel_id) = selected_node {
                     if connected_edge_indices.contains(&i) {
                         (accent_color, cfg.edge_stroke_width * 1.5)
                     } else {
-                        let mut faded = edge_color;
+                        let mut faded = base_edge_col;
                         faded.a = 0.12;
                         (faded, cfg.edge_stroke_width)
                     }
                 } else {
-                    (edge_color, cfg.edge_stroke_width)
+                    (base_edge_col, cfg.edge_stroke_width)
                 };
 
                 edge_paths.push((src_screen, tgt_screen, screen_curve_style, cur_edge_color, stroke_width, label_text.clone()));
@@ -517,6 +527,8 @@ impl<'a> IntoElement for GraphCanvas<'a> {
                 let mut col = accent_color;
                 col.a = cfg.compound_fill_alpha;
                 col
+            } else if cfg.color_config.auto_node_colors {
+                crate::style_bridge::rgba_to_gpui(graphene_style::string_to_rgba(&label))
             } else {
                 node_fill_color
             };
@@ -542,7 +554,7 @@ impl<'a> IntoElement for GraphCanvas<'a> {
 
             if score_opt.is_none() {
                 if let StylingTarget::Node(ref node_style) = node.data.target {
-                    if !is_compound {
+                    if !is_compound && !cfg.color_config.auto_node_colors {
                         fill_color = color_to_gpui(node_style.fill_color);
                         border_color = color_to_gpui(node_style.border_color);
                         shape = node_style.shape;
@@ -554,7 +566,19 @@ impl<'a> IntoElement for GraphCanvas<'a> {
                 border_color = accent_color;
             }
 
-            let mut cur_text_color = text_color;
+            let fill_rgb = graphene_style::Rgb::new(
+                ((fill_color.r * 255.0) as u32).min(255) as u8,
+                ((fill_color.g * 255.0) as u32).min(255) as u8,
+                ((fill_color.b * 255.0) as u32).min(255) as u8,
+            );
+
+            let mut cur_text_color = if is_selected {
+                gpui::rgba(0x11111b_ff)
+            } else if cfg.color_config.label_contrast_mode == graphene_style::LabelContrastMode::WcagAuto {
+                crate::style_bridge::rgb_to_gpui(cfg.color_config.resolve_node_label_foreground(&fill_rgb))
+            } else {
+                text_color
+            };
 
             if is_faded {
                 fill_color.a *= 0.20;
@@ -612,13 +636,26 @@ impl<'a> IntoElement for GraphCanvas<'a> {
             let screen_x = mid_x - (label_w / 2.0);
             let screen_y = mid_y - (label_h / 2.0);
 
+            let canvas_bg_rgb = graphene_style::Rgb::new(
+                ((bg_color.r * 255.0) as u32).min(255) as u8,
+                ((bg_color.g * 255.0) as u32).min(255) as u8,
+                ((bg_color.b * 255.0) as u32).min(255) as u8,
+            );
+            let edge_text_color = if cfg.color_config.label_contrast_mode == graphene_style::LabelContrastMode::WcagAuto {
+                let mut c_config = cfg.color_config;
+                c_config.canvas_background = canvas_bg_rgb;
+                crate::style_bridge::rgb_to_gpui(c_config.resolve_edge_label_foreground())
+            } else {
+                text_color
+            };
+
             GraphEdgeLabelElement {
                 id: SharedString::from(format!("canvas-edge-label-{}", i)),
                 screen_x,
                 screen_y,
                 width: label_w,
                 height: label_h,
-                text_color,
+                text_color: edge_text_color,
                 font_size,
                 angle,
                 label,

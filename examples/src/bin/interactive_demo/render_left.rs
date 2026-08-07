@@ -512,6 +512,59 @@ impl DemoApp {
                             })),
                     ),
             )
+            .child(
+                gpui::div()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(
+                        gpui::div()
+                            .text_color(theme.text)
+                            .font_weight(gpui::FontWeight::BOLD)
+                            .text_size(px(12.0))
+                            .child("5. COLOR & WCAG CONTRAST"),
+                    )
+                    .child(
+                        gpui::div()
+                            .flex()
+                            .flex_col()
+                            .gap_2()
+                            .child(
+                                Button::new("toggle-auto-node-color-btn")
+                                    .label(if self.color_config.auto_node_colors { "Auto Node Colors: ON" } else { "Auto Node Colors: OFF" })
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.color_config.auto_node_colors = !this.color_config.auto_node_colors;
+                                        cx.notify();
+                                    })),
+                            )
+                            .child(
+                                Button::new("toggle-auto-edge-color-btn")
+                                    .label(if self.color_config.auto_edge_colors { "Auto Edge Colors: ON" } else { "Auto Edge Colors: OFF" })
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.color_config.auto_edge_colors = !this.color_config.auto_edge_colors;
+                                        cx.notify();
+                                    })),
+                            )
+                            .child(
+                                Button::new("toggle-wcag-contrast-btn")
+                                    .label(match self.color_config.label_contrast_mode {
+                                        graphene_style::LabelContrastMode::WcagAuto => "WCAG Label Contrast: AUTO",
+                                        graphene_style::LabelContrastMode::Fixed(_) => "WCAG Label Contrast: FIXED",
+                                    })
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.color_config.label_contrast_mode = match this.color_config.label_contrast_mode {
+                                            graphene_style::LabelContrastMode::WcagAuto => {
+                                                graphene_style::LabelContrastMode::Fixed(graphene_style::Rgb::new(200, 200, 200))
+                                            }
+                                            graphene_style::LabelContrastMode::Fixed(_) => {
+                                                graphene_style::LabelContrastMode::WcagAuto
+                                            }
+                                        };
+                                        cx.notify();
+                                    })),
+                            ),
+                    ),
+            )
     }
 
     pub fn render_layout_form_fields(&self, layout: &str, theme: &Theme) -> Vec<impl IntoElement> {

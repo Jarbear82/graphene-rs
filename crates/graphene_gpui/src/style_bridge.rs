@@ -26,6 +26,18 @@ pub fn color_value_to_rgba(color: ColorValue) -> gpui::Rgba {
 pub use color_value_to_rgba as color_to_gpui;
 pub use color_value_to_rgba as color_value_to_gpui_color;
 
+pub fn rgb_to_gpui(c: graphene_style::Rgb) -> gpui::Rgba {
+    gpui::rgba((c.r as u32) << 24 | (c.g as u32) << 16 | (c.b as u32) << 8 | 0xFF)
+}
+
+pub fn rgba_to_gpui(c: graphene_style::Rgba) -> gpui::Rgba {
+    gpui::rgba((c.r as u32) << 24 | (c.g as u32) << 16 | (c.b as u32) << 8 | (c.a as u32))
+}
+
+pub fn foreground_to_gpui(fg: graphene_style::Foreground) -> gpui::Rgba {
+    rgb_to_gpui(fg.to_rgb())
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct UiTheme {
     pub bg: gpui::Rgba,

@@ -3,6 +3,9 @@ use graphene_core::{EdgeId, NodeId, StringId};
 pub use graphene_core::StringArena;
 use std::collections::HashMap;
 
+pub mod color;
+pub use color::*;
+
 pub type LabelId = StringId;
 
 #[derive(Debug, Clone, Copy, PartialEq)]

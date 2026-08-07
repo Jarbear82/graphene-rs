@@ -118,6 +118,8 @@ pub struct DemoApp {
 
     pub collapsed_parents: graphene_gpui::ExpansionState,
     pub controller: graphene_gpui::GraphCanvasController,
+
+    pub color_config: graphene_style::ColorConfig,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -301,9 +303,21 @@ impl DemoApp {
 
             collapsed_parents: graphene_gpui::ExpansionState::new(),
             controller: graphene_gpui::GraphCanvasController::new(),
+            color_config: graphene_style::ColorConfig::default(),
         };
         app.load_preset(0, window, cx);
         app
+    }
+
+    pub fn get_canvas_config(&self) -> CanvasConfig {
+        let mut cfg = CanvasConfig::default();
+        cfg.grid_spacing = self.grid_spacing;
+        cfg.arrow_length = self.arrow_length;
+        cfg.arrow_width = self.arrow_width;
+        cfg.edge_stroke_width = self.edge_stroke_width;
+        cfg.edge_curvature = self.edge_curvature;
+        cfg.color_config = self.color_config;
+        cfg
     }
 
     pub fn drain_updates_and_sync(&mut self) {
@@ -319,16 +333,6 @@ impl DemoApp {
         self.interaction_state.rebuild_grid(&self.view);
         self.telemetry_worker_threads = self.engine.active_worker_threads();
         self.telemetry_worker_state = self.engine.worker_state().as_str().to_string();
-    }
-
-    pub fn get_canvas_config(&self) -> CanvasConfig {
-        let mut cfg = CanvasConfig::default();
-        cfg.grid_spacing = self.grid_spacing;
-        cfg.arrow_length = self.arrow_length;
-        cfg.arrow_width = self.arrow_width;
-        cfg.edge_stroke_width = self.edge_stroke_width;
-        cfg.edge_curvature = self.edge_curvature;
-        cfg
     }
 
     pub fn reset_view(&mut self) {
